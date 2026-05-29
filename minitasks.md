@@ -1,4 +1,4 @@
-# TenderDoc-Generator Minitasks 执行路径图
+# TenderDoc-Generator MVP Minitasks 执行路径图
 
 本文件包含从零开始构建 MVP 的完整任务清单，共 **44 个 Minitasks**（M1–M44）。  
 每个任务包含：**依赖**、**完成标准**、**测试方法**。按顺序执行即可完成可交付的 MVP。
