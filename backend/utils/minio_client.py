@@ -1,0 +1,50 @@
+from pathlib import Path
+from io import BytesIO
+from urllib.parse import urlparse
+
+from minio import Minio
+from minio.error import S3Error
+
+from core.config import settings
+
+
+class MinioClient:
+    def __init__(self) -> None:
+        parsed_url = urlparse(settings.minio_api_url)
+        endpoint = parsed_url.netloc or parsed_url.path
+        secure = parsed_url.scheme == "https"
+        self.client = Minio(
+            endpoint,
+            access_key=settings.minio_root_user,
+            secret_key=settings.minio_root_password,
+            secure=secure,
+        )
+
+    def _ensure_bucket(self, bucket: str) -> None:
+        if not self.client.bucket_exists(bucket):
+            self.client.make_bucket(bucket)
+
+    def upload_file(self, bucket: str, file_path, object_name: str) -> str:
+        self._ensure_bucket(bucket)
+
+        if isinstance(file_path, (bytes, bytearray)):
+            data = BytesIO(file_path)
+            length = len(file_path)
+            self.client.put_object(bucket, object_name, data, length=length)
+            return object_name
+
+        path = Path(file_path)
+        self.client.fput_object(bucket, object_name, str(path))
+        return object_name
+
+    def download_file(self, bucket: str, object_name: str, dest_path: str) -> str:
+        self._ensure_bucket(bucket)
+        self.client.fget_object(bucket, object_name, dest_path)
+        return dest_path
+
+    def get_presigned_url(self, bucket: str, object_name: str, expiry: int = 3600) -> str:
+        self._ensure_bucket(bucket)
+        return self.client.presigned_get_object(bucket, object_name, expires=expiry)
+
+
+minio_client = MinioClient()
