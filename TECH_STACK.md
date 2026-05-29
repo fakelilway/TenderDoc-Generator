@@ -165,11 +165,11 @@ alembic==1.13.1
 # AI / Agent
 langgraph==0.0.30
 langchain==0.1.10
-langchain-community==0.0.20
+langchain-community==0.0.25
 langchain-openai==0.0.8
 
 # LLM 调用
-openai==1.3.9
+openai==1.10.0
 requests==2.31.0
 
 # 向量模型与检索

@@ -56,39 +56,50 @@ cd TenderDoc-Generator
 
 当前仓库根目录已经包含 `docker-compose.yml`，你通常只需要确认其中的端口、账号和密码与 `.env` 一致，然后直接启动即可。
 
-如果你需要参考配置，当前使用的服务如下：
+如果你需要参考配置，当前使用的服务如下（`docker compose` v2 不需要 `version` 字段）：
 
 ```yaml
-version: '3.8'
-
 services:
+  # PostgreSQL + pgvector 数据库
   postgres:
     image: pgvector/pgvector:pg16
     container_name: tender-postgres
     environment:
       POSTGRES_DB: tenderdb
       POSTGRES_USER: tenderuser
-      POSTGRES_PASSWORD: tenderpass
+      POSTGRES_PASSWORD: tenderpwd
     ports:
       - "5432:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tenderuser -d tenderdb"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - tender-network
 
+  # Redis 缓存与消息队列
   redis:
     image: redis:7-alpine
     container_name: tender-redis
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
-      - ./data/redis:/data
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    networks:
+      - tender-network
 
+  # MinIO 对象存储
   minio:
     image: minio/minio:latest
     container_name: tender-minio
@@ -100,8 +111,27 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./data/minio:/data
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
     restart: unless-stopped
+    networks:
+      - tender-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  tender-network:
+    driver: bridge
 ```
 
 启动容器：
@@ -169,7 +199,7 @@ venv\Scripts\Activate.ps1
 
 ### 步骤 3：安装 Python 依赖
 
-创建 `requirements.txt`（如果尚未创建），内容如下（根据 TECH_STACK.md）：
+当前仓库已经包含 `backend/requirements.txt`。如果你的本地版本还是空文件，请先将其补齐为下面这份依赖清单（根据 TECH_STACK.md）：
 
 ```txt
 # FastAPI
@@ -185,11 +215,11 @@ alembic==1.13.1
 # AI / Agent
 langgraph==0.0.30
 langchain==0.1.10
-langchain-community==0.0.20
+langchain-community==0.0.25
 langchain-openai==0.0.8
 
 # LLM 调用
-openai==1.3.9
+openai==1.10.0
 requests==2.31.0
 
 # 向量模型与检索
@@ -262,10 +292,10 @@ mypy backend/
 
 ## 环境变量配置
 
-在 `backend/` 目录下创建 `.env` 文件，用于存储敏感配置和连接信息。
+在 `backend/` 目录下准备 `.env` 文件，用于存储敏感配置和连接信息。
 
 ```bash
-cp .env.example .env   # 如果存在模板，否则直接创建
+cp .env.example .env   # 当前仓库已提供模板，可直接复制
 ```
 
 编辑 `.env`，填入以下内容（请根据实际情况修改）。参考 TECH_STACK.md 第 13 部分：
@@ -281,6 +311,8 @@ POSTGRES_PASSWORD=tenderpwd
 
 # ==================== Redis ====================
 REDIS_URL=redis://localhost:6379/0
+REDIS_HOST=localhost
+REDIS_PORT=6379
 REDIS_PASSWORD=
 
 # ==================== MinIO ====================
@@ -288,10 +320,13 @@ MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=minioadmin
 MINIO_API_URL=http://localhost:9000
 MINIO_CONSOLE_URL=http://localhost:9001
+MINIO_BUCKET=tender-files
 
 # ==================== 大模型 API ====================
 # 主选：DeepSeek (推荐，性价比高)
 DEEPSEEK_API_KEY=sk_xxxx
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-chat
 
 # 备选：通义千问
 QIANWEN_API_KEY=sk_xxxx
@@ -347,7 +382,7 @@ mkdir -p ../knowledge_base
 
 ### 验证 1：PostgreSQL 连接
 
-创建 `test_db.py`：
+`backend/test_db.py` 已在仓库中提供，直接运行即可。
 
 ```python
 import psycopg2
@@ -372,7 +407,7 @@ except Exception as e:
 
 ### 验证 2：Redis 连接
 
-创建 `test_redis.py`：
+`backend/test_redis.py` 已在仓库中提供，直接运行即可。
 
 ```python
 import redis
@@ -395,7 +430,7 @@ except Exception as e:
 
 ### 验证 3：MinIO 连接
 
-创建 `test_minio.py`：
+`backend/test_minio.py` 已在仓库中提供，直接运行即可。
 
 ```python
 from minio import Minio
@@ -422,7 +457,7 @@ except Exception as e:
 
 ### 验证 4：大模型 API 调用
 
-创建 `test_llm.py`（以 DeepSeek 为例）：
+`backend/test_llm.py` 已在仓库中提供，直接运行即可（以 DeepSeek 为例）。
 
 ```python
 from openai import OpenAI
@@ -448,7 +483,7 @@ except Exception as e:
 
 ### 验证 5：Embedding 模型加载
 
-创建 `test_embedding.py`：
+`backend/test_embedding.py` 已在仓库中提供，直接运行即可。
 
 ```python
 from sentence_transformers import SentenceTransformer
