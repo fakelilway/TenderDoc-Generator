@@ -40,16 +40,23 @@ TenderDoc-Generator 依赖以下服务：
 - **Redis**：缓存与 Agent 状态
 - **MinIO**：对象存储（招标文件、生成文件）
 
-### 步骤 1：克隆项目并进入目录
+### 步骤 1：打开仓库（或首次克隆）
+
+如果你已经在 VS Code 中打开了本仓库，可以直接跳过这一步。
+如果本地还没有项目，请先 clone 到本地：
 
 ```bash
 git clone <your-repo-url> TenderDoc-Generator
 cd TenderDoc-Generator
 ```
 
-### 步骤 2：编写 docker-compose.yml
+如果你已经拥有本地仓库，直接在 VS Code 中打开项目根目录即可。
 
-在项目根目录创建 `docker-compose.yml`，内容如下：
+### 步骤 2：检查并启动 docker-compose.yml
+
+当前仓库根目录已经包含 `docker-compose.yml`，你通常只需要确认其中的端口、账号和密码与 `.env` 一致，然后直接启动即可。
+
+如果你需要参考配置，当前使用的服务如下：
 
 ```yaml
 version: '3.8'
@@ -88,7 +95,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -97,7 +104,7 @@ services:
     restart: unless-stopped
 ```
 
-### 步骤 3：启动容器
+启动容器：
 
 ```bash
 # 启动所有服务（后台运行）
@@ -110,7 +117,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-### 步骤 4：初始化 pgvector 扩展
+### 步骤 3：初始化 pgvector 扩展
 
 PostgreSQL 容器启动后，需要手动创建 vector 扩展：
 
