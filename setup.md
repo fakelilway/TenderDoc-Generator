@@ -162,26 +162,64 @@ venv\Scripts\Activate.ps1
 
 ### 步骤 3：安装 Python 依赖
 
-创建 `requirements.txt`（如果尚未创建），内容如下：
+创建 `requirements.txt`（如果尚未创建），内容如下（根据 TECH_STACK.md）：
 
 ```txt
-langgraph>=0.2.0,<0.3.0
-langchain>=0.1.0,<0.3.0
-langchain-community>=0.0.3
-llama-index-core>=0.14.0,<0.16.0
-llama-index-readers-file>=0.1.0
-llama-index-embeddings-huggingface>=0.1.0
-psycopg2-binary>=2.9.0
-redis>=5.0.0
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.5.0
-openai>=1.0.0
-pypdf>=3.0.0
-python-docx>=0.8.11
-python-dotenv>=1.0.0
-sentence-transformers>=2.2.0
-minio>=7.2.0
+# FastAPI
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# 数据库与 ORM
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# AI / Agent
+langgraph==0.0.30
+langchain==0.1.10
+langchain-community==0.0.20
+langchain-openai==0.0.8
+
+# LLM 调用
+openai==1.3.9
+requests==2.31.0
+
+# 向量模型与检索
+sentence-transformers==2.2.2
+scikit-learn==1.3.2
+numpy==1.24.3
+
+# 文档处理
+pypdf==4.0.1
+pdfplumber==0.10.3
+python-docx==0.8.11
+
+# 异步与缓存
+redis==5.0.1
+celery==5.3.4
+
+# 数据验证
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# 工具
+python-dotenv==1.0.0
+structlog==24.1.0
+jieba==0.42.1
+
+# MinIO
+minio==7.2.0
+
+# 测试
+pytest==7.4.3
+pytest-asyncio==0.23.1
+httpx==0.25.2
+
+# 开发
+black==23.12.1
+flake8==6.1.0
+mypy==1.7.1
 ```
 
 执行安装：
@@ -191,7 +229,27 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **注意**：`sentence-transformers` 会自动安装 PyTorch CPU 版本。如果你的机器有 GPU，可以后续自行安装 CUDA 版本。
+> **注意**：
+> - `sentence-transformers` 会自动安装 PyTorch CPU 版本。如果你的机器有 GPU，可以后续自行安装 CUDA 版本。
+> - 国内用户如遇到镜像下载缓慢，可配置 pip 镜像源。
+
+### 步骤 4：安装代码质量工具（可选但推荐）
+
+为了保持代码质量，建议安装代码检查工具：
+
+```bash
+# 已在 requirements.txt 中，但也可单独安装
+pip install black flake8 mypy
+
+# 配置 black（代码格式化）
+black --line-length=100 backend/
+
+# 检查代码风格
+flake8 backend/
+
+# 类型检查
+mypy backend/
+```
 
 ---
 
@@ -203,48 +261,48 @@ pip install -r requirements.txt
 cp .env.example .env   # 如果存在模板，否则直接创建
 ```
 
-编辑 `.env`，填入以下内容（请根据实际情况修改）：
+编辑 `.env`，填入以下内容（请根据实际情况修改）。参考 TECH_STACK.md 第 13 部分：
 
 ```env
-# ==================== PostgreSQL ====================
+# ==================== 数据库 ====================
+DATABASE_URL=postgresql://tenderuser:tenderpwd@localhost:5432/tenderdb
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=tenderdb
 POSTGRES_USER=tenderuser
-POSTGRES_PASSWORD=tenderpass
+POSTGRES_PASSWORD=tenderpwd
 
 # ==================== Redis ====================
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
+REDIS_URL=redis://localhost:6379/0
+REDIS_PASSWORD=
 
 # ==================== MinIO ====================
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin123
-MINIO_BUCKET=tender-files
-MINIO_SECURE=False
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin
+MINIO_API_URL=http://localhost:9000
+MINIO_CONSOLE_URL=http://localhost:9001
 
 # ==================== 大模型 API ====================
-# 示例：DeepSeek (推荐，性价比高)
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
-DEEPSEEK_MODEL=deepseek-chat
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+# 主选：DeepSeek (推荐，性价比高)
+DEEPSEEK_API_KEY=sk_xxxx
 
-# 可选：OpenAI (需要国际信用卡)
-# OPENAI_API_KEY=sk-xxx
-# OPENAI_MODEL=gpt-4o-mini
+# 备选：通义千问
+QIANWEN_API_KEY=sk_xxxx
 
-# 可选：阿里云通义千问
-# DASHSCOPE_API_KEY=sk-xxx
-# QWEN_MODEL=qwen-max
+# 备选：OpenAI
+OPENAI_API_KEY=sk_xxxx
 
 # ==================== Embedding 模型 ====================
-# 轻量级中文模型，可本地运行
-EMBEDDING_MODEL_NAME=BAAI/bge-small-zh-v1.5
+# 中文最强向量模型
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
 EMBEDDING_DEVICE=cpu   # 若 GPU 可用，改为 cuda
 
 # ==================== 应用配置 ====================
+DEBUG=true
+LOG_LEVEL=INFO
+JWT_SECRET=your-secret-key
+JWT_ALGORITHM=HS256
+
 # 临时文件存储目录
 TEMP_DIR=./temp
 # 最大上传文件大小（MB）
@@ -393,7 +451,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5")
+    model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
     device = os.getenv("EMBEDDING_DEVICE", "cpu")
     model = SentenceTransformer(model_name, device=device)
     emb = model.encode("测试文本")
@@ -415,6 +473,12 @@ python test_embedding.py
 ```
 
 全部显示 `✓` 即为环境就绪。
+
+---
+
+## 前端环境配置（可选，MVP 第 8 周后）
+
+待补充。参考 TECH_STACK.md 第 1 部分。
 
 ---
 
@@ -452,15 +516,38 @@ python test_embedding.py
 **原因**：API Key 无效或未正确配置。
 
 **解决方法**：
-- 检查 `.env` 中的密钥是否正确。
+- 检查 `.env` 中的密钥是否正确（推荐先用 DEEPSEEK_API_KEY）。
 - 确认账户余额充足。
 - 验证网络能正常访问 API 域名。
 
 ### Q5: MinIO 创建 bucket 失败（权限问题）
 
 **解决方法**：
-- 检查 `.env` 中的 `MINIO_ACCESS_KEY` 和 `MINIO_SECRET_KEY` 是否与 `docker-compose.yml` 中一致。
+- 检查 `.env` 中的 `MINIO_ROOT_USER` 和 `MINIO_ROOT_PASSWORD` 是否与 `docker-compose.yml` 中一致。
 - 重启 MinIO 容器后重试。
+
+### Q6: pip 依赖安装缓慢或失败
+
+**原因**：网络问题或 PyPI 源不稳定。
+
+**解决方法**：
+- 配置清华大学 PyPI 镜像：
+  ```bash
+  pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+  ```
+- 或者临时使用阿里镜像：
+  ```bash
+  pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+  ```
+
+### Q7: SQLAlchemy / psycopg2 导入错误
+
+**解决方法**：
+- 确保 Python 3.11+ 且虚拟环境已激活。
+- 重装 `psycopg2-binary`：
+  ```bash
+  pip install --force-reinstall psycopg2-binary==2.9.9
+  ```
 
 ---
 
