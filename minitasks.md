@@ -61,6 +61,9 @@
   pip list | grep -E "langgraph|fastapi|sentence-transformers"
   ```
   显示对应包。
+- **当前验证**：
+  - `backend/venv/bin/python --version` 输出 Python 3.11.15
+  - `llama-index-core` 当前未安装；项目现阶段未使用，待 RAG 阶段决定是否加入
 
 ### M6：实现配置管理 core/config.py
 - **完成状态**：✅ 已完成
@@ -69,6 +72,7 @@
   - 从 `.env` 文件读取所有配置项（数据库、Redis、MinIO、LLM）
   - 提供 `Config` 类，其他模块可 `from core.config import settings`
 - **测试方法**：编写临时脚本打印 `settings.POSTGRES_HOST` 等，值与 `.env` 一致。
+- **当前验证**：已确认 `core.config.settings` 可从 `backend/.env` 读取 PostgreSQL、Redis、MinIO、OpenRouter 配置。
 
 ### M7：实现 MinIO 工具类 utils/minio_client.py
 - **完成状态**：✅ 已完成
@@ -83,13 +87,18 @@
   url = client.get_presigned_url("tender-files", "test.txt")
   print(url)  # 可浏览器访问
   ```
+- **当前验证**：已通过真实 MinIO smoke，覆盖 `upload_file`、`download_file`、`download_bytes`、`get_presigned_url`。
 
 ### M8：编写环境连通性验证脚本
-- **完成状态**：⚠️ 部分完成（DB/Redis/MinIO/Embedding 已通过；LLM 因占位 API key 未通过）
+- **完成状态**：✅ 已完成
 - **依赖**：M4, M6, M7
 - **完成标准**：
   - 在 `backend/` 下创建 `test_db.py`, `test_redis.py`, `test_minio.py`, `test_llm.py`（使用假 API key 仅测连通），全部通过
 - **测试方法**：依次运行每个脚本，输出 `✓` 且无报错。
+- **当前验证**：
+  - `test_db.py`、`test_redis.py`、`test_minio.py` 均通过
+  - `test_llm.py` 已改为 OpenRouter/DeepSeek fallback，并通过 OpenRouter live smoke
+  - `test_embedding.py` 已通过，当前模型输出维度为 1024
 
 ---
 
@@ -103,6 +112,7 @@
   - 函数 `extract_text_from_docx(file_path)` 返回字符串
   - 支持从字节流提取（用于 API 上传）
 - **测试方法**：用一份示例招标 PDF 和 DOCX 分别提取，肉眼可见可读文本。
+- **当前验证**：已通过 PDF、TXT、DOCX path、DOCX uploaded bytes 文本提取 smoke。
 
 ### M10：定义解析 Agent 的输入/输出 JSON Schema
 - **完成状态**：✅ 已完成
@@ -121,12 +131,13 @@
 - **测试方法**：手工用 GPT/DeepSeek 测试一份招标文件文本，输出符合 Schema。
 
 ### M12：实现解析 Agent agents/parser_agent.py
-- **完成状态**：⚠️ 部分完成（代码与本地校验已完成；等待真实 LLM key 做端到端调用）
+- **完成状态**：✅ 已完成
 - **依赖**：M9, M10, M11, M6 (LLM 客户端)
 - **完成标准**：
   - 函数 `parse_tender(text: str) -> TenderRequirements`
   - 内部调用 LLM API，并用正则后处理修复常见错误（如多余逗号）
 - **测试方法**：用 `tests/fixtures/sample_tender.txt` 调用，输出 JSON 能通过 Pydantic 校验。
+- **当前验证**：已用 OpenRouter live LLM 跑通 `parse_tender`，输出可通过 `TenderRequirements` 校验。
 
 ### M13：编写解析准确率单元测试
 - **完成状态**：✅ 已完成
@@ -137,7 +148,7 @@
 - **测试方法**：运行 `pytest tests/test_parser.py`，输出准确率统计。
 
 ### M14：将解析结果存入数据库并关联原文件
-- **完成状态**：🟡 已实现，待 Docker/localhost 授权后真实 smoke 验证
+- **完成状态**：✅ 已完成
 - **依赖**：M4, M7, M12
 - **完成标准**：
   - 创建项目时：上传招标文件到 MinIO，记录路径到 `projects.tender_file_path`
@@ -146,7 +157,10 @@
 - **当前实现**：
   - `services/project_service.py` 已支持创建项目、上传原文件到 MinIO、记录 `projects.tender_file_path`
   - `parse_project(project_id)` 已支持下载原文件、抽取文本、调用解析 Agent、写入 `projects.parsed_json`
-  - `tests/test_project_service.py` 用 fake DB/MinIO 覆盖关键链路；真实 Docker smoke 因当前会话权限无法连接 localhost
+  - `tests/test_project_service.py` 用 fake DB/MinIO 覆盖关键链路
+- **当前验证**：
+  - 已通过真实 HTTP smoke：创建项目、上传 `sample_tender.txt`、触发解析、读取结果与 review
+  - 已查询 PostgreSQL，确认 `projects.tender_file_path` 已填充、`projects.parsed_json` 非空、`documents` 有关联记录
 
 ---
 
@@ -167,6 +181,7 @@
   - 从配置读取模型名称（BAAI/bge-small-zh-v1.5）
   - 对每个文本块调用 `model.encode()` 生成向量（维度 384）
 - **测试方法**：对单个 chunk 编码，检查 `len(vector) == 384`。
+- **前置发现**：当前 `test_embedding.py` 输出维度为 1024，而 `knowledge_chunks.embedding` 是 `VECTOR(384)`；开始 M16/M17 时需统一模型或向量列维度。
 
 ### M17：将向量存入 pgvector 表 knowledge_chunks
 - **完成状态**：⏳ 未开始
@@ -322,6 +337,7 @@
 - **当前实现**：
   - `api/main.py` 已提供 `POST /api/project/create` 与 `GET /api/project/{id}/status`
   - `tests/test_project_api.py` 已覆盖创建项目、状态查询、404 错误处理
+- **当前验证**：已通过真实 HTTP smoke，`POST /api/project/create` 返回 `project_id`，`GET /api/project/{id}/status` 返回 `uploaded/parsed` 状态。
 
 ### M35：实现异步生成触发接口
 - **完成状态**：⏳ 未开始（MVP 已提供同步 parse alias）
@@ -333,6 +349,7 @@
 - **当前实现**：
   - `POST /api/project/{id}/generate` 当前同步调用解析链路，作为前端 MVP 占位接口
   - 尚未满足异步 `task_id` 和 LangGraph 工作流要求
+- **当前验证**：MVP 占位接口已通过单元测试；正式异步工作流仍需等待 M32。
 
 ### M36：实现获取审查报告接口
 - **完成状态**：⏳ 未开始（MVP 已提供废标条款读取接口）
@@ -343,6 +360,7 @@
 - **当前实现**：
   - `GET /api/project/{id}/review` 当前返回 `parsed_json.invalid_bid_items`
   - 尚未接入 M28 的正式审查报告结构
+- **当前验证**：MVP 占位接口已通过真实 HTTP smoke，能返回解析出的废标条款列表。
 
 ### M37：实现人工确认接口
 - **完成状态**：⏳ 未开始
