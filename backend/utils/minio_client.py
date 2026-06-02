@@ -1,9 +1,9 @@
+from datetime import timedelta
 from pathlib import Path
 from io import BytesIO
 from urllib.parse import urlparse
 
 from minio import Minio
-from minio.error import S3Error
 
 from core.config import settings
 
@@ -42,9 +42,24 @@ class MinioClient:
         self.client.fget_object(bucket, object_name, dest_path)
         return dest_path
 
-    def get_presigned_url(self, bucket: str, object_name: str, expiry: int = 3600) -> str:
+    def download_bytes(self, bucket: str, object_name: str) -> bytes:
         self._ensure_bucket(bucket)
-        return self.client.presigned_get_object(bucket, object_name, expires=expiry)
+        response = self.client.get_object(bucket, object_name)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
+    def get_presigned_url(
+        self, bucket: str, object_name: str, expiry: int = 3600
+    ) -> str:
+        self._ensure_bucket(bucket)
+        return self.client.presigned_get_object(
+            bucket,
+            object_name,
+            expires=timedelta(seconds=expiry),
+        )
 
 
 minio_client = MinioClient()

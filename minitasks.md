@@ -137,12 +137,16 @@
 - **测试方法**：运行 `pytest tests/test_parser.py`，输出准确率统计。
 
 ### M14：将解析结果存入数据库并关联原文件
-- **完成状态**：⏳ 未开始
+- **完成状态**：🟡 已实现，待 Docker/localhost 授权后真实 smoke 验证
 - **依赖**：M4, M7, M12
 - **完成标准**：
   - 创建项目时：上传招标文件到 MinIO，记录路径到 `projects.tender_file_path`
   - 解析完成后，将 JSON 存入 `projects.parsed_json` 字段
 - **测试方法**：创建一个项目，上传文件，触发解析，查询数据库记录确认字段已填充。
+- **当前实现**：
+  - `services/project_service.py` 已支持创建项目、上传原文件到 MinIO、记录 `projects.tender_file_path`
+  - `parse_project(project_id)` 已支持下载原文件、抽取文本、调用解析 Agent、写入 `projects.parsed_json`
+  - `tests/test_project_service.py` 用 fake DB/MinIO 覆盖关键链路；真实 Docker smoke 因当前会话权限无法连接 localhost
 
 ---
 
@@ -309,27 +313,36 @@
 ## 阶段 5：API 层与人机协同（M34–M38）
 
 ### M34：实现 FastAPI 基础路由（创建项目、获取状态）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M4, M7
 - **完成标准**：
   - `POST /api/project/create`：接收 `name` 和招标文件，返回 `project_id`
   - `GET /api/project/{id}/status`：返回 `status`（parsing/generating/reviewing/approved）
 - **测试方法**：用 `requests` 调用，数据库新增记录。
+- **当前实现**：
+  - `api/main.py` 已提供 `POST /api/project/create` 与 `GET /api/project/{id}/status`
+  - `tests/test_project_api.py` 已覆盖创建项目、状态查询、404 错误处理
 
 ### M35：实现异步生成触发接口
-- **完成状态**：⏳ 未开始
+- **完成状态**：⏳ 未开始（MVP 已提供同步 parse alias）
 - **依赖**：M32 (LangGraph 可调用), M34
 - **完成标准**：
   - `POST /api/project/{id}/generate`：在后台启动 LangGraph 工作流（FastAPI BackgroundTasks 或 Celery）
   - 立即返回 `task_id`
 - **测试方法**：调用后立即查询状态，返回 `processing`，稍后变为 `finished`。
+- **当前实现**：
+  - `POST /api/project/{id}/generate` 当前同步调用解析链路，作为前端 MVP 占位接口
+  - 尚未满足异步 `task_id` 和 LangGraph 工作流要求
 
 ### M36：实现获取审查报告接口
-- **完成状态**：⏳ 未开始
+- **完成状态**：⏳ 未开始（MVP 已提供废标条款读取接口）
 - **依赖**：M35, M28
 - **完成标准**：
   - `GET /api/project/{id}/review`：返回审查报告 JSON
 - **测试方法**：在生成完成后调用，得到包含 fail 项的列表。
+- **当前实现**：
+  - `GET /api/project/{id}/review` 当前返回 `parsed_json.invalid_bid_items`
+  - 尚未接入 M28 的正式审查报告结构
 
 ### M37：实现人工确认接口
 - **完成状态**：⏳ 未开始

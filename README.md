@@ -1,7 +1,7 @@
 # TenderDoc-Generator
 
-> **🏗️ 当前状态：架构设计阶段 · 尚未编码**  
-> 预计 MVP 开发启动：2026-06-01 · 目标交付：2026-08-08
+> **当前状态：MVP 后端开发中 · 解析链路与基础 API 已实现**
+> 目标交付：2026-08-08
 
 ## 1. 项目愿景
 
@@ -21,15 +21,21 @@
 - 整体架构设计（Multi-Agent 协同 + 知识库检索）
 - 多智能体协同流程设计（审查-修正闭环）
 - 开发环境规范与目录结构规划
+- Docker/PostgreSQL/Redis/MinIO 基础配置
+- 招标文件解析工具（PDF/DOCX/TXT）
+- 招标文件解析 Agent 与真实招标文件准确率测试
+- 项目创建、文件上传、解析落库的后端 service
+- FastAPI 基础路由：创建项目、查询状态、触发 MVP 解析、查看解析结果
 
 🚧 正在进行：
-- 基础服务配置（数据库、缓存、存储）
-- 准备示例招标文件和企业知识库文档
+- RAG 知识库索引与检索
+- 技术标生成 Agent
+- 审查报告与人机确认闭环
 
 📋 下一步行动：
-1. 完成本地开发环境搭建
-2. 初始化项目代码结构
-3. 实现第一个 Agent：**招标文件解析 Agent**
+1. 实现知识库文档分块与向量索引
+2. 实现 RAG 检索接口
+3. 接入生成 Agent，形成“解析 → 检索 → 生成”的 MVP 主链路
 
 ## 3. 系统架构设计（抽象层）
 
@@ -165,3 +171,20 @@ python -m pytest tests/ -q
 ```
 
 说明：脚本会尝试安装 `backend/requirements.txt` 中的依赖，并在必要时调整 `wheel`/`packaging`/`setuptools` 到与项目依赖兼容的版本，以避免常见的二进制 wheel / 架构冲突。
+
+## 后端 API 本地运行
+
+```bash
+docker compose up -d
+cd backend
+venv/bin/python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+当前可用接口：
+
+- `POST /api/project/create`：上传招标文件并创建项目。
+- `GET /api/project/{id}/status`：查询项目状态。
+- `POST /api/project/{id}/parse`：触发 MVP 解析并写入 `projects.parsed_json`。
+- `POST /api/project/{id}/generate`：当前作为 MVP parse alias，后续接 LangGraph 异步生成。
+- `GET /api/project/{id}/result`：读取解析 JSON。
+- `GET /api/project/{id}/review`：当前返回解析出的废标条款，后续接正式审查报告。
