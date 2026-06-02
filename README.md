@@ -151,3 +151,17 @@ TenderDoc-Generator/
 - [ ] **团队工具**：确定协作平台（飞书/钉钉/微信）、文档共享方式
 
 > 详细的环境配置步骤将在 `docs/setup.md` 中提供（后续补充）
+
+## 快速一键本地开发环境（推荐）
+
+我们提供了一个脚本来在仓库根创建可复现的 `.venv`（使用 Python 3.11），并安装后端依赖：
+
+```bash
+# 运行前请先确保已安装 Python 3.11
+./scripts/setup_venv.sh
+source .venv/bin/activate
+cd backend
+python -m pytest tests/ -q
+```
+
+说明：脚本会尝试安装 `backend/requirements.txt` 中的依赖，并在必要时调整 `wheel`/`packaging`/`setuptools` 到与项目依赖兼容的版本，以避免常见的二进制 wheel / 架构冲突。
