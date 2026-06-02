@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
-from agents.parser_agent import _prepare_tender_text, parse_tender_response
+from agents.parser_agent import (
+    _extract_rule_based_requirements,
+    _prepare_tender_text,
+    parse_tender_response,
+)
 from prompts.parser_prompt import build_parser_prompt
 from schemas.tender import TenderRequirements
 from utils.file_parser import extract_text
@@ -74,3 +78,18 @@ def test_prepare_tender_text_keeps_relevant_sections() -> None:
     assert "投标人资格要求" in focused
     assert "评分标准" in focused
     assert "否决投标" in focused
+
+
+def test_rule_based_extraction_covers_real_fixture_baseline() -> None:
+    cases = [
+        FIXTURES / "tenders" / "1招标文件正文.pdf",
+        FIXTURES / "tenders" / "2招标文件正文.pdf",
+    ]
+
+    for path in cases:
+        parsed = _extract_rule_based_requirements(extract_text(path))
+
+        assert parsed.project_name
+        assert len(parsed.qualification_list) >= 4
+        assert len(parsed.technical_score_items) >= 4
+        assert len(parsed.invalid_bid_items) >= 4
