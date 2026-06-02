@@ -167,12 +167,16 @@
 ## 阶段 2：RAG 索引与检索（M15–M20）
 
 ### M15：实现知识库文档解析与分块 rag/indexer.py
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M9
 - **完成标准**：
   - 扫描 `../knowledge_base/` 目录（支持 PDF, DOCX, TXT）
   - 将每个文档按段落或固定长度（512 tokens）分块，记录元数据（文件名、页码）
 - **测试方法**：在 `knowledge_base/` 放 2 个测试文档，运行后生成 chunk 列表，打印长度 >0。
+- **当前实现**：
+  - `rag/indexer.py` 已支持扫描知识库目录、解析 PDF/DOCX/TXT、按重叠窗口分块
+  - `KnowledgeChunk.metadata` 包含 `source_path`、`file_name`、`file_type`、`chunk_index`
+- **当前验证**：`tests/test_rag_indexer.py` 已覆盖 TXT/DOCX/PDF 解析、文件过滤、chunk overlap 和 metadata。
 
 ### M16：加载 Embedding 模型并生成向量
 - **完成状态**：⏳ 未开始
