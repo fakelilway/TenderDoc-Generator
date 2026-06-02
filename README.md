@@ -26,16 +26,18 @@
 - 招标文件解析 Agent 与真实招标文件准确率测试
 - 项目创建、文件上传、解析落库的后端 service
 - FastAPI 基础路由：创建项目、查询状态、触发 MVP 解析、查看解析结果
+- RAG 知识库上传、向量入库和检索
+- 技术标 Markdown 生成、DOCX 导出和 MinIO 回写
 
 🚧 正在进行：
-- RAG 知识库索引与检索
-- 技术标生成 Agent
 - 审查报告与人机确认闭环
+- LangGraph 工作流编排
+- 前端可玩 demo
 
 📋 下一步行动：
-1. 实现知识库文档分块与向量索引
-2. 实现 RAG 检索接口
-3. 接入生成 Agent，形成“解析 → 检索 → 生成”的 MVP 主链路
+1. 实现废标规则库与审查 Agent
+2. 搭建 LangGraph 状态图和修正循环
+3. 实现前端可玩 demo
 
 ## 3. 系统架构设计（抽象层）
 
@@ -185,7 +187,7 @@ venv/bin/python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/project/create`：上传招标文件并创建项目。
 - `GET /api/project/{id}/status`：查询项目状态。
 - `POST /api/project/{id}/parse`：触发 MVP 解析并写入 `projects.parsed_json`。
-- `POST /api/project/{id}/generate`：当前作为 MVP parse alias，后续接 LangGraph 异步生成。
+- `POST /api/project/{id}/generate`：生成技术标 Markdown，导出 DOCX，保存到 MinIO。
 - `GET /api/project/{id}/result`：读取解析 JSON。
 - `GET /api/project/{id}/review`：当前返回解析出的废标条款，后续接正式审查报告。
 - `POST /api/knowledge/upload`：上传企业知识库文档，保存到 MinIO 并写入 pgvector。

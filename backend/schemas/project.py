@@ -27,3 +27,11 @@ class ProjectReviewResponse(BaseModel):
     project_id: int
     status: str
     invalid_bid_items: list[dict[str, Any]]
+
+
+class ProjectGenerateResponse(BaseModel):
+    project_id: int
+    status: str
+    generated_markdown_path: str
+    generated_docx_path: str
+    quality_report: dict[str, Any]

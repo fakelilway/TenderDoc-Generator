@@ -83,20 +83,27 @@ def test_parse_project_returns_result(monkeypatch) -> None:
     assert response.json()["parsed_json"]["project_name"] == "测试项目"
 
 
-def test_generate_project_is_mvp_parse_alias(monkeypatch) -> None:
+def test_generate_project_returns_export_paths(monkeypatch) -> None:
+    class FakeGenerated:
+        generated_markdown_path = "projects/7/generated/bid.md"
+        generated_docx_path = "projects/7/generated/bid.docx"
+        quality_report = {"usable_rate": 1.0}
+
     monkeypatch.setattr(
-        "api.main.project_service.parse_project",
-        lambda project_id: {
-            "id": project_id,
-            "status": "parsed",
-            "parsed_json": {"invalid_bid_items": []},
-        },
+        "api.main.generation_service.generate_and_export",
+        lambda project_id: FakeGenerated(),
     )
 
     response = client.post("/api/project/7/generate")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "parsed"
+    assert response.json() == {
+        "project_id": 7,
+        "status": "generated",
+        "generated_markdown_path": "projects/7/generated/bid.md",
+        "generated_docx_path": "projects/7/generated/bid.docx",
+        "quality_report": {"usable_rate": 1.0},
+    }
 
 
 def test_review_returns_invalid_bid_items(monkeypatch) -> None:

@@ -10,11 +10,12 @@ from schemas.knowledge import (
 )
 from schemas.project import (
     ProjectCreateResponse,
+    ProjectGenerateResponse,
     ProjectResultResponse,
     ProjectReviewResponse,
     ProjectStatusResponse,
 )
-from services import knowledge_service, project_service
+from services import generation_service, knowledge_service, project_service
 from services.project_service import ProjectNotFoundError
 
 
@@ -119,9 +120,20 @@ def parse_project(project_id: int) -> ProjectResultResponse:
     )
 
 
-@app.post("/api/project/{project_id}/generate", response_model=ProjectResultResponse)
-def generate_project(project_id: int) -> ProjectResultResponse:
-    return parse_project(project_id)
+@app.post("/api/project/{project_id}/generate", response_model=ProjectGenerateResponse)
+def generate_project(project_id: int) -> ProjectGenerateResponse:
+    try:
+        generated = generation_service.generate_and_export(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectGenerateResponse(
+        project_id=project_id,
+        status="generated",
+        generated_markdown_path=generated.generated_markdown_path,
+        generated_docx_path=generated.generated_docx_path,
+        quality_report=generated.quality_report,
+    )
 
 
 @app.get("/api/project/{project_id}/result", response_model=ProjectResultResponse)
