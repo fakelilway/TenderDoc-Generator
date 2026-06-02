@@ -1,10 +1,20 @@
 # Python virtual environments
 backend/venv/
 venv/
+.venv/
+
+# Editor settings
+.vscode/
 
 # Environment files
 backend/.env
 .env
+
+# macOS metadata
+.DS_Store
+
+# Local persistent data
+data/
 
 # Python cache and build artifacts
 __pycache__/

@@ -31,10 +31,17 @@ class Settings(BaseSettings):
     minio_bucket: str = Field(..., alias="MINIO_BUCKET")
 
     deepseek_api_key: str = Field("", alias="DEEPSEEK_API_KEY")
-    deepseek_base_url: str = Field("https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL")
+    deepseek_base_url: str = Field(
+        "https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL"
+    )
     deepseek_model: str = Field("deepseek-chat", alias="DEEPSEEK_MODEL")
     qianwen_api_key: str = Field("", alias="QIANWEN_API_KEY")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
+    openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
+    openrouter_base_url: str = Field(
+        "https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
+    )
+    openrouter_model: str = Field("deepseek/deepseek-chat", alias="OPENROUTER_MODEL")
 
     embedding_model: str = Field("BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_device: str = Field("cpu", alias="EMBEDDING_DEVICE")
