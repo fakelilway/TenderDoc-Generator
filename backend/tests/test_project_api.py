@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from api.main import app
+from rag import retriever
 from services.project_service import ProjectNotFoundError
 
 
@@ -129,3 +130,65 @@ def test_project_not_found_returns_404(monkeypatch) -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Project 404 was not found"
+
+
+def test_upload_knowledge_indexes_file(monkeypatch) -> None:
+    captured = {}
+
+    def fake_index_uploaded_knowledge(file_bytes, filename, content_type=None):
+        captured.update(
+            file_bytes=file_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+        return {
+            "document_id": 9,
+            "chunk_ids": [101, 102],
+            "file_path": "knowledge/sample.txt",
+        }
+
+    monkeypatch.setattr(
+        "api.main.knowledge_service.index_uploaded_knowledge",
+        fake_index_uploaded_knowledge,
+    )
+
+    response = client.post(
+        "/api/knowledge/upload",
+        files={"file": ("sample.txt", b"knowledge text", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "document_id": 9,
+        "chunk_ids": [101, 102],
+        "file_path": "knowledge/sample.txt",
+    }
+    assert captured == {
+        "file_bytes": b"knowledge text",
+        "filename": "sample.txt",
+        "content_type": "text/plain",
+    }
+
+
+def test_search_knowledge_returns_results(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.retriever.retrieve",
+        lambda query, top_k: [
+            retriever.RetrievalResult(
+                chunk_id=1,
+                document_id=2,
+                content="高层住宅施工组织设计",
+                metadata={"source_path": "a.txt"},
+                distance=0.1,
+                score=0.9,
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/knowledge/search",
+        params={"query": "高层住宅", "top_k": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["content"] == "高层住宅施工组织设计"

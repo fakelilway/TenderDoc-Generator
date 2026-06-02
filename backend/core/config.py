@@ -48,6 +48,8 @@ class Settings(BaseSettings):
 
     embedding_model: str = Field("BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_device: str = Field("cpu", alias="EMBEDDING_DEVICE")
+    embedding_dimension: int = Field(1024, alias="EMBEDDING_DIMENSION")
+    rerank_model: str = Field("BAAI/bge-reranker-base", alias="RERANK_MODEL")
 
     debug: bool = Field(True, alias="DEBUG")
     log_level: str = Field("INFO", alias="LOG_LEVEL")

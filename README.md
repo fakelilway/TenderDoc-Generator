@@ -188,3 +188,5 @@ venv/bin/python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/project/{id}/generate`：当前作为 MVP parse alias，后续接 LangGraph 异步生成。
 - `GET /api/project/{id}/result`：读取解析 JSON。
 - `GET /api/project/{id}/review`：当前返回解析出的废标条款，后续接正式审查报告。
+- `POST /api/knowledge/upload`：上传企业知识库文档，保存到 MinIO 并写入 pgvector。
+- `GET /api/knowledge/search`：检索知识库 chunks，返回相似内容。

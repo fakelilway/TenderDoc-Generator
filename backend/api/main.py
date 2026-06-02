@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 
+from rag import retriever
+from schemas.knowledge import (
+    KnowledgeSearchResponse,
+    KnowledgeSearchResult,
+    KnowledgeUploadResponse,
+)
 from schemas.project import (
     ProjectCreateResponse,
     ProjectResultResponse,
     ProjectReviewResponse,
     ProjectStatusResponse,
 )
-from services import project_service
+from services import knowledge_service, project_service
 from services.project_service import ProjectNotFoundError
 
 
@@ -26,6 +32,47 @@ def _raise_http_error(error: Exception) -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
+async def upload_knowledge(
+    file: UploadFile = File(...),
+) -> KnowledgeUploadResponse:
+    try:
+        indexed = knowledge_service.index_uploaded_knowledge(
+            file_bytes=await file.read(),
+            filename=file.filename or "knowledge.txt",
+            content_type=file.content_type,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeUploadResponse(**indexed)
+
+
+@app.get("/api/knowledge/search", response_model=KnowledgeSearchResponse)
+def search_knowledge(
+    query: str = Query(..., min_length=1),
+    top_k: int = Query(5, ge=1, le=20),
+) -> KnowledgeSearchResponse:
+    try:
+        results = retriever.retrieve(query, top_k=top_k)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeSearchResponse(
+        query=query,
+        results=[
+            KnowledgeSearchResult(
+                chunk_id=result.chunk_id,
+                document_id=result.document_id,
+                content=result.content,
+                metadata=result.metadata,
+                score=result.score,
+            )
+            for result in results
+        ],
+    )
 
 
 @app.post("/api/project/create", response_model=ProjectCreateResponse)

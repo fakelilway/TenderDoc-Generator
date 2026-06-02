@@ -179,44 +179,61 @@
 - **当前验证**：`tests/test_rag_indexer.py` 已覆盖 TXT/DOCX/PDF 解析、文件过滤、chunk overlap 和 metadata。
 
 ### M16：加载 Embedding 模型并生成向量
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M5, M15
 - **完成标准**：
   - 从配置读取模型名称（BAAI/bge-small-zh-v1.5）
-  - 对每个文本块调用 `model.encode()` 生成向量（维度 384）
-- **测试方法**：对单个 chunk 编码，检查 `len(vector) == 384`。
-- **前置发现**：当前 `test_embedding.py` 输出维度为 1024，而 `knowledge_chunks.embedding` 是 `VECTOR(384)`；开始 M16/M17 时需统一模型或向量列维度。
+  - 对每个文本块调用 `model.encode()` 生成向量（当前配置维度 1024）
+- **测试方法**：对单个 chunk 编码，检查 `len(vector) == 1024`。
+- **当前实现**：
+  - `rag/embeddings.py` 已支持从配置加载 `EMBEDDING_MODEL`、`EMBEDDING_DEVICE`、`EMBEDDING_DIMENSION`
+  - 当前使用 `BAAI/bge-large-zh-v1.5`，输出维度 1024
 
 ### M17：将向量存入 pgvector 表 knowledge_chunks
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M4, M16
 - **完成标准**：
-  - 表结构：`id, content, metadata, embedding vector(384)`
+  - 表结构：`id, content, metadata, embedding vector(1024)`
   - 为 embedding 列创建 ivfflat 索引
 - **测试方法**：插入一条记录，执行 `SELECT * FROM knowledge_chunks WHERE embedding <-> '[0.1,...]' < 0.5` 返回结果。
+- **当前实现**：
+  - `init_db.sql` 已统一为 `VECTOR(1024)`，并创建 ivfflat 索引
+  - `documents.project_id` 已允许为空，用于知识库文档
+  - `rag/vector_store.py` 已支持写入 documents 和 knowledge_chunks
+- **当前验证**：已通过真实 DB smoke，确认 chunk 已写入且 embedding 非空。
 
 ### M18：实现检索器 rag/retriever.py
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M17
 - **完成标准**：
   - 函数 `retrieve(query: str, top_k=5)` 返回相似文本块列表，按相似度降序
 - **测试方法**：查询“高层住宅施工组织设计”，返回的 top-1 应包含相关关键词。
+- **当前实现**：`rag/retriever.py` 已实现 query embedding、pgvector 相似度查询、结果 score 转换和默认轻量 rerank。
+- **当前验证**：已通过真实检索 smoke，查询“高层住宅施工组织设计”可返回相关 chunk。
 
 ### M19：添加检索结果重排序（可选，但强烈推荐）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M18
 - **完成标准**：
   - 使用 `sentence-transformers` 的 cross-encoder 或调用 Cohere rerank API
   - 对初检结果重新打分并排序
 - **测试方法**：对比重排序前后 top-1 的相关性（肉眼判断改善）。
+- **当前实现**：
+  - `rerank_with_cross_encoder()` 已支持 `sentence-transformers` CrossEncoder
+  - `retrieve()` 默认使用轻量关键词 overlap rerank，避免每次请求强制加载 reranker 大模型
+- **当前验证**：单元测试已覆盖 rerank 相关排序提升。
 
 ### M20：实现知识库上传 API（增量索引）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M7, M16, M17
 - **完成标准**：
   - FastAPI 路由 `POST /api/knowledge/upload`，接收文件，保存到 MinIO，触发索引更新
   - 返回 `chunk_ids`
 - **测试方法**：用 `curl` 上传一个新文档，查询知识库应能检索到新内容。
+- **当前实现**：
+  - `POST /api/knowledge/upload` 上传知识库文件、保存 MinIO、分块、embedding、写入 pgvector
+  - `GET /api/knowledge/search` 用于检索知识库 chunks
+- **当前验证**：已通过真实 HTTP smoke，上传 `rag_smoke.txt` 后可用搜索 API 检索到相关内容。
 
 ---
 
