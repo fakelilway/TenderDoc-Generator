@@ -24,3 +24,8 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Frontend dependencies and build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/

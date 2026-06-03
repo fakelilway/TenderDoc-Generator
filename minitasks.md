@@ -437,52 +437,85 @@
 
 ## 阶段 6：前端基础界面（M39–M44）
 
+**阶段发布状态**：✅ 已推送到 GitHub 分支 `codex-phase-6-frontend-demo`
+
 ### M39：初始化 Next.js 项目并配置 API 代理
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M34
 - **完成标准**：
   - `frontend/` 目录使用 `create-next-app`，TypeScript + Tailwind
   - 配置 `next.config.js` 代理 `/api` 到后端 `http://localhost:8000`
 - **测试方法**：`npm run dev` 访问 `http://localhost:3000` 能看到默认页面。
+- **当前实现**：
+  - `frontend/` 已创建 Next.js App Router 项目骨架，包含 TypeScript、Tailwind、PostCSS、Next 配置和基础脚本。
+  - `frontend/next.config.mjs` 已配置 `/api/:path*` 代理到 `http://localhost:8000/api/:path*`，可通过 `BACKEND_API_BASE_URL` 覆盖。
+- **当前验证**：
+  - 已完成前端源码落地；当前本机 `npm/pnpm/yarn` 不在 PATH，运行 `npm run dev` 前需先安装包管理器并执行依赖安装。
 
 ### M40：实现文件上传组件（上传招标文件）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M39, M34 (/api/project/create)
 - **完成标准**：
   - 拖拽上传区域，调用后端创建项目接口，成功后跳转到项目工作台页面
 - **测试方法**：上传 PDF，检查浏览器控制台网络请求返回 `project_id`。
+- **当前实现**：
+  - `components/UploadPanel.tsx` 已支持项目名称、拖拽/点击上传 PDF/DOCX/TXT、文件移除和上传启动。
+  - `components/TenderWorkspace.tsx` 会调用 `POST /api/project/create`，成功后切换到 `/project/{project_id}` 工作台地址。
+- **当前验证**：
+  - 已完成接口封装和页面串联；真实浏览器上传验证待前端依赖安装后执行。
 
 ### M41：实现项目工作台页面（轮询状态 + 展示标书内容）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M40, M35, M36
 - **完成标准**：
   - 显示当前阶段（解析中/生成中/审查中/待确认）
   - 每 2 秒轮询 `/status`，更新进度条
   - 生成完成后，获取标书内容（调用导出接口预览）
 - **测试方法**：上传文件后，界面自动刷新显示生成结果。
+- **当前实现**：
+  - `app/page.tsx` 已串联 `create -> parse -> workflow/run -> review-report`，并每 2 秒轮询 `/api/project/{id}/status` 与 `/review-report`。
+  - `components/StatusRail.tsx` 已显示上传、解析、生成、审查、确认、下载的实时阶段。
+  - `components/MarkdownPreview.tsx` 已展示 `workflow_state.draft_markdown` 作为标书预览。
+- **当前验证**：
+  - 已完成状态轮询、workflow 快照读取和 Markdown 预览逻辑；真实端到端验证待前端依赖安装与后端服务启动后执行。
 
 ### M42：实现审查报告面板（风险项列表 + 高亮）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M41, M36
 - **完成标准**：
   - 以表格/卡片形式展示每个废标项的检查结果（通过/失败/警告）
   - 点击失败项，在标书预览区域高亮对应位置
 - **测试方法**：在审查阶段结束后，页面显示风险清单，点击能滚动到对应段落。
+- **当前实现**：
+  - `components/RiskPanel.tsx` 已展示 pass/fail/warning 风险项、严重程度、建议和定位行号。
+  - 点击风险项会设置 active line，`MarkdownPreview` 自动滚动并高亮对应 Markdown 行。
+- **当前验证**：
+  - 已完成审查报告 UI 与高亮联动代码；浏览器交互验证待依赖安装后执行。
 
 ### M43：实现人工确认按钮（批准或修改）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M42, M37
 - **完成标准**：
   - 在审查报告下方显示“批准并继续”和“手动修改”按钮
   - 点击“批准”调用 `/confirm`；点击修改弹出文本框，提交修改内容
 - **测试方法**：模拟审查完成，点击批准后工作流继续，最终可下载。
+- **当前实现**：
+  - 顶部操作区已提供“批准并继续”和“手动修改”按钮。
+  - `components/CorrectionModal.tsx` 已支持输入修正意见，并可调用 `/api/project/{id}/confirm` 保存修正或应用并批准。
+- **当前验证**：
+  - 已完成确认/修正 API 串联；真实确认恢复验证待前后端联调执行。
 
 ### M44：实现标书下载功能
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M43, M38
 - **完成标准**：
   - 工作流最终完成后，显示“下载标书”按钮，点击调用 `/download` 获取文件
 - **测试方法**：完成整个流程，点击下载得到 DOCX 文件。
+- **当前实现**：
+  - 工作流状态为 `approved`、`finished` 或 `generated` 后启用“下载标书”按钮。
+  - 点击按钮调用 `GET /api/project/{id}/download`，保存预签名 URL 并在新窗口打开 DOCX。
+- **当前验证**：
+  - 已完成下载接口调用和 URL 打开逻辑；真实 DOCX 下载验证待前后端联调执行。
 
 ---
 
