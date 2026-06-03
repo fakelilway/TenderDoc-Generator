@@ -84,15 +84,13 @@ def test_parse_project_returns_result(monkeypatch) -> None:
     assert response.json()["parsed_json"]["project_name"] == "测试项目"
 
 
-def test_generate_project_returns_export_paths(monkeypatch) -> None:
-    class FakeGenerated:
-        generated_markdown_path = "projects/7/generated/bid.md"
-        generated_docx_path = "projects/7/generated/bid.docx"
-        quality_report = {"usable_rate": 1.0}
-
+def test_generate_project_starts_async_task(monkeypatch) -> None:
     monkeypatch.setattr(
-        "api.main.generation_service.generate_and_export",
-        lambda project_id: FakeGenerated(),
+        "api.main.generation_service.start_generation",
+        lambda project_id, background_tasks: {
+            "task_id": "task-123",
+            "status": "processing",
+        },
     )
 
     response = client.post("/api/project/7/generate")
@@ -100,10 +98,30 @@ def test_generate_project_returns_export_paths(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "project_id": 7,
+        "status": "processing",
+        "task_id": "task-123",
+    }
+
+
+def test_download_project_returns_presigned_url(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_download_url",
+        lambda project_id: {
+            "project_id": project_id,
+            "status": "generated",
+            "download_url": "https://minio.local/projects/7/generated/bid.docx",
+            "expires_in": 3600,
+        },
+    )
+
+    response = client.get("/api/project/7/download")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project_id": 7,
         "status": "generated",
-        "generated_markdown_path": "projects/7/generated/bid.md",
-        "generated_docx_path": "projects/7/generated/bid.docx",
-        "quality_report": {"usable_rate": 1.0},
+        "download_url": "https://minio.local/projects/7/generated/bid.docx",
+        "expires_in": 3600,
     }
 
 

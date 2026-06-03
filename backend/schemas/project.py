@@ -26,12 +26,21 @@ class ProjectResultResponse(BaseModel):
 class ProjectReviewResponse(BaseModel):
     project_id: int
     status: str
-    invalid_bid_items: list[dict[str, Any]]
+    invalid_bid_items: list[dict[str, Any]] = []
+    review_report: dict[str, Any] | None = None
 
 
 class ProjectGenerateResponse(BaseModel):
     project_id: int
     status: str
-    generated_markdown_path: str
-    generated_docx_path: str
-    quality_report: dict[str, Any]
+    task_id: str | None = None
+    generated_markdown_path: str | None = None
+    generated_docx_path: str | None = None
+    quality_report: dict[str, Any] | None = None
+
+
+class ProjectDownloadResponse(BaseModel):
+    project_id: int
+    status: str
+    download_url: str
+    expires_in: int = 3600

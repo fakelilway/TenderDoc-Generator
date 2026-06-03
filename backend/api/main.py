@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 
 from rag import retriever
 from schemas.knowledge import (
@@ -10,6 +10,7 @@ from schemas.knowledge import (
 )
 from schemas.project import (
     ProjectCreateResponse,
+    ProjectDownloadResponse,
     ProjectGenerateResponse,
     ProjectResultResponse,
     ProjectReviewResponse,
@@ -130,20 +131,35 @@ def parse_project(project_id: int) -> ProjectResultResponse:
     )
 
 
-@app.post("/api/project/{project_id}/generate", response_model=ProjectGenerateResponse)
-def generate_project(project_id: int) -> ProjectGenerateResponse:
+@app.post(
+    "/api/project/{project_id}/generate",
+    response_model=ProjectGenerateResponse,
+    response_model_exclude_none=True,
+)
+def generate_project(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+) -> ProjectGenerateResponse:
     try:
-        generated = generation_service.generate_and_export(project_id)
+        task_info = generation_service.start_generation(project_id, background_tasks)
     except Exception as error:
         _raise_http_error(error)
 
     return ProjectGenerateResponse(
         project_id=project_id,
-        status="generated",
-        generated_markdown_path=generated.generated_markdown_path,
-        generated_docx_path=generated.generated_docx_path,
-        quality_report=generated.quality_report,
+        status=task_info["status"],
+        task_id=task_info["task_id"],
     )
+
+
+@app.get("/api/project/{project_id}/download", response_model=ProjectDownloadResponse)
+def download_project(project_id: int) -> ProjectDownloadResponse:
+    try:
+        download_info = project_service.get_project_download_url(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectDownloadResponse(**download_info)
 
 
 @app.post("/api/project/{project_id}/workflow/run", response_model=WorkflowRunResponse)

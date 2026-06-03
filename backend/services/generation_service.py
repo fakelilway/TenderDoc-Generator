@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 from psycopg2.extras import Json, RealDictCursor
 
@@ -155,6 +156,20 @@ def _set_status(project_id: int, status: str) -> None:
                 "UPDATE projects SET status = %s WHERE id = %s",
                 (status, project_id),
             )
+
+
+def start_generation(project_id: int, background_tasks) -> dict[str, str]:
+    task_id = uuid4().hex
+    _set_status(project_id, "processing")
+    background_tasks.add_task(_run_background_generation, project_id)
+    return {"task_id": task_id, "status": "processing"}
+
+
+def _run_background_generation(project_id: int) -> None:
+    try:
+        generate_and_export(project_id)
+    except Exception:
+        _set_status(project_id, "generation_failed")
 
 
 class _status:

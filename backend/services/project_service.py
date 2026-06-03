@@ -51,6 +51,9 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     name,
                     tender_file_path,
                     parsed_json,
+                    generated_markdown_path,
+                    generated_docx_path,
+                    generation_quality_json,
                     review_report_json,
                     workflow_state_json,
                     status,
@@ -202,12 +205,31 @@ def get_project_result(project_id: int) -> dict[str, Any]:
 
 
 def get_project_review(project_id: int) -> dict[str, Any]:
-    result = get_project_result(project_id)
-    parsed_json = result["parsed_json"] or {}
+    project = _fetch_project(project_id)
+    parsed_json = project["parsed_json"] or {}
     return {
-        "project_id": result["project_id"],
-        "status": result["status"],
+        "project_id": project["id"],
+        "status": project["status"],
         "invalid_bid_items": parsed_json.get("invalid_bid_items", []),
+        "review_report": project.get("review_report_json"),
+    }
+
+
+def get_project_download_url(project_id: int, expiry: int = 3600) -> dict[str, Any]:
+    project = _fetch_project(project_id)
+    generated_docx_path = project.get("generated_docx_path")
+    if not generated_docx_path:
+        raise ValueError("Project has no generated document to download")
+
+    return {
+        "project_id": project["id"],
+        "status": project["status"],
+        "download_url": minio_client.get_presigned_url(
+            settings.minio_bucket,
+            generated_docx_path,
+            expiry=expiry,
+        ),
+        "expires_in": expiry,
     }
 
 
