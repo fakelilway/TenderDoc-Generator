@@ -437,7 +437,7 @@
 
 ## 阶段 6：前端基础界面（M39–M44）
 
-**阶段发布状态**：✅ 已准备推送到 GitHub 分支 `codex-phase-6-frontend-demo`
+**阶段发布状态**：✅ 已推送到 GitHub 分支 `codex-phase-6-frontend-demo`
 
 ### M39：初始化 Next.js 项目并配置 API 代理
 - **完成状态**：✅ 已完成
