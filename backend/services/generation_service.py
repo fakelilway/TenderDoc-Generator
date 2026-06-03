@@ -36,25 +36,9 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
     with _status(project_id, "generating"):
         markdown = generate_bid_document(requirements, retrieved_chunks_by_section)
         quality_report = evaluate_generation_quality(markdown)
-
-        with TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            markdown_path = tmp_path / f"project_{project_id}_bid.md"
-            docx_path = tmp_path / f"project_{project_id}_bid.docx"
-            markdown_path.write_text(markdown, encoding="utf-8")
-            markdown_to_docx(markdown, docx_path)
-
-            markdown_object = f"projects/{project_id}/generated/bid.md"
-            docx_object = f"projects/{project_id}/generated/bid.docx"
-            minio_client.upload_file(
-                settings.minio_bucket, markdown_path, markdown_object
-            )
-            minio_client.upload_file(settings.minio_bucket, docx_path, docx_object)
-
-        _update_generation_paths(
+        markdown_object, docx_object = export_markdown_for_project(
             project_id,
-            markdown_object,
-            docx_object,
+            markdown,
             quality_report,
         )
 
@@ -65,6 +49,32 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
         generated_docx_path=docx_object,
         quality_report=quality_report,
     )
+
+
+def export_markdown_for_project(
+    project_id: int,
+    markdown: str,
+    quality_report: dict[str, float | int],
+) -> tuple[str, str]:
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        markdown_path = tmp_path / f"project_{project_id}_bid.md"
+        docx_path = tmp_path / f"project_{project_id}_bid.docx"
+        markdown_path.write_text(markdown, encoding="utf-8")
+        markdown_to_docx(markdown, docx_path)
+
+        markdown_object = f"projects/{project_id}/generated/bid.md"
+        docx_object = f"projects/{project_id}/generated/bid.docx"
+        minio_client.upload_file(settings.minio_bucket, markdown_path, markdown_object)
+        minio_client.upload_file(settings.minio_bucket, docx_path, docx_object)
+
+    _update_generation_paths(
+        project_id,
+        markdown_object,
+        docx_object,
+        quality_report,
+    )
+    return markdown_object, docx_object
 
 
 def evaluate_generation_quality(markdown_text: str) -> dict[str, float | int]:

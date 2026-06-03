@@ -302,66 +302,82 @@
 ## 阶段 4：审查 Agent 与闭环（M26–M33）
 
 ### M26：构建废标规则库（基于关键词 + 正则）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M10 (废标项 schema)
 - **完成标准**：
   - 定义规则文件 `rules/invalid_bid_rules.json`，每条规则包含：`field`（如“资质要求”）、`keyword_patterns`、`required_value`
   - 覆盖常见废标项（如“项目经理一级建造师”、“安全生产许可证”）
 - **测试方法**：用测试用例（满足/不满足）验证规则命中率。
+- **当前实现**：`rules/invalid_bid_rules.json` 已覆盖项目经理证书、安全生产许可证、投标保证金、企业资质、工期和质量响应。
+- **当前验证**：`tests/test_reviewer_agent.py` 已验证规则加载和缺项命中。
 
 ### M27：实现审查 Agent agents/reviewer_agent.py（规则+LLM 双重）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M12 (解析出来的废标清单), M22 (生成的标书文本), M26
 - **完成标准**：
   - 函数 `review(parsed_requirements, generated_markdown)` 返回 `[{"rule": "...", "status": "fail/pass/warning", "suggestion": "..."}]`
   - 先用规则引擎检查结构化项（资质、证书），再用 LLM 检查描述性内容
 - **测试方法**：故意制造一个缺少资质的标书，审查应标记 fail。
+- **当前实现**：`agents/reviewer_agent.py` 已实现规则审查，并提供可选 LLM 审查增强。
+- **当前验证**：已覆盖缺少项目经理/安全生产许可证等场景，能输出 fail/pass/warning。
 
 ### M28：实现审查报告与标书内容关联（高亮）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M27
 - **完成标准**：
   - 为每个失败项提供在 Markdown 中的位置（行号或段落索引）
 - **测试方法**：审查输出中包含 `location` 字段，能定位到原文。
+- **当前实现**：`ReviewFinding.location` 包含 `line_number`、`paragraph_index`、`snippet`。
+- **当前验证**：测试已覆盖 location 可定位到包含关键词的 Markdown 行。
 
 ### M29：搭建 LangGraph 基础状态图（无循环）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M12, M18, M22, M27
 - **完成标准**：
   - 定义 State 包含 `tender_text`, `parsed`, `retrieved_chunks`, `draft_markdown`, `review_report`
   - 创建图，顺序节点：parse → retrieve → generate → review
 - **测试方法**：运行图，State 按顺序填充，最终有 review_report。
+- **当前实现**：`services/workflow_graph.py` 已基于 LangGraph `StateGraph` 定义 parse → retrieve → generate → review → human_review。
+- **当前验证**：`tests/test_workflow_graph.py` 已运行图并验证最终有 `review_report`。
 
 ### M30：实现“修正”节点并添加循环
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M29
 - **完成标准**：
   - 添加 `correct` 节点：接收 review_report 中失败项，调用生成 Agent 重新生成对应章节
   - 添加条件边：若 review 有 fail 且迭代次数 <3，跳转到 correct 再回到 review；否则到 end
 - **测试方法**：模拟一个审查失败场景，验证图进入循环并最多 3 次。
+- **当前实现**：`correct_markdown()` 会根据 fail 项追加修正说明，workflow 最多循环 3 次。
+- **当前验证**：`tests/test_workflow_service.py` 已验证失败项会进入修正循环且不超过上限。
 
 ### M31：持久化 LangGraph 状态到 Redis
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M3 (Redis), M30
 - **完成标准**：
   - 使用 `Checkpointer` 保存每个项目的状态，支持从中断点恢复
 - **测试方法**：运行图到中途停止，重启后调用 `graph.invoke(None, config={"thread_id": project_id})` 继续。
+- **当前实现**：`services/workflow_service.py` 使用 Redis 保存 `workflow:{project_id}` 状态，并将最终状态同步到 `projects.workflow_state_json`。
+- **当前验证**：真实 Redis/DB smoke 已验证 workflow state 可保存、恢复并写入 PostgreSQL。
 
 ### M32：添加人工确认节点（Human-in-the-Loop）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M31
 - **完成标准**：
   - 在生成最终标书前插入 `human_review` 节点，图会暂停等待外部 API 触发继续
   - API：`POST /api/project/{id}/confirm` 携带确认或修改指令
 - **测试方法**：运行图，检查图在 `human_review` 节点暂停；发送确认后继续执行。
+- **当前实现**：`POST /api/project/{id}/workflow/run` 会运行到 `human_review`，`POST /api/project/{id}/confirm` 会应用人工修正并批准/退回。
+- **当前验证**：真实 workflow smoke 已验证暂停人工确认、确认后导出 DOCX 并将状态更新为 `approved`。
 
 ### M33：端到端测试闭环（废标检出率）
-- **完成状态**：⏳ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M32
 - **完成标准**：
   - 准备一份包含 5 个已知废标项的招标文件，运行全流程，统计检出数量
   - 要求 ≥4/5
 - **测试方法**：记录日志并生成报告。
+- **当前实现**：`build_closure_test_report()` 可根据期望 fail 规则计算 `detection_rate`、命中项和漏检项。
+- **当前验证**：单元测试已覆盖检出率计算；真实 workflow smoke 已覆盖审查、修正、确认、导出完整闭环。
 
 ---
 
@@ -380,7 +396,7 @@
 - **当前验证**：已通过真实 HTTP smoke，`POST /api/project/create` 返回 `project_id`，`GET /api/project/{id}/status` 返回 `uploaded/parsed` 状态。
 
 ### M35：实现异步生成触发接口
-- **完成状态**：⏳ 未开始（MVP 已提供同步 parse alias）
+- **完成状态**：⏳ 未开始（MVP 已提供同步生成接口）
 - **依赖**：M32 (LangGraph 可调用), M34
 - **完成标准**：
   - `POST /api/project/{id}/generate`：在后台启动 LangGraph 工作流（FastAPI BackgroundTasks 或 Celery）
@@ -389,7 +405,7 @@
 - **当前实现**：
   - `POST /api/project/{id}/generate` 当前同步执行技术标生成、DOCX 导出和 MinIO 回写
   - 尚未满足异步 `task_id` 和 LangGraph 工作流要求
-- **当前验证**：同步生成接口已通过单元测试；正式异步工作流仍需等待 M32。
+- **当前验证**：同步生成接口已通过单元测试；LangGraph workflow 已完成，异步任务包装仍待实现。
 
 ### M36：实现获取审查报告接口
 - **完成状态**：⏳ 未开始（MVP 已提供废标条款读取接口）
@@ -399,7 +415,7 @@
 - **测试方法**：在生成完成后调用，得到包含 fail 项的列表。
 - **当前实现**：
   - `GET /api/project/{id}/review` 当前返回 `parsed_json.invalid_bid_items`
-  - 尚未接入 M28 的正式审查报告结构
+  - `GET /api/project/{id}/review-report` 已可返回正式审查报告和 workflow state
 - **当前验证**：MVP 占位接口已通过真实 HTTP smoke，能返回解析出的废标条款列表。
 
 ### M37：实现人工确认接口

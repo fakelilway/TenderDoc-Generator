@@ -46,7 +46,15 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                SELECT id, name, tender_file_path, parsed_json, status, created_at
+                SELECT
+                    id,
+                    name,
+                    tender_file_path,
+                    parsed_json,
+                    review_report_json,
+                    workflow_state_json,
+                    status,
+                    created_at
                 FROM projects
                 WHERE id = %s
                 """,
@@ -200,4 +208,14 @@ def get_project_review(project_id: int) -> dict[str, Any]:
         "project_id": result["project_id"],
         "status": result["status"],
         "invalid_bid_items": parsed_json.get("invalid_bid_items", []),
+    }
+
+
+def get_project_review_report(project_id: int) -> dict[str, Any]:
+    project = _fetch_project(project_id)
+    return {
+        "project_id": project["id"],
+        "status": project["status"],
+        "review_report": project.get("review_report_json"),
+        "workflow_state": project.get("workflow_state_json"),
     }

@@ -15,7 +15,17 @@ from schemas.project import (
     ProjectReviewResponse,
     ProjectStatusResponse,
 )
-from services import generation_service, knowledge_service, project_service
+from schemas.workflow import (
+    ProjectConfirmRequest,
+    ProjectConfirmResponse,
+    WorkflowRunResponse,
+)
+from services import (
+    generation_service,
+    knowledge_service,
+    project_service,
+    workflow_service,
+)
 from services.project_service import ProjectNotFoundError
 
 
@@ -136,6 +146,44 @@ def generate_project(project_id: int) -> ProjectGenerateResponse:
     )
 
 
+@app.post("/api/project/{project_id}/workflow/run", response_model=WorkflowRunResponse)
+def run_project_workflow(project_id: int) -> WorkflowRunResponse:
+    try:
+        state = workflow_service.run_bid_workflow(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return WorkflowRunResponse(
+        project_id=state.project_id,
+        status=state.status,
+        awaiting_human=state.awaiting_human,
+        iteration_count=state.iteration_count,
+        review_report=state.review_report,
+    )
+
+
+@app.post("/api/project/{project_id}/confirm", response_model=ProjectConfirmResponse)
+def confirm_project(
+    project_id: int,
+    request: ProjectConfirmRequest,
+) -> ProjectConfirmResponse:
+    try:
+        state = workflow_service.confirm_project(
+            project_id,
+            approved=request.approved,
+            corrections=request.corrections,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectConfirmResponse(
+        project_id=state.project_id,
+        status=state.status,
+        approved=state.approved,
+        review_report=state.review_report,
+    )
+
+
 @app.get("/api/project/{project_id}/result", response_model=ProjectResultResponse)
 def project_result(project_id: int) -> ProjectResultResponse:
     try:
@@ -148,5 +196,13 @@ def project_result(project_id: int) -> ProjectResultResponse:
 def project_review(project_id: int) -> ProjectReviewResponse:
     try:
         return ProjectReviewResponse(**project_service.get_project_review(project_id))
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@app.get("/api/project/{project_id}/review-report")
+def project_review_report(project_id: int) -> dict:
+    try:
+        return project_service.get_project_review_report(project_id)
     except Exception as error:
         _raise_http_error(error)

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "project_manager_certificate",
+    "field": "项目经理证书",
+    "keyword_patterns": ["项目经理", "建造师"],
+    "required_value": "项目经理具备相应注册建造师证书并满足招标要求",
+    "severity": "high",
+    "suggestion": "在项目管理机构或人员配置章节明确项目经理注册建造师证书、专业、有效期和在岗承诺。"
+  },
+  {
+    "id": "safety_production_license",
+    "field": "安全生产许可证",
+    "keyword_patterns": ["安全生产许可证", "安全许可证"],
+    "required_value": "投标人具备有效安全生产许可证",
+    "severity": "high",
+    "suggestion": "在资格响应或安全文明施工章节写明安全生产许可证有效、覆盖本项目施工活动。"
+  },
+  {
+    "id": "bid_bond",
+    "field": "投标保证金",
+    "keyword_patterns": ["投标保证金", "保证金"],
+    "required_value": "按招标文件要求提交投标保证金或保函",
+    "severity": "high",
+    "suggestion": "补充投标保证金或保函提交方式、金额、有效期和到账/开具时间响应。"
+  },
+  {
+    "id": "qualification_level",
+    "field": "企业资质",
+    "keyword_patterns": ["施工总承包", "资质", "企业资质"],
+    "required_value": "投标人具备招标文件要求的企业施工资质等级",
+    "severity": "high",
+    "suggestion": "在资格响应章节明确企业施工资质等级，并与招标文件要求保持一致。"
+  },
+  {
+    "id": "schedule_response",
+    "field": "工期响应",
+    "keyword_patterns": ["工期", "进度计划"],
+    "required_value": "施工组织设计响应工期和进度计划要求",
+    "severity": "medium",
+    "suggestion": "在进度计划章节补充总工期、关键节点、资源投入和延期风险控制措施。"
+  },
+  {
+    "id": "quality_response",
+    "field": "质量响应",
+    "keyword_patterns": ["质量", "验收"],
+    "required_value": "质量保证措施响应招标文件质量目标和验收要求",
+    "severity": "medium",
+    "suggestion": "在质量保证章节补充质量目标、三检制、隐蔽工程验收和资料归档措施。"
+  }
+]

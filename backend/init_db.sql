@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS projects (
     generated_markdown_path TEXT,
     generated_docx_path TEXT,
     generation_quality_json JSONB,
+    review_report_json JSONB,
+    workflow_state_json JSONB,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -15,6 +17,8 @@ CREATE TABLE IF NOT EXISTS projects (
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_markdown_path TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_docx_path TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generation_quality_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS review_report_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS workflow_state_json JSONB;
 
 CREATE TABLE IF NOT EXISTS documents (
     id BIGSERIAL PRIMARY KEY,

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from rag import retriever
+from schemas.workflow import WorkflowState
 from services.project_service import ProjectNotFoundError
 
 
@@ -199,3 +200,60 @@ def test_search_knowledge_returns_results(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["results"][0]["content"] == "高层住宅施工组织设计"
+
+
+def test_run_project_workflow_returns_human_review_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.workflow_service.run_bid_workflow",
+        lambda project_id: WorkflowState(
+            project_id=project_id,
+            status="human_review",
+            awaiting_human=True,
+            iteration_count=1,
+            review_report={"fail_count": 0, "findings": []},
+        ),
+    )
+
+    response = client.post("/api/project/7/workflow/run")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "human_review"
+    assert response.json()["awaiting_human"] is True
+
+
+def test_confirm_project_approves_workflow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.workflow_service.confirm_project",
+        lambda project_id, approved, corrections=None: WorkflowState(
+            project_id=project_id,
+            status="approved",
+            approved=approved,
+            review_report={"fail_count": 0, "findings": []},
+        ),
+    )
+
+    response = client.post(
+        "/api/project/7/confirm",
+        json={"approved": True, "corrections": {"note": "确认"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    assert response.json()["approved"] is True
+
+
+def test_project_review_report_returns_workflow_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_review_report",
+        lambda project_id: {
+            "project_id": project_id,
+            "status": "approved",
+            "review_report": {"fail_count": 0},
+            "workflow_state": {"status": "approved"},
+        },
+    )
+
+    response = client.get("/api/project/7/review-report")
+
+    assert response.status_code == 200
+    assert response.json()["review_report"]["fail_count"] == 0
