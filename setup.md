@@ -1,606 +1,293 @@
-# TenderDoc-Generator 环境搭建指南 (setup.md)
+# TenderDoc-Generator 本地启动指南
 
-本文档用于帮助开发者在本地环境中快速搭建 TenderDoc-Generator 的完整开发环境。
-
----
-
-## 目录
-
-1. [前置要求](#前置要求)
-2. [基础服务（Docker）](#基础服务docker)
-3. [后端环境配置](#后端环境配置)
-4. [环境变量配置](#环境变量配置)
-5. [知识库准备](#知识库准备)
-6. [环境验证](#环境验证)
-7. [常见问题](#常见问题)
+本文档说明如何在本地直接启动 TenderDoc-Generator MVP。当前推荐使用仓库内脚本完成环境安装、数据库初始化、后端启动和前端启动。
 
 ---
 
-## 前置要求
+## 1. 前置要求
 
-在开始之前，请确保你的系统满足以下条件：
+| 组件 | 推荐版本 | 检查命令 |
+|------|----------|----------|
+| Docker Desktop / Docker Engine | 24+ | `docker --version` |
+| Docker Compose | 2.20+ | `docker compose version` |
+| Python | 3.11+ | `python3.11 --version` |
+| Node.js | 20+ | `node --version` |
+| pnpm | 10+ | `pnpm --version` |
+| Git | 2.30+ | `git --version` |
 
-| 组件 | 最低要求 | 推荐配置 | 验证命令 |
-|------|----------|----------|----------|
-| 操作系统 | Windows 10 (WSL2) / macOS 11+ / Linux | Ubuntu 22.04 / macOS 13+ | - |
-| CPU | 4 核 | 8 核 | - |
-| 内存 | 8 GB | 16 GB | - |
-| 磁盘 | 20 GB 可用空间 | 50 GB | - |
-| Docker | 24.0+ | 最新稳定版 | `docker --version` |
-| Docker Compose | 2.20+ | 2.20+ | `docker compose version` |
-| Python | 3.11+ | 3.12 | `python3 --version` |
-| Git | 2.30+ | 最新版 | `git --version` |
-
----
-
-## 基础服务（Docker）
-
-TenderDoc-Generator 依赖以下服务：
-- **PostgreSQL + pgvector**：业务数据与向量存储
-- **Redis**：缓存与 Agent 状态
-- **MinIO**：对象存储（招标文件、生成文件）
-
-### 步骤 1：打开仓库（或首次克隆）
-
-如果你已经在 VS Code 中打开了本仓库，可以直接跳过这一步。
-如果本地还没有项目，请先 clone 到本地：
+如果没有 pnpm，可以先安装：
 
 ```bash
-git clone <your-repo-url> TenderDoc-Generator
-cd TenderDoc-Generator
-```
-
-如果你已经拥有本地仓库，直接在 VS Code 中打开项目根目录即可。
-
-### 步骤 2：检查并启动 docker-compose.yml
-
-当前仓库根目录已经包含 `docker-compose.yml`，你通常只需要确认其中的端口、账号和密码与 `.env` 一致，然后直接启动即可。
-
-如果你需要参考配置，当前使用的服务如下（`docker compose` v2 不需要 `version` 字段）：
-
-```yaml
-services:
-  # PostgreSQL + pgvector 数据库
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: tender-postgres
-    environment:
-      POSTGRES_DB: tenderdb
-      POSTGRES_USER: tenderuser
-      POSTGRES_PASSWORD: tenderpwd
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tenderuser -d tenderdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - tender-network
-
-  # Redis 缓存与消息队列
-  redis:
-    image: redis:7-alpine
-    container_name: tender-redis
-    command: redis-server --appendonly yes
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - tender-network
-
-  # MinIO 对象存储
-  minio:
-    image: minio/minio:latest
-    container_name: tender-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-    restart: unless-stopped
-    networks:
-      - tender-network
-
-volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-  minio_data:
-    driver: local
-
-networks:
-  tender-network:
-    driver: bridge
-```
-
-启动容器：
-
-```bash
-# 启动所有服务（后台运行）
-docker compose up -d
-
-# 查看容器状态
-docker compose ps
-
-# 查看日志（如有异常）
-docker compose logs -f
-```
-
-### 步骤 3：初始化 pgvector 扩展
-
-PostgreSQL 容器启动后，需要手动创建 vector 扩展：
-
-```bash
-docker exec -it tender-postgres psql -U tenderuser -d tenderdb
-```
-
-在 psql 提示符下执行：
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-\q
-```
-
-验证扩展是否成功：
-
-```bash
-docker exec -it tender-postgres psql -U tenderuser -d tenderdb -c "SELECT * FROM pg_extension WHERE extname='vector';"
-```
-
-应该能看到一条记录。
-
----
-
-## 后端环境配置
-
-### 步骤 1：进入后端目录
-
-```bash
-cd backend
-```
-
-### 步骤 2：创建 Python 虚拟环境
-
-```bash
-# 使用 python3.11 或更高版本
-python3 -m venv venv
-
-# 激活虚拟环境
-# Linux / macOS:
-source venv/bin/activate
-# Windows (cmd):
-venv\Scripts\activate
-# Windows (PowerShell):
-venv\Scripts\Activate.ps1
-```
-
-激活后，命令行提示符会显示 `(venv)`。
-
-### 步骤 3：安装 Python 依赖
-
-当前仓库已经包含 `backend/requirements.txt`。如果你的本地版本还是空文件，请先将其补齐为下面这份依赖清单（根据 TECH_STACK.md）：
-
-```txt
-# FastAPI
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
-
-# 数据库与 ORM
-sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
-alembic==1.13.1
-
-# AI / Agent
-langgraph==0.0.30
-langchain==0.1.10
-langchain-community==0.0.25
-langchain-openai==0.0.8
-
-# LLM 调用
-openai==1.10.0
-requests==2.31.0
-
-# 向量模型与检索
-sentence-transformers==2.2.2
-scikit-learn==1.3.2
-numpy==1.24.3
-
-# 文档处理
-pypdf==4.0.1
-pdfplumber==0.10.3
-python-docx==0.8.11
-
-# 异步与缓存
-redis==5.0.1
-celery==5.3.4
-
-# 数据验证
-pydantic==2.5.3
-pydantic-settings==2.1.0
-
-# 工具
-python-dotenv==1.0.0
-structlog==24.1.0
-jieba==0.42.1
-
-# MinIO
-minio==7.2.0
-
-# 测试
-pytest==7.4.3
-pytest-asyncio==0.23.1
-httpx==0.25.2
-
-# 开发
-black==23.12.1
-flake8==6.1.0
-mypy==1.7.1
-```
-
-执行安装：
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-> **注意**：
-> - `sentence-transformers` 会自动安装 PyTorch CPU 版本。如果你的机器有 GPU，可以后续自行安装 CUDA 版本。
-> - 国内用户如遇到镜像下载缓慢，可配置 pip 镜像源。
-
-### 步骤 4：安装代码质量工具（可选但推荐）
-
-为了保持代码质量，建议安装代码检查工具：
-
-```bash
-# 已在 requirements.txt 中，但也可单独安装
-pip install black flake8 mypy
-
-# 配置 black（代码格式化）
-black --line-length=100 backend/
-
-# 检查代码风格
-flake8 backend/
-
-# 类型检查
-mypy backend/
+corepack enable
+corepack prepare pnpm@10.32.0 --activate
 ```
 
 ---
 
-## 环境变量配置
+## 2. 首次安装
 
-在 `backend/` 目录下准备 `.env` 文件，用于存储敏感配置和连接信息。
+在仓库根目录运行：
 
 ```bash
-cp .env.example .env   # 当前仓库已提供模板，可直接复制
+./scripts/setup_local.sh
 ```
 
-编辑 `.env`，填入以下内容（请根据实际情况修改）。参考 TECH_STACK.md 第 13 部分：
+这个脚本会执行：
+
+- 如果 `backend/.env` 不存在，从 `backend/.env.example` 复制一份
+- 创建或复用根目录 `.venv`
+- 安装后端依赖
+- 安装前端依赖
+- 启动 Docker 服务
+- 应用 `backend/init_db.sql`
+
+真实 LLM 解析/生成流程需要编辑 `backend/.env`，至少配置：
 
 ```env
-# ==================== 数据库 ====================
+OPENROUTER_API_KEY=sk-or-v1-your-key
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=deepseek/deepseek-chat
+```
+
+基础服务默认配置：
+
+```env
 DATABASE_URL=postgresql://tenderuser:tenderpwd@localhost:5432/tenderdb
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=tenderdb
-POSTGRES_USER=tenderuser
-POSTGRES_PASSWORD=tenderpwd
-
-# ==================== Redis ====================
 REDIS_URL=redis://localhost:6379/0
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-
-# ==================== MinIO ====================
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=minioadmin
 MINIO_API_URL=http://localhost:9000
 MINIO_CONSOLE_URL=http://localhost:9001
 MINIO_BUCKET=tender-files
-
-# ==================== 大模型 API ====================
-# 主选：DeepSeek (推荐，性价比高)
-DEEPSEEK_API_KEY=sk_xxxx
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_MODEL=deepseek-chat
-
-# 备选：通义千问
-QIANWEN_API_KEY=sk_xxxx
-
-# 备选：OpenAI
-OPENAI_API_KEY=sk_xxxx
-
-# ==================== Embedding 模型 ====================
-# 中文最强向量模型
-EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
-EMBEDDING_DEVICE=cpu   # 若 GPU 可用，改为 cuda
-
-# ==================== 应用配置 ====================
-DEBUG=true
-LOG_LEVEL=INFO
-JWT_SECRET=your-secret-key
-JWT_ALGORITHM=HS256
-
-# 临时文件存储目录
-TEMP_DIR=./temp
-# 最大上传文件大小（MB）
-MAX_FILE_SIZE=50
 ```
-
-> **重要**：请将 `DEEPSEEK_API_KEY` 替换为你的真实密钥。若使用其他大模型，请相应调整。
 
 ---
 
-## 知识库准备
+## 3. 日常启动
 
-在项目根目录的 `knowledge_base/` 文件夹中，放入企业相关的文档，用于 RAG 检索测试。
+日常开发只需要：
 
 ```bash
-# 确保目录存在
-mkdir -p ../knowledge_base
+./scripts/dev_local.sh
 ```
 
-建议至少放入以下类型的文件：
-- 公司资质证书扫描件（PDF）
-- 过往中标技术标书（Word/PDF）
-- 常用施工组织设计方案模板（Word）
-- 公司业绩清单（Excel 或 Word）
+启动成功后访问：
 
-**文件命名建议**：使用英文或拼音，避免特殊字符。
+- 前端工作台：`http://localhost:3000`
+- 后端 API 文档：`http://localhost:8000/docs`
+- 后端健康检查：`http://localhost:8000/health`
+- MinIO Console：`http://localhost:9001`
+
+MinIO 默认账号密码：
+
+```text
+minioadmin / minioadmin
+```
+
+按 `Ctrl+C` 会停止后端和前端开发服务；Docker 容器会继续在后台运行。
 
 ---
 
-## 环境验证
+## 4. 拆分启动命令
 
-我们提供一组简单的测试脚本，用于验证各组件是否正常工作。
+如果需要单独排查某一层，可以使用下面的脚本。
 
-在 `backend/` 目录下创建这些脚本并运行。
-
-### 验证 1：PostgreSQL 连接
-
-`backend/test_db.py` 已在仓库中提供，直接运行即可。
-
-```python
-import psycopg2
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-try:
-    conn = psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST"),
-        port=os.getenv("POSTGRES_PORT"),
-        dbname=os.getenv("POSTGRES_DB"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD")
-    )
-    print("✓ PostgreSQL 连接成功")
-    conn.close()
-except Exception as e:
-    print(f"✗ PostgreSQL 连接失败: {e}")
-```
-
-### 验证 2：Redis 连接
-
-`backend/test_redis.py` 已在仓库中提供，直接运行即可。
-
-```python
-import redis
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-try:
-    r = redis.Redis(
-        host=os.getenv("REDIS_HOST"),
-        port=int(os.getenv("REDIS_PORT")),
-        decode_responses=True
-    )
-    r.ping()
-    print("✓ Redis 连接成功")
-except Exception as e:
-    print(f"✗ Redis 连接失败: {e}")
-```
-
-### 验证 3：MinIO 连接
-
-`backend/test_minio.py` 已在仓库中提供，直接运行即可。
-
-```python
-from minio import Minio
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-try:
-    client = Minio(
-        os.getenv("MINIO_ENDPOINT"),
-        access_key=os.getenv("MINIO_ACCESS_KEY"),
-        secret_key=os.getenv("MINIO_SECRET_KEY"),
-        secure=os.getenv("MINIO_SECURE", "False").lower() == "true"
-    )
-    bucket = os.getenv("MINIO_BUCKET")
-    if not client.bucket_exists(bucket):
-        client.make_bucket(bucket)
-        print(f"✓ 创建 bucket: {bucket}")
-    print("✓ MinIO 连接成功")
-except Exception as e:
-    print(f"✗ MinIO 连接失败: {e}")
-```
-
-### 验证 4：大模型 API 调用
-
-`backend/test_llm.py` 已在仓库中提供，直接运行即可（以 DeepSeek 为例）。
-
-```python
-from openai import OpenAI
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-try:
-    client = OpenAI(
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        base_url=os.getenv("DEEPSEEK_BASE_URL")
-    )
-    response = client.chat.completions.create(
-        model=os.getenv("DEEPSEEK_MODEL"),
-        messages=[{"role": "user", "content": "请回复 OK"}],
-        max_tokens=10
-    )
-    print("✓ 大模型 API 调用成功:", response.choices[0].message.content)
-except Exception as e:
-    print(f"✗ 大模型 API 调用失败: {e}")
-```
-
-### 验证 5：Embedding 模型加载
-
-`backend/test_embedding.py` 已在仓库中提供，直接运行即可。
-
-```python
-from sentence_transformers import SentenceTransformer
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-try:
-    model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
-    device = os.getenv("EMBEDDING_DEVICE", "cpu")
-    model = SentenceTransformer(model_name, device=device)
-    emb = model.encode("测试文本")
-    print(f"✓ Embedding 模型加载成功，输出维度: {len(emb)}")
-except Exception as e:
-    print(f"✗ Embedding 模型加载失败: {e}")
-```
-
-### 运行所有验证
-
-确保虚拟环境已激活，然后逐个运行：
+初始化基础服务和数据库：
 
 ```bash
-python test_db.py
-python test_redis.py
-python test_minio.py
-python test_llm.py
-python test_embedding.py
+./scripts/init_db.sh
 ```
 
-全部显示 `✓` 即为环境就绪。
+只启动后端：
+
+```bash
+./scripts/start_backend.sh
+```
+
+只启动前端：
+
+```bash
+./scripts/start_frontend.sh
+```
+
+只安装前端依赖：
+
+```bash
+./scripts/setup_frontend.sh
+```
+
+只安装后端虚拟环境：
+
+```bash
+./scripts/setup_venv.sh
+```
+
+强制重建 `.venv`：
+
+```bash
+RESET_VENV=1 ./scripts/setup_venv.sh
+```
 
 ---
 
-## 前端环境配置（可选，MVP 第 8 周后）
+## 5. 验证命令
 
-待补充。参考 TECH_STACK.md 第 1 部分。
+后端单元测试：
 
----
+```bash
+.venv/bin/python -m pytest backend/tests -q
+```
 
-## 常见问题
+基础服务 smoke：
 
-### Q1: Docker 容器启动失败，端口被占用
+```bash
+.venv/bin/python backend/test_db.py
+.venv/bin/python backend/test_redis.py
+.venv/bin/python backend/test_minio.py
+```
 
-**错误信息**：`port is already allocated`
+LLM 和 embedding smoke：
 
-**解决方法**：
-- 修改 `docker-compose.yml` 中的宿主机端口，例如 `"5433:5432"`。
-- 然后同步修改 `.env` 中的 `POSTGRES_PORT=5433`。
+```bash
+.venv/bin/python backend/test_llm.py
+.venv/bin/python backend/test_embedding.py
+```
 
-### Q2: pgvector 扩展安装失败
+前端类型检查和生产构建：
 
-**现象**：执行 `CREATE EXTENSION vector` 时报错。
+```bash
+cd frontend
+pnpm run typecheck
+pnpm run build
+```
 
-**解决方法**：
-- 确认使用的镜像为 `pgvector/pgvector:pg16`，而非原版 PostgreSQL。
-- 重启容器：`docker compose restart postgres` 后重试。
+健康检查：
 
-### Q3: sentence-transformers 下载模型很慢
+```bash
+curl -fsS http://localhost:8000/health
+curl -fsSI http://localhost:3000
+```
 
-**原因**：国内访问 HuggingFace 速度较慢。
+当前已验证结果：
 
-**解决方法**：
-- 设置镜像源（例如使用 hf-mirror.com）：
-  ```bash
-  export HF_ENDPOINT=https://hf-mirror.com
-  ```
-- 或者手动下载模型到本地缓存目录。
-
-### Q4: 大模型 API 调用返回 401
-
-**原因**：API Key 无效或未正确配置。
-
-**解决方法**：
-- 检查 `.env` 中的密钥是否正确（推荐先用 DEEPSEEK_API_KEY）。
-- 确认账户余额充足。
-- 验证网络能正常访问 API 域名。
-
-### Q5: MinIO 创建 bucket 失败（权限问题）
-
-**解决方法**：
-- 检查 `.env` 中的 `MINIO_ROOT_USER` 和 `MINIO_ROOT_PASSWORD` 是否与 `docker-compose.yml` 中一致。
-- 重启 MinIO 容器后重试。
-
-### Q6: pip 依赖安装缓慢或失败
-
-**原因**：网络问题或 PyPI 源不稳定。
-
-**解决方法**：
-- 配置清华大学 PyPI 镜像：
-  ```bash
-  pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-  ```
-- 或者临时使用阿里镜像：
-  ```bash
-  pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
-  ```
-
-### Q7: SQLAlchemy / psycopg2 导入错误
-
-**解决方法**：
-- 确保 Python 3.11+ 且虚拟环境已激活。
-- 重装 `psycopg2-binary`：
-  ```bash
-  pip install --force-reinstall psycopg2-binary==2.9.9
-  ```
+- `./scripts/init_db.sh` 通过
+- `.venv/bin/python -m pytest backend/tests -q` 通过：49 passed, 2 skipped
+- `pnpm run typecheck` 通过
+- `pnpm run build` 通过
+- `./scripts/dev_local.sh` 可启动前端和后端
 
 ---
 
-## 下一步
+## 6. 本地 Demo 流程
 
-环境验证通过后，你可以开始开发第一个 Agent——**招标文件解析 Agent**。
+1. 运行 `./scripts/dev_local.sh`
+2. 打开 `http://localhost:3000`
+3. 上传真实招标文件（PDF/DOCX/TXT）
+4. 等待系统创建项目、解析、生成、审查
+5. 在页面查看 Markdown 初稿和审查风险项
+6. 点击“批准并继续”或“手动修改”
+7. 点击“下载标书”获取 DOCX
 
-开发指南请参考 `docs/agent_development.md`（待编写）。
+企业历史标书、资质文件、施工方案模板等知识库文件可以放入 `knowledge_base/`，也可以通过 `POST /api/knowledge/upload` 上传索引。
 
 ---
 
-**文档版本**：1.0  
-**最后更新**：2026-05-29  
+## 7. 常见问题
+
+### Q1: 端口被占用
+
+默认端口：
+
+- PostgreSQL：5432
+- Redis：6379
+- MinIO：9000 / 9001
+- Backend：8000
+- Frontend：3000
+
+如果前后端端口冲突，可以临时指定：
+
+```bash
+BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
+```
+
+Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `backend/.env`。
+
+### Q2: `python3.11 not found`
+
+macOS 推荐：
+
+```bash
+brew install python@3.11
+```
+
+确认：
+
+```bash
+python3.11 --version
+```
+
+### Q3: 前端依赖安装慢
+
+脚本默认使用 `https://registry.npmmirror.com`。如果想换回官方源：
+
+```bash
+NPM_REGISTRY=https://registry.npmjs.org ./scripts/setup_frontend.sh
+```
+
+### Q4: embedding 第一次很慢
+
+首次运行会下载 `BAAI/bge-large-zh-v1.5`，文件较大。国内网络可以设置 HuggingFace 镜像：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
+### Q5: LLM 返回 401
+
+检查 `backend/.env`：
+
+- `OPENROUTER_API_KEY` 是否正确
+- OpenRouter 账户是否有额度
+- `OPENROUTER_MODEL` 是否可用
+
+### Q6: MinIO 下载链接打不开
+
+确认容器运行：
+
+```bash
+docker compose ps
+```
+
+确认 bucket 配置一致：
+
+```env
+MINIO_API_URL=http://localhost:9000
+MINIO_BUCKET=tender-files
+```
+
+### Q7: 想重置本地数据
+
+这会删除本地 Docker volume 数据：
+
+```bash
+docker compose down -v
+./scripts/init_db.sh
+```
+
+---
+
+## 8. 脚本清单
+
+| 脚本 | 用途 |
+|------|------|
+| `scripts/setup_local.sh` | 首次完整安装 |
+| `scripts/dev_local.sh` | 日常一键启动前后端 |
+| `scripts/init_db.sh` | 启动 Docker 并应用 DB schema |
+| `scripts/setup_venv.sh` | 创建/更新 Python `.venv` |
+| `scripts/setup_frontend.sh` | 安装前端依赖 |
+| `scripts/start_backend.sh` | 只启动 FastAPI |
+| `scripts/start_frontend.sh` | 只启动 Next.js |
+
+---
+
+**文档版本**：2.0  
+**最后更新**：2026-06-03  
 **维护者**：TenderDoc-Generator 团队

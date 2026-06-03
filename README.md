@@ -1,6 +1,6 @@
 # TenderDoc-Generator
 
-> **当前状态：MVP 后端 + 前端 Demo 开发中 · 核心工作流与基础界面已实现**
+> **当前状态：MVP 后端 + 前端 Demo 已可本地启动 · 核心工作流与基础界面已实现**
 > 目标交付：2026-08-08
 
 ## 1. 项目愿景
@@ -32,14 +32,13 @@
 - 前端基础工作台：上传、状态轮询、标书预览、审查高亮、人工确认、下载入口
 
 🚧 正在进行：
-- 前后端端到端联调
 - API 异步任务持久化和状态查询
+- 真实招标文件端到端演示调优
 
 📋 下一步行动：
-1. 安装前端依赖并启动 `frontend` 开发服务
-2. 启动后端和基础服务，完成浏览器端到端演示
+1. 运行 `./scripts/dev_local.sh` 启动本地 MVP
+2. 用真实项目文件做浏览器端到端演示调优
 3. 补齐异步任务持久化和更细粒度状态查询
-4. 用真实项目文件做端到端演示调优
 
 ## 3. 系统架构设计（抽象层）
 
@@ -164,24 +163,54 @@ TenderDoc-Generator/
 
 ## 快速一键本地开发环境（推荐）
 
-我们提供了一个脚本来在仓库根创建可复现的 `.venv`（使用 Python 3.11），并安装后端依赖：
+首次启动前，确保已安装 Docker Desktop、Python 3.11 和 Node.js/pnpm，然后运行：
+
+```bash
+./scripts/setup_local.sh
+```
+
+之后日常本地开发只需要：
+
+```bash
+./scripts/dev_local.sh
+```
+
+启动成功后访问：
+
+- 前端工作台：`http://localhost:3000`
+- 后端 API 文档：`http://localhost:8000/docs`
+- MinIO Console：`http://localhost:9001`（默认 `minioadmin` / `minioadmin`）
+
+如果只需要重建后端虚拟环境，可以单独运行：
 
 ```bash
 # 运行前请先确保已安装 Python 3.11
 ./scripts/setup_venv.sh
 source .venv/bin/activate
-cd backend
-python -m pytest tests/ -q
+python -m pytest backend/tests/ -q
 ```
 
-说明：脚本会尝试安装 `backend/requirements.txt` 中的依赖，并在必要时调整 `wheel`/`packaging`/`setuptools` 到与项目依赖兼容的版本，以避免常见的二进制 wheel / 架构冲突。
+说明：`setup_local.sh` 会安装后端依赖、安装前端依赖、启动 Docker 服务并应用 `backend/init_db.sql`。如果 `backend/.env` 不存在，脚本会从 `backend/.env.example` 复制一份；真实 LLM 流程需要在 `backend/.env` 中配置 `OPENROUTER_API_KEY`。
+
+已验证的本地检查命令：
+
+```bash
+./scripts/init_db.sh
+.venv/bin/python -m pytest backend/tests -q
+cd frontend && pnpm run typecheck && pnpm run build
+```
 
 ## 后端 API 本地运行
 
 ```bash
 docker compose up -d
-cd backend
-venv/bin/python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+./scripts/start_backend.sh
+```
+
+前端单独运行：
+
+```bash
+./scripts/start_frontend.sh
 ```
 
 当前可用接口：

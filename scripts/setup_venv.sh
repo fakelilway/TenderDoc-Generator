@@ -14,25 +14,29 @@ if ! command -v python3.11 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Removing existing venv at $VENV_PATH (if any)"
-rm -rf "$VENV_PATH"
+if [ "${RESET_VENV:-0}" = "1" ]; then
+  echo "Removing existing venv at $VENV_PATH"
+  rm -rf "$VENV_PATH"
+fi
 
-echo "Creating venv with python3.11"
-python3.11 -m venv "$VENV_PATH"
+if [ ! -x "$VENV_PATH/bin/python" ]; then
+  echo "Creating venv with python3.11"
+  python3.11 -m venv "$VENV_PATH"
+fi
 source "$VENV_PATH/bin/activate"
 
 echo "Upgrading pip, setuptools, wheel"
 pip install -U pip setuptools wheel
 
 echo "Installing backend requirements"
-pip install -r "$REPO_ROOT/backend/requirements.txt" || true
+pip install -r "$REPO_ROOT/backend/requirements.txt"
 
 # Ensure the packaging/wheel/setuptools trio is compatible with pinned libs (torch/langchain-core)
 echo "Ensuring compatible packaging/wheel/setuptools versions"
 pip install --force-reinstall "wheel==0.45.0" "packaging==23.2" "setuptools==81.0.0"
 
 echo "Verifying environment"
-pip check || true
+pip check
 
 echo "Done. Activate with: source $VENV_PATH/bin/activate"
 echo "Run tests: cd backend && python -m pytest tests/ -q"
