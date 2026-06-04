@@ -25,15 +25,14 @@ if [ ! -x "$VENV_PATH/bin/python" ]; then
 fi
 source "$VENV_PATH/bin/activate"
 
-echo "Upgrading pip, setuptools, wheel"
-pip install -U pip setuptools wheel
+echo "Upgrading pip"
+pip install -U pip
+
+echo "Pinning compatible packaging build tools"
+pip install --force-reinstall "wheel==0.45.0" "packaging==23.2" "setuptools==81.0.0"
 
 echo "Installing backend requirements"
 pip install -r "$REPO_ROOT/backend/requirements.txt"
-
-# Ensure the packaging/wheel/setuptools trio is compatible with pinned libs (torch/langchain-core)
-echo "Ensuring compatible packaging/wheel/setuptools versions"
-pip install --force-reinstall "wheel==0.45.0" "packaging==23.2" "setuptools==81.0.0"
 
 echo "Verifying environment"
 pip check

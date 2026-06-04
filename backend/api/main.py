@@ -1,8 +1,24 @@
 from __future__ import annotations
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 
 from rag import retriever
+from schemas.auth import (
+    AuthMeResponse,
+    LoginRequest,
+    LoginResponse,
+    LogoutResponse,
+    UserProfile,
+)
 from schemas.knowledge import (
     KnowledgeSearchResponse,
     KnowledgeSearchResult,
@@ -22,6 +38,7 @@ from schemas.workflow import (
     WorkflowRunResponse,
 )
 from services import (
+    auth_service,
     generation_service,
     knowledge_service,
     project_service,
@@ -46,9 +63,34 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/api/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest) -> LoginResponse:
+    try:
+        return auth_service.authenticate_user(request.username, request.password)
+    except auth_service.AuthError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@app.get("/api/auth/me", response_model=AuthMeResponse)
+def auth_me(
+    current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> AuthMeResponse:
+    return AuthMeResponse(user=current_user)
+
+
+@app.post("/api/auth/logout", response_model=LogoutResponse)
+def logout(
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> LogoutResponse:
+    return LogoutResponse(ok=True)
+
+
 @app.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
 async def upload_knowledge(
     file: UploadFile = File(...),
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> KnowledgeUploadResponse:
     try:
         indexed = knowledge_service.index_uploaded_knowledge(
@@ -66,6 +108,7 @@ async def upload_knowledge(
 def search_knowledge(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> KnowledgeSearchResponse:
     try:
         results = retriever.retrieve(query, top_k=top_k)
@@ -91,6 +134,7 @@ def search_knowledge(
 async def create_project(
     name: str = Form(...),
     tender_file: UploadFile = File(...),
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> ProjectCreateResponse:
     try:
         project = project_service.create_project(
@@ -110,7 +154,10 @@ async def create_project(
 
 
 @app.get("/api/project/{project_id}/status", response_model=ProjectStatusResponse)
-def project_status(project_id: int) -> ProjectStatusResponse:
+def project_status(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectStatusResponse:
     try:
         return ProjectStatusResponse(**project_service.get_project_status(project_id))
     except Exception as error:
@@ -118,7 +165,10 @@ def project_status(project_id: int) -> ProjectStatusResponse:
 
 
 @app.post("/api/project/{project_id}/parse", response_model=ProjectResultResponse)
-def parse_project(project_id: int) -> ProjectResultResponse:
+def parse_project(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectResultResponse:
     try:
         project = project_service.parse_project(project_id)
     except Exception as error:
@@ -139,6 +189,7 @@ def parse_project(project_id: int) -> ProjectResultResponse:
 def generate_project(
     project_id: int,
     background_tasks: BackgroundTasks,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> ProjectGenerateResponse:
     try:
         task_info = generation_service.start_generation(project_id, background_tasks)
@@ -153,7 +204,10 @@ def generate_project(
 
 
 @app.get("/api/project/{project_id}/download", response_model=ProjectDownloadResponse)
-def download_project(project_id: int) -> ProjectDownloadResponse:
+def download_project(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectDownloadResponse:
     try:
         download_info = project_service.get_project_download_url(project_id)
     except Exception as error:
@@ -163,18 +217,22 @@ def download_project(project_id: int) -> ProjectDownloadResponse:
 
 
 @app.post("/api/project/{project_id}/workflow/run", response_model=WorkflowRunResponse)
-def run_project_workflow(project_id: int) -> WorkflowRunResponse:
+def run_project_workflow(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> WorkflowRunResponse:
     try:
-        state = workflow_service.run_bid_workflow(project_id)
+        task = workflow_service.start_bid_workflow(project_id, background_tasks)
     except Exception as error:
         _raise_http_error(error)
 
     return WorkflowRunResponse(
-        project_id=state.project_id,
-        status=state.status,
-        awaiting_human=state.awaiting_human,
-        iteration_count=state.iteration_count,
-        review_report=state.review_report,
+        project_id=project_id,
+        status=str(task["status"]),
+        awaiting_human=bool(task["awaiting_human"]),
+        iteration_count=int(task["iteration_count"]),
+        review_report=task["review_report"],
     )
 
 
@@ -182,6 +240,7 @@ def run_project_workflow(project_id: int) -> WorkflowRunResponse:
 def confirm_project(
     project_id: int,
     request: ProjectConfirmRequest,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> ProjectConfirmResponse:
     try:
         state = workflow_service.confirm_project(
@@ -201,7 +260,10 @@ def confirm_project(
 
 
 @app.get("/api/project/{project_id}/result", response_model=ProjectResultResponse)
-def project_result(project_id: int) -> ProjectResultResponse:
+def project_result(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectResultResponse:
     try:
         return ProjectResultResponse(**project_service.get_project_result(project_id))
     except Exception as error:
@@ -209,7 +271,10 @@ def project_result(project_id: int) -> ProjectResultResponse:
 
 
 @app.get("/api/project/{project_id}/review", response_model=ProjectReviewResponse)
-def project_review(project_id: int) -> ProjectReviewResponse:
+def project_review(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectReviewResponse:
     try:
         return ProjectReviewResponse(**project_service.get_project_review(project_id))
     except Exception as error:
@@ -217,7 +282,10 @@ def project_review(project_id: int) -> ProjectReviewResponse:
 
 
 @app.get("/api/project/{project_id}/review-report")
-def project_review_report(project_id: int) -> dict:
+def project_review_report(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> dict:
     try:
         return project_service.get_project_review_report(project_id)
     except Exception as error:

@@ -1,4 +1,7 @@
 import type {
+  AuthMeResponse,
+  LoginResponse,
+  LogoutResponse,
   ProjectConfirmResponse,
   ProjectCreateResponse,
   ProjectDownloadResponse,
@@ -7,6 +10,7 @@ import type {
   ProjectStatusResponse,
   WorkflowRunResponse
 } from "./types";
+import { getAccessToken } from "./auth";
 
 type ConfirmPayload = {
   approved: boolean;
@@ -14,15 +18,18 @@ type ConfirmPayload = {
 };
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const token = getAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(path, {
     ...init,
-    headers:
-      init?.body instanceof FormData
-        ? init.headers
-        : {
-            "Content-Type": "application/json",
-            ...init?.headers
-          }
+    headers
   });
 
   if (!response.ok) {
@@ -43,6 +50,23 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+export function login(username: string, password: string) {
+  return requestJson<LoginResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password })
+  });
+}
+
+export function getCurrentUser() {
+  return requestJson<AuthMeResponse>("/api/auth/me");
+}
+
+export function logout() {
+  return requestJson<LogoutResponse>("/api/auth/logout", {
+    method: "POST"
+  });
 }
 
 export function createProject(name: string, file: File) {

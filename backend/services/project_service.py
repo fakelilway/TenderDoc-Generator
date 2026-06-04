@@ -125,9 +125,16 @@ def get_project(project_id: int) -> dict[str, Any]:
 
 def get_project_status(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
+    workflow_state = project.get("workflow_state_json") or {}
+    project_status = project["status"]
+    running_statuses = {"uploading", "parsing", "processing", "generating", "reviewing"}
     return {
         "project_id": project["id"],
-        "status": project["status"],
+        "status": (
+            project_status
+            if project_status in running_statuses
+            else workflow_state.get("status") or project_status
+        ),
         "parsed": project["parsed_json"] is not None,
     }
 
@@ -235,9 +242,16 @@ def get_project_download_url(project_id: int, expiry: int = 3600) -> dict[str, A
 
 def get_project_review_report(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
+    workflow_state = project.get("workflow_state_json")
+    project_status = project["status"]
+    running_statuses = {"uploading", "parsing", "processing", "generating", "reviewing"}
     return {
         "project_id": project["id"],
-        "status": project["status"],
+        "status": (
+            project_status
+            if project_status in running_statuses
+            else (workflow_state or {}).get("status") or project_status
+        ),
         "review_report": project.get("review_report_json"),
-        "workflow_state": project.get("workflow_state_json"),
+        "workflow_state": workflow_state,
     }

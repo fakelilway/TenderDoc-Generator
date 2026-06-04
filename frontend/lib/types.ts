@@ -101,3 +101,25 @@ export type ProjectDownloadResponse = {
   download_url: string;
   expires_in: number;
 };
+
+export type UserProfile = {
+  id: number;
+  username: string;
+  display_name?: string | null;
+  role: string;
+};
+
+export type LoginResponse = {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: UserProfile;
+};
+
+export type AuthMeResponse = {
+  user: UserProfile;
+};
+
+export type LogoutResponse = {
+  ok: boolean;
+};

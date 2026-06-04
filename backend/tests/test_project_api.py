@@ -1,12 +1,27 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
 from rag import retriever
+from schemas.auth import UserProfile
 from schemas.workflow import WorkflowState
+from services import auth_service
 from services.project_service import ProjectNotFoundError
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def authenticated_user():
+    app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
+        id=1,
+        username="admin",
+        display_name="管理员",
+        role="admin",
+    )
+    yield
+    app.dependency_overrides.clear()
 
 
 def test_create_project_uploads_tender(monkeypatch) -> None:
@@ -220,23 +235,37 @@ def test_search_knowledge_returns_results(monkeypatch) -> None:
     assert response.json()["results"][0]["content"] == "高层住宅施工组织设计"
 
 
-def test_run_project_workflow_returns_human_review_state(monkeypatch) -> None:
+def test_run_project_workflow_starts_background_task(monkeypatch) -> None:
+    captured = {}
+
+    def fake_start(project_id, background_tasks):
+        captured["project_id"] = project_id
+        captured["background_tasks"] = background_tasks
+        return {
+            "project_id": project_id,
+            "task_id": "workflow-task-123",
+            "status": "processing",
+            "awaiting_human": False,
+            "iteration_count": 0,
+            "review_report": None,
+        }
+
     monkeypatch.setattr(
-        "api.main.workflow_service.run_bid_workflow",
-        lambda project_id: WorkflowState(
-            project_id=project_id,
-            status="human_review",
-            awaiting_human=True,
-            iteration_count=1,
-            review_report={"fail_count": 0, "findings": []},
-        ),
+        "api.main.workflow_service.start_bid_workflow",
+        fake_start,
     )
 
     response = client.post("/api/project/7/workflow/run")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "human_review"
-    assert response.json()["awaiting_human"] is True
+    assert response.json() == {
+        "project_id": 7,
+        "status": "processing",
+        "awaiting_human": False,
+        "iteration_count": 0,
+        "review_report": None,
+    }
+    assert captured["project_id"] == 7
 
 
 def test_confirm_project_approves_workflow(monkeypatch) -> None:

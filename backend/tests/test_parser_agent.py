@@ -1,9 +1,13 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from agents.parser_agent import (
+    _extract_project_name,
     _extract_rule_based_requirements,
+    _merge_requirements,
     _prepare_tender_text,
+    parse_tender,
     parse_tender_response,
 )
 from prompts.parser_prompt import build_parser_prompt
@@ -93,3 +97,71 @@ def test_rule_based_extraction_covers_real_fixture_baseline() -> None:
         assert len(parsed.qualification_list) >= 4
         assert len(parsed.technical_score_items) >= 4
         assert len(parsed.invalid_bid_items) >= 4
+
+
+def test_extract_project_name_uses_cover_title_before_placeholder() -> None:
+    text = """
+    萧县2025年农村公路提质改造联网路工程
+    （项目编号：EP-XXGC2025024）
+    招标文件
+    第二章 投标人须知
+    项目名称：见投标人须知前附表
+    """
+
+    assert _extract_project_name(text) == "萧县2025年农村公路提质改造联网路工程"
+
+
+def test_extract_project_name_joins_wrapped_project_name() -> None:
+    text = """
+    第一章 招标公告
+    一、项目编号：WH230GL26SG0209
+    二、项目名称：南陵县三里镇 2026 年联网路工程(河南路、山施路)
+    施工
+    三、招标条件
+    """
+
+    assert _extract_project_name(text) == "南陵县三里镇 2026 年联网路工程(河南路、山施路)施工"
+
+
+def test_merge_requirements_rejects_placeholder_project_name() -> None:
+    rule_based = TenderRequirements(project_name="见投标人须知前附表")
+    llm_based = TenderRequirements(project_name="萧县2025年农村公路提质改造联网路工程")
+
+    merged = _merge_requirements(rule_based, llm_based)
+
+    assert merged.project_name == "萧县2025年农村公路提质改造联网路工程"
+
+
+def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(monkeypatch) -> None:
+    text = """
+    萧县2025年农村公路提质改造联网路工程
+    （项目编号：EP-XXGC2025024）
+    项目名称：见投标人须知前附表
+    本次招标要求投标人具备独立法人资格或其他组织，具有有效的公路工程施工总承包叁级及以上资质。
+    且具备有效的安全生产许可证。
+    施工组织设计：40分。
+    投标人不按要求提交投标保证金的，评标委员会将否决其投标。
+    """
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="not json"))]
+            )
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
+
+    monkeypatch.setattr(
+        "agents.parser_agent._get_llm_client_config",
+        lambda: ("test-key", "http://example.test", "test-model"),
+    )
+    monkeypatch.setattr("agents.parser_agent.OpenAI", lambda **kwargs: fake_client)
+
+    parsed = parse_tender(text)
+
+    assert parsed.project_name == "萧县2025年农村公路提质改造联网路工程"
+    assert parsed.qualification_list
+    assert parsed.technical_score_items
+    assert parsed.invalid_bid_items

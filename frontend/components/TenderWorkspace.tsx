@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Download,
   Loader2,
+  LogOut,
   PencilLine,
   RefreshCw,
   TriangleAlert
@@ -20,9 +21,11 @@ import {
   getProjectDownload,
   getProjectReviewReport,
   getProjectStatus,
+  logout as logoutRequest,
   parseProject,
   runProjectWorkflow
 } from "@/lib/api";
+import { clearSession, getStoredSession } from "@/lib/auth";
 import type { ReviewReport, WorkflowState } from "@/lib/types";
 
 const finalStatuses = new Set([
@@ -79,6 +82,7 @@ export function TenderWorkspace({
   const [activeLine, setActiveLine] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [username, setUsername] = useState("");
 
   const canConfirm = Boolean(projectId && workflowState?.awaiting_human);
   const canDownload = Boolean(
@@ -133,6 +137,11 @@ export function TenderWorkspace({
       void refreshProject(initialProjectId);
     }
   }, [initialProjectId, refreshProject]);
+
+  useEffect(() => {
+    const session = getStoredSession();
+    setUsername(session?.displayName || session?.username || "");
+  }, []);
 
   useEffect(() => {
     if (!projectId || finalStatuses.has(status)) {
@@ -278,6 +287,16 @@ export function TenderWorkspace({
     }
   }
 
+  async function handleLogout() {
+    try {
+      await logoutRequest();
+    } catch {
+      // Local logout should still proceed if the token has already expired.
+    }
+    clearSession();
+    window.location.replace("/login");
+  }
+
   return (
     <main className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
@@ -303,6 +322,11 @@ export function TenderWorkspace({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {username ? (
+              <span className="inline-flex h-9 items-center rounded-md border border-line bg-field px-3 text-sm font-medium text-muted">
+                {username}
+              </span>
+            ) : null}
             <button
               type="button"
               disabled={!projectId || actionBusy}
@@ -342,6 +366,14 @@ export function TenderWorkspace({
             >
               <Download className="h-4 w-4" />
               下载标书
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+              onClick={handleLogout}
+            >
+              <LogOut className="h-4 w-4" />
+              退出
             </button>
           </div>
         </div>

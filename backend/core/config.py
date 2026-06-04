@@ -51,10 +51,17 @@ class Settings(BaseSettings):
     embedding_dimension: int = Field(1024, alias="EMBEDDING_DIMENSION")
     rerank_model: str = Field("BAAI/bge-reranker-base", alias="RERANK_MODEL")
 
+    company_name: str = Field("安徽正奇建设有限公司", alias="COMPANY_NAME")
+    enable_llm_generation: bool = Field(False, alias="ENABLE_LLM_GENERATION")
+
     debug: bool = Field(True, alias="DEBUG")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     jwt_secret: str = Field("your-secret-key", alias="JWT_SECRET")
     jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
+    jwt_expires_minutes: int = Field(720, alias="JWT_EXPIRES_MINUTES")
+    default_admin_username: str = Field("admin", alias="DEFAULT_ADMIN_USERNAME")
+    default_admin_password: str = Field("tenderdoc", alias="DEFAULT_ADMIN_PASSWORD")
+    default_admin_display_name: str = Field("管理员", alias="DEFAULT_ADMIN_DISPLAY_NAME")
     temp_dir: str = Field("./temp", alias="TEMP_DIR")
     max_file_size: int = Field(50, alias="MAX_FILE_SIZE")
 

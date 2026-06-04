@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from threading import Thread
+from uuid import uuid4
+
 import redis
 from psycopg2.extras import Json, RealDictCursor
 
@@ -17,12 +20,39 @@ from services.project_service import ProjectNotFoundError, _connect
 MAX_CORRECTION_ITERATIONS = 3
 
 
+def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, object]:
+    task_id = uuid4().hex
+    _reset_workflow_state(project_id, "processing")
+    Thread(
+        target=_run_background_workflow,
+        args=(project_id,),
+        name=f"workflow-{project_id}-{task_id[:8]}",
+        daemon=True,
+    ).start()
+    return {
+        "project_id": project_id,
+        "task_id": task_id,
+        "status": "processing",
+        "awaiting_human": False,
+        "iteration_count": 0,
+        "review_report": None,
+    }
+
+
+def _run_background_workflow(project_id: int) -> None:
+    try:
+        run_bid_workflow(project_id)
+    except Exception:
+        _set_project_status(project_id, "failed")
+
+
 def run_bid_workflow(
     project_id: int,
     tender_text: str | None = None,
     pause_for_human: bool = True,
     max_iterations: int = MAX_CORRECTION_ITERATIONS,
 ) -> WorkflowState:
+    _set_project_status(project_id, "reviewing")
     state = load_workflow_state(project_id) or WorkflowState(project_id=project_id)
     if tender_text:
         state.tender_text = tender_text
@@ -174,15 +204,17 @@ def _ensure_parsed_requirements(
 
 
 def _retrieve_for_outline(requirements, outline):
-    retrieved = {}
-    for section in outline:
-        query = (
-            f"{requirements.project_name} "
-            f"{section.title} "
-            f"{' '.join(section.focus_points)}"
-        )
-        retrieved[section.title] = retriever.retrieve(query, top_k=3)
-    return retrieved
+    query = (
+        f"安徽正奇建设有限公司 投标文件 施工组织设计 技术文件格式 "
+        f"{requirements.project_name} "
+        f"{' '.join(section.title for section in outline)} "
+        f"{' '.join(point for section in outline for point in section.focus_points)}"
+    )
+    try:
+        shared_chunks = retriever.retrieve(query, top_k=9)
+    except Exception:
+        shared_chunks = []
+    return {section.title: shared_chunks[:3] for section in outline}
 
 
 def _fetch_project(project_id: int) -> dict:
@@ -227,6 +259,22 @@ def _set_project_status(project_id: int, status: str) -> None:
         with conn.cursor() as cursor:
             cursor.execute(
                 "UPDATE projects SET status = %s WHERE id = %s",
+                (status, project_id),
+            )
+
+
+def _reset_workflow_state(project_id: int, status: str) -> None:
+    _redis_client().delete(_workflow_key(project_id))
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET status = %s,
+                    workflow_state_json = NULL,
+                    review_report_json = NULL
+                WHERE id = %s
+                """,
                 (status, project_id),
             )
 

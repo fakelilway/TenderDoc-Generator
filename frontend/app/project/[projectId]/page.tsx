@@ -1,3 +1,4 @@
+import { AuthGate } from "@/components/AuthGate";
 import { TenderWorkspace } from "@/components/TenderWorkspace";
 
 export default function ProjectPage({
@@ -8,6 +9,8 @@ export default function ProjectPage({
   const projectId = Number(params.projectId);
 
   return (
-    <TenderWorkspace initialProjectId={Number.isFinite(projectId) ? projectId : null} />
+    <AuthGate>
+      <TenderWorkspace initialProjectId={Number.isFinite(projectId) ? projectId : null} />
+    </AuthGate>
   );
 }

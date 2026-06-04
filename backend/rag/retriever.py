@@ -34,10 +34,38 @@ def rerank_by_keyword_overlap(
         return sorted(results, key=lambda result: result.score, reverse=True)
 
     def combined_score(result: RetrievalResult) -> float:
-        overlap = len(query_tokens & _keyword_tokens(result.content))
-        return result.score + overlap * 0.25
+        content_tokens = _keyword_tokens(result.content)
+        overlap = len(query_tokens & content_tokens)
+        file_name = str(result.metadata.get("file_name", ""))
+        template_boost = 0.0
+        if "投标文件" in query and "投标文件" in file_name:
+            template_boost += 0.6
+        if "施工组织设计" in query and "施工组织设计" in result.content:
+            template_boost += 1.4
+        if "施工组织设计" in query and "施工组织设计" not in result.content:
+            template_boost -= 0.9
+        for phrase in _important_phrases(query):
+            if phrase in result.content:
+                template_boost += 0.7
+        if "第" in query and any(token in result.content for token in query_tokens):
+            template_boost += 0.2
+        return result.score + overlap * 0.25 + template_boost
 
     return sorted(results, key=combined_score, reverse=True)
+
+
+def _important_phrases(query: str) -> list[str]:
+    phrases = [
+        "总体施工组织布置及规划",
+        "主要工程项目的施工方案、方法与技术措施",
+        "工期保证体系及保证措施",
+        "工程质量管理体系及保证措施",
+        "安全生产管理体系及保证措施",
+        "环境保护、水土保持保证体系及保证措施",
+        "文明施工、文物保护保证体系及保证措施",
+        "项目风险预测与防范，事故应急预案",
+    ]
+    return [phrase for phrase in phrases if phrase in query]
 
 
 def rerank_with_cross_encoder(
@@ -64,6 +92,7 @@ def retrieve(query: str, top_k: int = 5, rerank: bool = True) -> list[RetrievalR
     if top_k <= 0:
         raise ValueError("top_k must be positive")
 
+    candidate_limit = max(top_k * 5, top_k)
     query_embedding = format_vector(embed_text(query))
     with _connect() as conn:
         with conn.cursor() as cursor:
@@ -80,7 +109,7 @@ def retrieve(query: str, top_k: int = 5, rerank: bool = True) -> list[RetrievalR
                 ORDER BY embedding <-> %s::vector
                 LIMIT %s
                 """,
-                (query_embedding, query_embedding, top_k),
+                (query_embedding, query_embedding, candidate_limit),
             )
             rows = cursor.fetchall()
 
@@ -96,5 +125,5 @@ def retrieve(query: str, top_k: int = 5, rerank: bool = True) -> list[RetrievalR
         for row in rows
     ]
     if rerank:
-        return rerank_by_keyword_overlap(query, results)
-    return results
+        return rerank_by_keyword_overlap(query, results)[:top_k]
+    return results[:top_k]

@@ -14,6 +14,17 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name TEXT,
+    role TEXT NOT NULL DEFAULT 'user',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login_at TIMESTAMPTZ
+);
+
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_markdown_path TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_docx_path TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generation_quality_json JSONB;
@@ -42,6 +53,7 @@ ALTER TABLE documents ALTER COLUMN project_id DROP NOT NULL;
 ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE VECTOR(1024);
 
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document_id ON knowledge_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding
     ON knowledge_chunks USING ivfflat (embedding vector_l2_ops)

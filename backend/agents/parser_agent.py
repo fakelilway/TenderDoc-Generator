@@ -40,6 +40,19 @@ RELEVANT_KEYWORDS = (
 )
 
 
+PROJECT_NAME_PLACEHOLDERS = (
+    "见投标人须知前附表",
+    "见招标公告",
+    "详见招标公告",
+    "详见投标人须知前附表",
+    "见前附表",
+    "详见前附表",
+    "本项目",
+    "无",
+    "/",
+)
+
+
 def _has_real_key(value: str) -> bool:
     return bool(value and value.strip() and "xxxx" not in value.lower())
 
@@ -136,6 +149,82 @@ def _has_all(text: str, keywords: tuple[str, ...]) -> bool:
     return all(keyword in text for keyword in keywords)
 
 
+def _normalize_candidate_text(value: str) -> str:
+    value = re.sub(r"\s+", " ", value).strip(" ：:；;，,。")
+    value = re.sub(r"\s+([）)])", r"\1", value)
+    value = re.sub(r"([（(])\s+", r"\1", value)
+    value = re.sub(r"([）)])\s+(施工|工程|项目)$", r"\1\2", value)
+    return value.strip()
+
+
+def _is_placeholder_project_name(value: str) -> bool:
+    normalized = _normalize_candidate_text(value)
+    if not normalized:
+        return True
+    return any(placeholder in normalized for placeholder in PROJECT_NAME_PLACEHOLDERS)
+
+
+def _is_valid_project_name(value: str) -> bool:
+    normalized = _normalize_candidate_text(value)
+    if _is_placeholder_project_name(normalized):
+        return False
+    if len(normalized) < 4 or len(normalized) > 90:
+        return False
+    blocked_terms = (
+        "招标文件",
+        "投标文件",
+        "投标人须知",
+        "招标公告",
+        "评标办法",
+        "合同条款",
+        "工程量清单",
+        "目 录",
+        "目录",
+        "项目编号",
+        "招标条件",
+        "项目概况",
+        "投标人资格",
+    )
+    if any(term in normalized for term in blocked_terms):
+        return False
+    return any(term in normalized for term in ("工程", "项目", "施工", "改造", "联网路"))
+
+
+def _clean_project_name(value: str) -> str:
+    value = _normalize_candidate_text(value)
+    value = re.sub(r"[（(]\s*项目名称\s*[）)]", "", value)
+    value = re.sub(r"(?:招标公告|招标项目|施工招标)$", "", value)
+    value = _normalize_candidate_text(value)
+    return value
+
+
+def _iter_project_name_candidates(text: str) -> list[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    head = "\n".join(lines[:180])
+    compact_head = re.sub(r"\n(?=(?:施工|工程|项目|标段名称|[（(]))", "", head)
+
+    candidates: list[str] = []
+    explicit_patterns = [
+        r"(?:^|[\n\s])二、项目名称[:：]\s*([^\n]+(?:\n施工)?)",
+        r"(?:^|[\n\s])项目名称[:：]\s*([^\n]+(?:\n施工)?)",
+        r"(?:招标项目名称|工程名称|标段名称)[:：\s]+([^\n]+(?:\n施工)?)",
+        r"本招标项目\s*([^\n（]+?)（项目名称）",
+    ]
+    for pattern in explicit_patterns:
+        for match in re.finditer(pattern, head, flags=re.MULTILINE):
+            candidates.append(match.group(1))
+    for pattern in explicit_patterns:
+        for match in re.finditer(pattern, compact_head, flags=re.MULTILINE):
+            candidates.append(match.group(1))
+
+    for line in lines[:30]:
+        cleaned = _clean_project_name(line)
+        if _is_valid_project_name(cleaned):
+            candidates.append(cleaned)
+
+    return [_clean_project_name(candidate) for candidate in candidates]
+
+
 def _dedupe_items(items: list[RequirementItem]) -> list[RequirementItem]:
     deduped: list[RequirementItem] = []
     seen: set[str] = set()
@@ -149,15 +238,9 @@ def _dedupe_items(items: list[RequirementItem]) -> list[RequirementItem]:
 
 
 def _extract_project_name(text: str) -> str:
-    patterns = [
-        r"项目名称[:：]\s*([^\n]+)",
-        r"本招标项目\s*([^\n（]+?)（项目名称）",
-        r"^(.+?工程[^\n]*?)\n[（(]项目编号",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.MULTILINE)
-        if match:
-            return match.group(1).strip()
+    for candidate in _iter_project_name_candidates(text):
+        if _is_valid_project_name(candidate):
+            return candidate
     return ""
 
 
@@ -402,8 +485,14 @@ def _extract_rule_based_requirements(text: str) -> TenderRequirements:
 def _merge_requirements(
     rule_based: TenderRequirements, llm_based: TenderRequirements
 ) -> TenderRequirements:
+    project_name = rule_based.project_name
+    if not project_name or _is_placeholder_project_name(project_name):
+        project_name = llm_based.project_name
+    if _is_placeholder_project_name(project_name):
+        project_name = ""
+
     return TenderRequirements(
-        project_name=rule_based.project_name or llm_based.project_name,
+        project_name=project_name,
         qualification_list=_dedupe_items(
             [*rule_based.qualification_list, *llm_based.qualification_list]
         ),
@@ -413,6 +502,15 @@ def _merge_requirements(
         invalid_bid_items=_dedupe_items(
             [*rule_based.invalid_bid_items, *llm_based.invalid_bid_items]
         ),
+    )
+
+
+def _has_rule_based_content(requirements: TenderRequirements) -> bool:
+    return bool(
+        requirements.project_name
+        or requirements.qualification_list
+        or requirements.technical_score_items
+        or requirements.invalid_bid_items
     )
 
 
@@ -437,22 +535,35 @@ def parse_tender(text: str) -> TenderRequirements:
     if not text.strip():
         raise ValueError("Tender text is empty")
     rule_based = _extract_rule_based_requirements(text)
-    api_key, base_url, model = _get_llm_client_config()
+    try:
+        api_key, base_url, model = _get_llm_client_config()
+    except ParserAgentError:
+        if _has_rule_based_content(rule_based):
+            return rule_based
+        raise
+
     tender_text = _prepare_tender_text(text)
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
-        model=model,
-        messages=build_parser_prompt(tender_text),
-        temperature=0,
-        max_tokens=3000,
-        response_format={"type": "json_object"},
-    )
-
-    if not response.choices:
-        raise ParserAgentError(
-            f"LLM response did not contain choices: {response.model_dump_json()[:1000]}"
+    try:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=model,
+            messages=build_parser_prompt(tender_text),
+            temperature=0,
+            max_tokens=3000,
+            response_format={"type": "json_object"},
         )
-    content = response.choices[0].message.content or ""
-    llm_based = parse_tender_response(content)
+
+        if not response.choices:
+            raise ParserAgentError(
+                "LLM response did not contain choices: "
+                f"{response.model_dump_json()[:1000]}"
+            )
+        content = response.choices[0].message.content or ""
+        llm_based = parse_tender_response(content)
+    except Exception:
+        if _has_rule_based_content(rule_based):
+            return rule_based
+        raise
+
     return _merge_requirements(rule_based, llm_based)

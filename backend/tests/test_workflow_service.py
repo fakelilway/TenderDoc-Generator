@@ -29,6 +29,35 @@ PARSED_JSON = {
 }
 
 
+def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -> None:
+    reset_calls = []
+    thread_calls = []
+
+    class FakeThread:
+        def __init__(self, target, args, name, daemon):
+            thread_calls.append(
+                {"target": target, "args": args, "name": name, "daemon": daemon}
+            )
+
+        def start(self):
+            thread_calls.append({"started": True})
+
+    monkeypatch.setattr(
+        workflow_service,
+        "_reset_workflow_state",
+        lambda *args: reset_calls.append(args),
+    )
+    monkeypatch.setattr(workflow_service, "Thread", FakeThread)
+
+    task = workflow_service.start_bid_workflow(7)
+
+    assert reset_calls == [(7, "processing")]
+    assert task["status"] == "processing"
+    assert thread_calls[0]["args"] == (7,)
+    assert thread_calls[0]["daemon"] is True
+    assert thread_calls[-1] == {"started": True}
+
+
 def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) -> None:
     saved_states = []
     persisted_states = []
