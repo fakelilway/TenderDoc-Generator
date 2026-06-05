@@ -78,7 +78,7 @@ def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> No
     monkeypatch.setattr(
         generation_service,
         "generate_bid_document",
-        lambda requirements, chunks: "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。",
+        lambda requirements, chunks, bid_template=None: "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。",
     )
 
     result = generation_service.generate_and_export(7)

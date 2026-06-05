@@ -6,7 +6,7 @@ from uuid import uuid4
 import redis
 from psycopg2.extras import Json, RealDictCursor
 
-from agents.generator_agent import build_bid_outline, generate_bid_document
+from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
 from agents.parser_agent import parse_tender
 from agents.reviewer_agent import review
 from core.config import settings
@@ -84,14 +84,20 @@ def run_bid_workflow(
     requirements = _ensure_parsed_requirements(project, state)
     state.parsed = requirements.model_dump()
 
+    bid_template = load_bid_template()
+    template_note = (
+        f"，使用模板：{bid_template.template_name}"
+        if bid_template
+        else "，未加载真实模板，使用默认兜底大纲"
+    )
     _append_trace(
         state,
         "generate",
         "running",
-        "根据评分项和废标条款生成默认标书大纲。",
+        f"根据评分项、废标条款和模板结构生成标书大纲{template_note}。",
         project_status="processing",
     )
-    outline = build_bid_outline(requirements)
+    outline = build_bid_outline(requirements, bid_template)
     _append_trace(
         state,
         "generate",
@@ -113,7 +119,11 @@ def run_bid_workflow(
         f"RAG 检索完成，匹配到 {retrieved_count} 个知识片段，开始生成 Markdown 初稿。",
         project_status="generating",
     )
-    state.draft_markdown = generate_bid_document(requirements, retrieved_by_section)
+    state.draft_markdown = generate_bid_document(
+        requirements,
+        retrieved_by_section,
+        bid_template,
+    )
     _append_trace(
         state,
         "generate",

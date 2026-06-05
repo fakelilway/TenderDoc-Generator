@@ -740,7 +740,7 @@
   - `tests/fixtures/bid_templates/road_first_envelope_template.json` 已由真实 892 页投标 PDF 生成，包含 9 个主章节、288 个施工组织设计目录项、8 个附表项
 
 ### M62：Generator Agent 接入真实模板
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M21, M22, M61
 - **完成标准**：
   - 生成 Agent 可读取 `BidTemplate`，按真实模板的章节顺序输出技术标在前、商务标在后
@@ -749,6 +749,12 @@
 - **测试方法**：
   - 用同一份招标文件生成 DOCX，对比真实投标文件目录，章节完整率 ≥80%
   - 单元测试覆盖模板章节顺序、人工确认点保留、RAG 噪声过滤
+- **当前实现**：
+  - `BID_TEMPLATE_PATH` 默认指向 `backend/templates/bid_templates/road_first_envelope_template.json`
+  - `GeneratorAgent` 会优先读取 `BidTemplate` 的施工组织设计章节、固定表单和附表，不再用 prompt 写死完整输出格式
+  - `build_document_prompt()` 只保留角色、真实性约束、结构来源优先级和兜底规则；招标 JSON 决定响应内容，模板 JSON 决定输出格式
+- **当前验证**：
+  - `tests/test_generator_agent.py` 已覆盖模板章节优先、模板附表输出、prompt 不再包含“输出结构必须严格如下”
 
 ### M63：真实投标文件差距评估脚本
 - **完成状态**：❌ 未开始

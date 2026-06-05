@@ -22,7 +22,7 @@ def test_langgraph_workflow_runs_to_human_review(monkeypatch) -> None:
     monkeypatch.setattr(
         workflow_graph,
         "generate_bid_document",
-        lambda requirements, chunks: "# 标书\n\n## 施工组织设计\n\n完整段落说明施工部署。",
+        lambda requirements, chunks, bid_template=None: "# 标书\n\n## 施工组织设计\n\n完整段落说明施工部署。",
     )
 
     graph = workflow_graph.build_bid_workflow_graph()

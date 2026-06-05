@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from psycopg2.extras import Json, RealDictCursor
 
-from agents.generator_agent import build_bid_outline, generate_bid_document
+from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
 from core.config import settings
 from rag import retriever
 from schemas.bid import BidGenerationResult
@@ -26,7 +26,8 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
         raise ValueError("Project has no parsed tender requirements")
 
     requirements = TenderRequirements.model_validate(parsed_json)
-    outline = build_bid_outline(requirements)
+    bid_template = load_bid_template()
+    outline = build_bid_outline(requirements, bid_template)
     retrieved_chunks_by_section = {
         section.title: retriever.retrieve(
             _section_query(section.title, requirements), top_k=3
@@ -35,7 +36,7 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
     }
 
     with _status(project_id, "generating"):
-        markdown = generate_bid_document(requirements, retrieved_chunks_by_section)
+        markdown = generate_bid_document(requirements, retrieved_chunks_by_section, bid_template)
         quality_report = evaluate_generation_quality(markdown)
         markdown_object, docx_object = export_markdown_for_project(
             project_id,

@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 
 from agents import generator_agent
-from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT
+from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT, build_document_prompt
+from schemas.bid_template import BidTemplate, BidTemplateSection
 from schemas.tender import RequirementItem, TenderRequirements
 
 
@@ -15,6 +16,32 @@ def _requirements() -> TenderRequirements:
             RequirementItem(title="工期计划", description="进度计划 10 分"),
         ],
         invalid_bid_items=[RequirementItem(title="无效投标", description="未提交保证金按无效投标处理")],
+    )
+
+
+def _bid_template() -> BidTemplate:
+    return BidTemplate(
+        template_name="自定义模板",
+        source_file="template.pdf",
+        page_count=12,
+        envelope_type="第一信封",
+        document_type="投标文件（商务及技术文件）",
+        main_sections=[
+            BidTemplateSection(title="一、投标函及投标函附录", section_type="fixed_form"),
+            BidTemplateSection(title="五、施工组织设计", section_type="construction_design"),
+            BidTemplateSection(title="八、资格审查资料", section_type="qualification"),
+        ],
+        construction_design_sections=[
+            BidTemplateSection(title="第一章、总体施工组织布置及规划", level=1),
+            BidTemplateSection(title="第二章、专项交通导改与保通方案", level=1),
+        ],
+        appendix_sections=[
+            BidTemplateSection(title="附表一、施工总体计划表", section_type="appendix"),
+        ],
+        fixed_form_sections=[
+            BidTemplateSection(title="一、投标函及投标函附录", section_type="fixed_form"),
+            BidTemplateSection(title="八、资格审查资料", section_type="qualification"),
+        ],
     )
 
 
@@ -44,6 +71,24 @@ def test_generator_prompt_defines_role_experience_and_task() -> None:
     assert "你的任务" in GENERATOR_SYSTEM_PROMPT
 
 
+def test_document_prompt_uses_template_priority_instead_of_hardcoded_format() -> None:
+    messages = build_document_prompt(
+        requirements=_requirements(),
+        outline_titles=["第一章、总体施工组织布置及规划", "第二章、专项交通导改与保通方案"],
+        retrieved_chunks=[],
+        company_name="安徽正奇建设有限公司",
+        bid_template=_bid_template(),
+    )
+    user_prompt = messages[1]["content"]
+
+    assert "结构来源优先级" in user_prompt
+    assert "真实投标文件模板 JSON 决定“按照什么格式写”" in user_prompt
+    assert "输出结构必须严格如下" not in user_prompt
+    assert "### 1. 施工组织设计" not in user_prompt
+    assert "第二章、专项交通导改与保通方案" in user_prompt
+    assert "附表一、施工总体计划表" in user_prompt
+
+
 def test_build_bid_outline_maps_input_to_company_template() -> None:
     requirements = TenderRequirements(
         technical_score_items=[
@@ -60,6 +105,22 @@ def test_build_bid_outline_maps_input_to_company_template() -> None:
     )
     assert safety.focus_points == ["安全文明施工 15 分"]
     assert outline[0].title == "第一章、总体施工组织布置及规划"
+
+
+def test_build_bid_outline_prefers_bid_template_titles() -> None:
+    requirements = TenderRequirements(
+        technical_score_items=[
+            RequirementItem(title="交通导改", description="交通导改与保通方案 20 分")
+        ]
+    )
+
+    outline = generator_agent.build_bid_outline(requirements, _bid_template())
+
+    assert [section.title for section in outline] == [
+        "第一章、总体施工组织布置及规划",
+        "第二章、专项交通导改与保通方案",
+    ]
+    assert outline[1].focus_points == ["交通导改与保通方案 20 分"]
 
 
 def test_build_bid_outline_caps_mvp_section_count() -> None:
@@ -120,6 +181,25 @@ def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
     assert "- 第一章、总体施工组织布置及规划" in markdown
     assert "## 三、废标风险逐条响应自查表" in markdown
     assert markdown.index("【技术标】") < markdown.index("【商务标】")
+
+
+def test_generate_bid_document_includes_template_appendices(monkeypatch):
+    monkeypatch.setattr(
+        generator_agent,
+        "_generate_document_with_llm",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+
+    markdown = generator_agent.generate_bid_document(
+        _requirements(),
+        {},
+        bid_template=_bid_template(),
+    )
+
+    assert "- 第二章、专项交通导改与保通方案" in markdown
+    assert "## 附图附表" in markdown
+    assert "### 附表一、施工总体计划表" in markdown
+    assert "### 1. 施工组织设计" not in markdown
 
 
 def test_generate_bid_document_prefers_single_document_llm(monkeypatch):

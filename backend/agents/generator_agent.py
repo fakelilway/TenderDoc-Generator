@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from openai import OpenAI
 
 from agents.parser_agent import _has_real_key, _is_placeholder_project_name
@@ -7,11 +9,15 @@ from core.config import get_settings
 from prompts.generator_prompt import build_document_prompt, build_section_prompt
 from rag.retriever import RetrievalResult
 from schemas.bid import BidSectionOutline
+from schemas.bid_template import BidTemplate
 from schemas.tender import RequirementItem, TenderRequirements
 
 
 class GeneratorAgentError(RuntimeError):
     pass
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
 BID_TEMPLATE_SECTION_TITLES = [
@@ -79,14 +85,35 @@ SECTION_KEYWORDS = {
 }
 
 
-def build_bid_outline(requirements: TenderRequirements) -> list[BidSectionOutline]:
+def load_bid_template(template_path: str | Path | None = None) -> BidTemplate | None:
+    settings = get_settings()
+    raw_path = template_path or getattr(settings, "bid_template_path", "")
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = BACKEND_DIR / path
+    if not path.exists():
+        return None
+    try:
+        return BidTemplate.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def build_bid_outline(
+    requirements: TenderRequirements,
+    bid_template: BidTemplate | None = None,
+) -> list[BidSectionOutline]:
+    template_titles = _technical_titles_from_template(bid_template)
+    source_titles = template_titles or BID_TEMPLATE_SECTION_TITLES
     outlines: list[BidSectionOutline] = [
         BidSectionOutline(title=title, required=True)
-        for title in BID_TEMPLATE_SECTION_TITLES
+        for title in source_titles
     ]
 
     for item in requirements.technical_score_items:
-        title = _section_title_for_item(item)
+        title = _section_title_for_item(item, [outline.title for outline in outlines])
         _append_focus(outlines, title, item.description)
 
     return outlines[:MAX_OUTLINE_SECTIONS]
@@ -95,8 +122,10 @@ def build_bid_outline(requirements: TenderRequirements) -> list[BidSectionOutlin
 def generate_bid_document(
     requirements: TenderRequirements,
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    bid_template: BidTemplate | None = None,
 ) -> str:
-    outline = build_bid_outline(requirements)
+    bid_template = bid_template or load_bid_template()
+    outline = build_bid_outline(requirements, bid_template)
     settings = get_settings()
     use_local_section_fallback = False
     if settings.enable_llm_generation:
@@ -106,6 +135,7 @@ def generate_bid_document(
                 outline,
                 retrieved_chunks_by_section,
                 settings.company_name,
+                bid_template,
             )
             return _ensure_document_header(markdown, requirements, settings.company_name)
         except Exception:
@@ -117,6 +147,11 @@ def generate_bid_document(
     parts.extend(["", "【技术标】", "", "## 一、技术标", "", "### 技术标目录", ""])
     for section in outline:
         parts.append(f"- {section.title}")
+    if bid_template and bid_template.appendix_sections:
+        parts.append("")
+        parts.append("附表目录：")
+        for section in bid_template.appendix_sections:
+            parts.append(f"- {section.title}")
     parts.append("")
     for section in outline:
         chunks = retrieved_chunks_by_section.get(section.title, [])
@@ -136,6 +171,9 @@ def generate_bid_document(
         parts.append(
             section_markdown
         )
+        parts.append("")
+    if bid_template and bid_template.appendix_sections:
+        parts.extend(_appendix_fallback(bid_template))
         parts.append("")
     parts.extend(_business_bid_fallback(requirements))
     parts.append("")
@@ -340,6 +378,7 @@ def _generate_document_with_llm(
     outline: list[BidSectionOutline],
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     company_name: str,
+    bid_template: BidTemplate | None = None,
 ) -> str:
     settings = get_settings()
     if _has_real_key(settings.openrouter_api_key):
@@ -362,6 +401,7 @@ def _generate_document_with_llm(
             outline_titles=[section.title for section in outline],
             retrieved_chunks=chunks,
             company_name=company_name,
+            bid_template=bid_template,
         ),
         temperature=0.2,
         max_tokens=9000,
@@ -489,12 +529,50 @@ def _fallback_subsections(section_title: str) -> tuple[str, str]:
     return mapping.get(section_title, ("施工组织安排", "保证措施"))
 
 
-def _section_title_for_item(item: RequirementItem) -> str:
+def _section_title_for_item(
+    item: RequirementItem,
+    candidate_titles: list[str] | None = None,
+) -> str:
     combined = f"{item.title} {item.description}"
+    candidate_titles = candidate_titles or BID_TEMPLATE_SECTION_TITLES
+
+    best_title = ""
+    best_score = 0
+    for section_title in candidate_titles:
+        keywords = SECTION_KEYWORDS.get(section_title, ())
+        score = sum(1 for keyword in keywords if keyword in combined)
+        if item.title and item.title in section_title:
+            score += 3
+        for phrase in _meaningful_phrases(item.description):
+            if phrase in section_title:
+                score += 2
+        if not score:
+            title_tokens = [
+                token
+                for token in section_title.replace("、", " ").replace("与", " ").split()
+                if len(token) >= 2
+            ]
+            score = sum(1 for token in title_tokens if token in combined)
+        if score > best_score:
+            best_title = section_title
+            best_score = score
+
+    if best_title:
+        return best_title
+
     for section_title, keywords in SECTION_KEYWORDS.items():
         if any(keyword in combined for keyword in keywords):
-            return section_title
-    return "第二章、主要工程项目的施工方案、方法与技术措施"
+            return section_title if section_title in candidate_titles else candidate_titles[0]
+    return candidate_titles[0] if candidate_titles else "第二章、主要工程项目的施工方案、方法与技术措施"
+
+
+def _meaningful_phrases(text: str) -> list[str]:
+    phrases: list[str] = []
+    for raw in text.replace("，", " ").replace("、", " ").replace("与", " ").split():
+        cleaned = raw.strip(" ：:；;,.。()（）0123456789分")
+        if len(cleaned) >= 2:
+            phrases.append(cleaned)
+    return phrases
 
 
 def _append_focus(
@@ -606,3 +684,40 @@ def _flatten_retrieved_chunks(
             if len(chunks) >= 12:
                 return chunks
     return chunks
+
+
+def _technical_titles_from_template(
+    bid_template: BidTemplate | None,
+) -> list[str]:
+    if not bid_template:
+        return []
+    titles = [
+        section.title
+        for section in bid_template.construction_design_sections
+        if section.level == 1 and section.title
+    ]
+    if titles:
+        return titles[:MAX_OUTLINE_SECTIONS]
+    return [
+        section.title
+        for section in bid_template.main_sections
+        if section.section_type == "construction_design" and section.title
+    ][:MAX_OUTLINE_SECTIONS]
+
+
+def _appendix_fallback(bid_template: BidTemplate) -> list[str]:
+    lines = ["## 附图附表", ""]
+    for section in bid_template.appendix_sections:
+        lines.extend(
+            [
+                f"### {section.title}",
+                "",
+                "本附表按招标文件和真实投标模板要求设置，用于支撑施工组织设计、进度安排、资源配置和现场布置等内容。",
+                "",
+                "⚠️人工确认点：【待补充】本表涉及的时间节点、工程量、劳动力、机械设备、临时用地、外供电力等数据须由项目技术负责人和造价人员依据真实施工组织安排填写。",
+                "",
+                "本章响应度自查：完全满足",
+                "",
+            ]
+        )
+    return lines

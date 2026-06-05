@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from agents.generator_agent import build_bid_outline, generate_bid_document
+from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
 from agents.parser_agent import parse_tender
 from agents.reviewer_agent import review
 from rag import retriever
@@ -58,8 +58,9 @@ def parse_node(state: BidGraphState) -> BidGraphState:
 
 def retrieve_node(state: BidGraphState) -> BidGraphState:
     requirements = TenderRequirements.model_validate(state["parsed"])
+    bid_template = load_bid_template()
     retrieved: dict[str, list[str]] = {}
-    for section in build_bid_outline(requirements):
+    for section in build_bid_outline(requirements, bid_template):
         query = (
             f"{requirements.project_name} "
             f"{section.title} "
@@ -73,7 +74,11 @@ def retrieve_node(state: BidGraphState) -> BidGraphState:
 
 def generate_node(state: BidGraphState) -> BidGraphState:
     requirements = TenderRequirements.model_validate(state["parsed"])
-    markdown = generate_bid_document(requirements, state.get("retrieved_chunks", {}))
+    markdown = generate_bid_document(
+        requirements,
+        state.get("retrieved_chunks", {}),
+        load_bid_template(),
+    )
     return {**state, "draft_markdown": markdown}
 
 

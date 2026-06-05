@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from schemas.bid_template import BidTemplate
 from schemas.tender import TenderRequirements
 
 
@@ -72,6 +73,7 @@ def build_document_prompt(
     outline_titles: list[str],
     retrieved_chunks: list[str],
     company_name: str,
+    bid_template: BidTemplate | None = None,
 ) -> list[dict[str, str]]:
     chunks_text = "\n\n".join(
         f"[企业真实投标文件模板/企业自有素材片段 {index + 1}]\n{chunk[:1200]}"
@@ -83,8 +85,16 @@ def build_document_prompt(
 项目名称：{requirements.project_name}
 投标人：{company_name}
 
-【技术标】必须使用以下目录，标题文字不得擅自改写：
+结构来源优先级（必须遵守，避免死板冲突）：
+1. 招标文件解析 JSON 决定“必须响应什么”：资格要求、评分点、废标/否决条款、工期质量安全等实质性要求。
+2. 真实投标文件模板 JSON 决定“按照什么格式写”：主目录、施工组织设计目录、固定表单、附表清单和章节顺序。
+3. 本 prompt 只提供角色、写作原则、真实性约束和缺少模板时的兜底规则；不得用 prompt 中的通用示例覆盖模板 JSON。
+
+【确认生成结构】
+以下目录已经由招标文件解析结果 + 真实模板 JSON 生成。必须沿用这些标题和顺序，不要擅自改写标题：
 {_format_items(outline_titles)}
+
+{_format_template_summary(bid_template)}
 
 资格要求：
 {_format_items([item.description for item in requirements.qualification_list])}
@@ -98,44 +108,23 @@ def build_document_prompt(
 企业真实投标文件模板/企业自有素材片段：
 {chunks_text or "暂无模板片段。"}
 
-输出结构必须严格如下：
-# {requirements.project_name or '投标项目'} 投标文件（技术标及商务标）
-投标人：{company_name}
+输出结构规则：
+- 第一行使用 `# {requirements.project_name or '投标项目'} 投标文件（技术标及商务标）`。
+- 标题下方写 `投标人：{company_name}` 和“投标文件响应总说明”。
+- 必须先输出 `【技术标】`，再输出 `【商务标】`，最后输出“废标风险逐条响应自查表”。
+- 技术标正文必须按【确认生成结构】输出；如果模板提供附表，必须在技术标末尾生成对应附表标题、用途说明和人工确认点。
+- 商务标章节必须优先沿用模板主目录中的固定表单章节；若模板没有给出商务标表单，才使用投标函、授权委托、资格审查、报价文件、投标保证金、承诺函作为兜底。
 
-## 投标文件响应总说明
-
-【技术标】
-## 一、技术标
-### 1. 施工组织设计
-### 2. 质量管理体系与措施
-### 3. 安全管理体系与措施
-### 4. 工期保证措施
-### 5. 资源配置计划
-### 6. 绿色施工、文明施工及环保措施
-### 7. 特殊气候条件施工措施
-### 8. 与业主、监理、设计单位的配合协调方案
-
-【商务标】
-## 二、商务标
-### 1. 投标函及投标函附录
-### 2. 法定代表人身份证明及授权委托书
-### 3. 资格审查资料
-### 4. 报价文件
-### 5. 投标保证金承诺函或已缴凭证说明
-### 6. 其他承诺
-
-## 三、废标风险逐条响应自查表
+技术标写作要求：
+- 必须吸收企业真实投标文件片段中的正式措辞和章节深度。
+- 必须覆盖施工部署、分部分项施工方法、进度计划、总平面布置、质量、安全、工期、资源、绿色文明、季节性施工、协调配合。
+- 对招标文件技术评分点要逐项嵌入相应章节，不要只列清单。
 
 商务标写作要求：
 - 投标函中必须出现投标报价、工期、质量、投标有效期等字段；没有具体数值时用 `⚠️人工确认点：【待补充】...`。
 - 资格审查资料必须逐项响应解析出的资格要求，包括企业资质、安全生产许可证、项目经理资格、技术负责人、业绩、社保等。
 - 报价文件只写“已标价工程量清单目录”和“编制说明”，不得编造报价金额。
 - 对投标保证金、农民工工资、质量、安全、环保、工期、廉洁、无转包违法分包等承诺明确成文。
-
-技术标写作要求：
-- 必须吸收企业真实投标文件片段中的正式措辞和章节深度。
-- 必须覆盖施工部署、分部分项施工方法、进度计划、总平面布置、质量、安全、工期、资源、绿色文明、季节性施工、协调配合。
-- 对招标文件技术评分点要逐项嵌入相应章节，不要只列清单。
 
 废标规避要求：
 - 对每条废标/否决风险，必须在正文中找到对应响应，并在“废标风险逐条响应自查表”中列出“风险条款 / 响应章节 / 响应措施 / 人工确认点”。
@@ -151,3 +140,28 @@ def _format_items(items: list[str]) -> str:
     if not items:
         return "- 未明确"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _format_template_summary(bid_template: BidTemplate | None) -> str:
+    if not bid_template:
+        return "真实模板 JSON：未提供。使用【确认生成结构】作为兜底目录，但不得覆盖招标文件实质性要求。"
+
+    main_sections = _format_items(
+        [
+            f"{section.title}（{section.section_type}，页码 {section.start_page or '-'}-{section.end_page or '-'}）"
+            for section in bid_template.main_sections
+        ]
+    )
+    fixed_forms = _format_items([section.title for section in bid_template.fixed_form_sections])
+    appendices = _format_items([section.title for section in bid_template.appendix_sections])
+
+    return f"""真实模板 JSON 摘要：
+- 模板名称：{bid_template.template_name}
+- 模板信封/文件类型：{bid_template.envelope_type or '未识别'} / {bid_template.document_type or '未识别'}
+- 模板主目录：
+{main_sections}
+- 模板固定表单/商务资料：
+{fixed_forms}
+- 模板附表：
+{appendices}
+"""
