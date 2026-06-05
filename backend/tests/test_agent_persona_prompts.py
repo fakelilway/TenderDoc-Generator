@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+from agents.reviewer_agent import REVIEWER_SYSTEM_PROMPT
+from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT
+from prompts.parser_prompt import PARSER_SYSTEM_PROMPT
+
+
+def test_all_agent_prompts_have_role_playing_experience_and_task_boundary() -> None:
+    prompts = {
+        "parser": PARSER_SYSTEM_PROMPT,
+        "generator": GENERATOR_SYSTEM_PROMPT,
+        "reviewer": REVIEWER_SYSTEM_PROMPT,
+    }
+
+    for agent_name, prompt in prompts.items():
+        assert "角色扮演" in prompt, agent_name
+        assert "经验背书" in prompt, agent_name
+        assert "人格化工作方式" in prompt, agent_name
+        assert "你的任务" in prompt, agent_name
+        assert "不要编造" in prompt or "不得编造" in prompt or "不替生成 Agent 找借口" in prompt, agent_name
+
+
+def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
+    assert "真实投标文件总编" in GENERATOR_SYSTEM_PROMPT
+    assert "施工组织设计主笔" in GENERATOR_SYSTEM_PROMPT
+    assert "商务标合规顾问" in GENERATOR_SYSTEM_PROMPT
+    assert "技术标必须排在商务标之前" in GENERATOR_SYSTEM_PROMPT
+    assert "真实模板优先级高于通用写法" in GENERATOR_SYSTEM_PROMPT

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
@@ -36,6 +36,15 @@ const finalStatuses = new Set([
   "generated",
   "failed",
   "generation_failed"
+]);
+
+const runningStatuses = new Set([
+  "uploading",
+  "parsing",
+  "processing",
+  "generating",
+  "reviewing",
+  "needs_revision"
 ]);
 
 function readableStatus(status: string) {
@@ -85,12 +94,14 @@ export function TenderWorkspace({
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [username, setUsername] = useState("");
+  const autoStartedWorkflowProject = useRef<number | null>(null);
 
   const canConfirm = Boolean(projectId && workflowState?.awaiting_human);
   const canDownload = Boolean(
     projectId && ["approved", "finished", "generated"].includes(status)
   );
   const statusText = useMemo(() => readableStatus(status), [status]);
+  const statusBusy = busy || actionBusy || runningStatuses.has(status);
 
   const applyWorkflowSnapshot = useCallback(
     (state?: WorkflowState | null, report?: ReviewReport | null) => {
@@ -134,6 +145,36 @@ export function TenderWorkspace({
     [applyWorkflowSnapshot]
   );
 
+  const startWorkflow = useCallback(
+    async (id: number) => {
+      setActionBusy(true);
+      setError(null);
+      try {
+        setStatus("processing");
+        const workflow = await runProjectWorkflow(id);
+        setStatus(workflow.status);
+        setWorkflowState({
+          project_id: workflow.project_id,
+          status: workflow.status,
+          awaiting_human: workflow.awaiting_human,
+          iteration_count: workflow.iteration_count,
+          review_report: workflow.review_report ?? null
+        });
+        if (workflow.review_report) {
+          setReviewReport(workflow.review_report);
+        }
+        await refreshProject(id, true);
+      } catch (workflowError) {
+        autoStartedWorkflowProject.current = null;
+        setStatus("failed");
+        setError(errorMessage(workflowError));
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [refreshProject]
+  );
+
   useEffect(() => {
     if (initialProjectId) {
       void refreshProject(initialProjectId);
@@ -156,6 +197,21 @@ export function TenderWorkspace({
 
     return () => window.clearInterval(timer);
   }, [projectId, refreshProject, status]);
+
+  useEffect(() => {
+    if (
+      !projectId ||
+      status !== "parsed" ||
+      busy ||
+      actionBusy ||
+      autoStartedWorkflowProject.current === projectId
+    ) {
+      return;
+    }
+
+    autoStartedWorkflowProject.current = projectId;
+    void startWorkflow(projectId);
+  }, [actionBusy, busy, projectId, startWorkflow, status]);
 
   function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
@@ -188,21 +244,8 @@ export function TenderWorkspace({
       const parsed = await parseProject(created.project_id);
       setStatus(parsed.status);
 
-      setStatus("reviewing");
-      const workflow = await runProjectWorkflow(created.project_id);
-      setStatus(workflow.status);
-      setWorkflowState({
-        project_id: workflow.project_id,
-        status: workflow.status,
-        awaiting_human: workflow.awaiting_human,
-        iteration_count: workflow.iteration_count,
-        review_report: workflow.review_report ?? null
-      });
-      if (workflow.review_report) {
-        setReviewReport(workflow.review_report);
-      }
-
-      await refreshProject(created.project_id);
+      autoStartedWorkflowProject.current = created.project_id;
+      await startWorkflow(created.project_id);
     } catch (runError) {
       setStatus("failed");
       setError(errorMessage(runError));
@@ -398,7 +441,11 @@ export function TenderWorkspace({
             onFileChange={handleFileChange}
             onSubmit={handleCreateAndRun}
           />
-          <StatusRail status={status} busy={busy || actionBusy} />
+          <StatusRail
+            status={status}
+            busy={statusBusy}
+            traceEvents={workflowState?.trace_events}
+          />
           <KnowledgePanel />
           <AdminUsersPanel />
         </div>

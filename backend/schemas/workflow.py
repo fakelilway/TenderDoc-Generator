@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class WorkflowTraceEvent(BaseModel):
+    stage: str
+    status: str = "running"
+    message: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class WorkflowState(BaseModel):
@@ -17,6 +25,7 @@ class WorkflowState(BaseModel):
     awaiting_human: bool = False
     approved: bool = False
     corrections: dict[str, Any] = Field(default_factory=dict)
+    trace_events: list[WorkflowTraceEvent] = Field(default_factory=list)
 
 
 class WorkflowRunResponse(BaseModel):

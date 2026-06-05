@@ -13,19 +13,73 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import type { WorkflowTraceEvent } from "@/lib/types";
 
 type Stage = {
+  key: string;
   label: string;
   icon: LucideIcon;
+  traceStages: string[];
+  pendingText: string;
+  activeText: string;
+  doneText: string;
 };
 
 const stages: Stage[] = [
-  { label: "上传", icon: UploadCloud },
-  { label: "解析", icon: FileText },
-  { label: "生成", icon: FileCheck2 },
-  { label: "审查", icon: ShieldCheck },
-  { label: "确认", icon: UserCheck },
-  { label: "下载", icon: Download }
+  {
+    key: "upload",
+    label: "上传",
+    icon: UploadCloud,
+    traceStages: ["upload"],
+    pendingText: "等待选择招标文件",
+    activeText: "上传原始文件到 MinIO",
+    doneText: "原始招标文件已入库"
+  },
+  {
+    key: "parse",
+    label: "解析",
+    icon: FileText,
+    traceStages: ["parse", "parsing"],
+    pendingText: "等待解析 Agent 提取结构化要求",
+    activeText: "PDF/Word 文本抽取 + LLM 结构化解析",
+    doneText: "资质、评分项、废标条款已保存"
+  },
+  {
+    key: "generate",
+    label: "生成",
+    icon: FileCheck2,
+    traceStages: ["generate", "rag"],
+    pendingText: "等待 RAG 检索与生成 Agent",
+    activeText: "构建大纲、检索知识库并生成 Markdown 初稿",
+    doneText: "标书 Markdown 初稿已生成"
+  },
+  {
+    key: "review",
+    label: "审查",
+    icon: ShieldCheck,
+    traceStages: ["review", "correct"],
+    pendingText: "等待规则引擎和 LLM 审查",
+    activeText: "规则引擎 + LLM 检查废标风险",
+    doneText: "审查报告已生成"
+  },
+  {
+    key: "confirm",
+    label: "确认",
+    icon: UserCheck,
+    traceStages: ["confirm"],
+    pendingText: "等待人工终审节点",
+    activeText: "等待人工确认或提交修改意见",
+    doneText: "人工确认已完成"
+  },
+  {
+    key: "download",
+    label: "下载",
+    icon: Download,
+    traceStages: ["download", "export"],
+    pendingText: "等待最终文件导出",
+    activeText: "导出 Markdown/DOCX 并上传 MinIO",
+    doneText: "最终文件可下载"
+  }
 ];
 
 function statusIndex(status: string) {
@@ -69,8 +123,8 @@ function stageProgress(
     return 0;
   }
 
-  if (busy && value === "parsing") {
-    return Math.min(92, 45 + Math.floor(elapsedSeconds / 3) * 3);
+  if (busy && current === index) {
+    return Math.min(92, 35 + Math.floor(elapsedSeconds / 3) * 3);
   }
 
   const activeProgress: Record<string, number> = {
@@ -101,26 +155,6 @@ function formatElapsed(seconds: number) {
   return `${minutes}m ${rest}s`;
 }
 
-function activeDetail(status: string, busy: boolean, elapsedSeconds: number) {
-  if (!busy) {
-    return "";
-  }
-
-  const elapsed = formatElapsed(elapsedSeconds);
-  const value = status.toLowerCase();
-  const details: Record<string, string> = {
-    uploading: `上传原始文件到 MinIO，已等待 ${elapsed}`,
-    parsing: `PDF 文本抽取 + LLM 结构化解析中，已等待 ${elapsed}`,
-    processing: `正在组织技术标/商务标生成上下文，已等待 ${elapsed}`,
-    generating: `正在调用生成 Agent 输出投标文件，已等待 ${elapsed}`,
-    reviewing: `正在进行规则与 LLM 审查，已等待 ${elapsed}`,
-    human_review: `等待人工确认，已等待 ${elapsed}`,
-    needs_revision: `审查发现需要修改，已等待 ${elapsed}`
-  };
-
-  return details[value] ?? `任务运行中，已等待 ${elapsed}`;
-}
-
 function progressTone(status: string, complete: boolean, active: boolean) {
   const failed = ["failed", "generation_failed"].includes(status.toLowerCase());
   if (failed && active) {
@@ -137,10 +171,12 @@ function progressTone(status: string, complete: boolean, active: boolean) {
 
 export function StatusRail({
   status,
-  busy
+  busy,
+  traceEvents = []
 }: {
   status: string;
   busy: boolean;
+  traceEvents?: WorkflowTraceEvent[];
 }) {
   const current = statusIndex(status);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -158,6 +194,44 @@ export function StatusRail({
 
     return () => window.clearInterval(interval);
   }, [busy, status]);
+
+  function stageTrace(stage: Stage, complete: boolean, active: boolean) {
+    const matched = traceEvents.filter((event) =>
+      stage.traceStages.includes(event.stage)
+    );
+    if (matched.length) {
+      return matched.slice(-3).map((event) => ({
+        status: event.status,
+        message: event.message
+      }));
+    }
+    if (active) {
+      const elapsed = busy ? `，已等待 ${formatElapsed(elapsedSeconds)}` : "";
+      return [
+        {
+          status: "running",
+          message: `${stage.activeText}${elapsed}`
+        }
+      ];
+    }
+    if (complete) {
+      return [{ status: "done", message: stage.doneText }];
+    }
+    return [{ status: "pending", message: stage.pendingText }];
+  }
+
+  function traceDotClass(traceStatus: string) {
+    if (traceStatus === "done") {
+      return "bg-ok";
+    }
+    if (traceStatus === "failed") {
+      return "bg-danger";
+    }
+    if (traceStatus === "running") {
+      return "bg-brand";
+    }
+    return "bg-line";
+  }
 
   return (
     <section className="rounded-lg border border-line bg-panel p-4 shadow-panel">
@@ -179,7 +253,7 @@ export function StatusRail({
             busy,
             elapsedSeconds
           );
-          const detail = active ? activeDetail(status, busy, elapsedSeconds) : "";
+          const traces = stageTrace(stage, complete, active);
 
           return (
             <li key={stage.label} className="space-y-2">
@@ -228,11 +302,22 @@ export function StatusRail({
                       style={{ width: `${progress}%` }}
                     />
                   </div>
-                  {detail ? (
-                    <p className="mt-1.5 text-xs leading-5 text-muted">
-                      {detail}
-                    </p>
-                  ) : null}
+                  <div className="mt-2 space-y-1.5">
+                    {traces.map((trace, traceIndex) => (
+                      <div
+                        key={`${stage.key}-${traceIndex}-${trace.message}`}
+                        className="flex items-start gap-2 text-xs leading-5 text-muted"
+                      >
+                        <span
+                          className={[
+                            "mt-2 h-1.5 w-1.5 shrink-0 rounded-full",
+                            traceDotClass(trace.status)
+                          ].join(" ")}
+                        />
+                        <span>{trace.message}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </li>

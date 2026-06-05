@@ -1,5 +1,5 @@
 from rag.retriever import RetrievalResult
-from schemas.workflow import WorkflowState
+from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import workflow_service
 
 
@@ -32,6 +32,9 @@ PARSED_JSON = {
 def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -> None:
     reset_calls = []
     thread_calls = []
+    saved_states = []
+    persisted_states = []
+    status_updates = []
 
     class FakeThread:
         def __init__(self, target, args, name, daemon):
@@ -47,12 +50,25 @@ def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -
         "_reset_workflow_state",
         lambda *args: reset_calls.append(args),
     )
+    monkeypatch.setattr(workflow_service, "save_workflow_state", saved_states.append)
+    monkeypatch.setattr(
+        workflow_service,
+        "_persist_state",
+        lambda project_id, state: persisted_states.append(state),
+    )
+    monkeypatch.setattr(
+        workflow_service,
+        "_set_project_status",
+        lambda project_id, status: status_updates.append((project_id, status)),
+    )
     monkeypatch.setattr(workflow_service, "Thread", FakeThread)
 
     task = workflow_service.start_bid_workflow(7)
 
     assert reset_calls == [(7, "processing")]
     assert task["status"] == "processing"
+    assert saved_states[0].trace_events[0].stage == "generate"
+    assert persisted_states[0].trace_events[0].message
     assert thread_calls[0]["args"] == (7,)
     assert thread_calls[0]["daemon"] is True
     assert thread_calls[-1] == {"started": True}
@@ -61,6 +77,7 @@ def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -
 def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) -> None:
     saved_states = []
     persisted_states = []
+    status_updates = []
     monkeypatch.setattr(
         workflow_service, "load_workflow_state", lambda project_id: None
     )
@@ -69,6 +86,11 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
         workflow_service,
         "_persist_state",
         lambda project_id, state: persisted_states.append(state),
+    )
+    monkeypatch.setattr(
+        workflow_service,
+        "_set_project_status",
+        lambda project_id, status: status_updates.append((project_id, status)),
     )
     monkeypatch.setattr(
         workflow_service,
@@ -92,7 +114,13 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     assert state.awaiting_human is True
     assert 1 <= state.iteration_count <= workflow_service.MAX_CORRECTION_ITERATIONS
     assert state.review_report["fail_count"] == 0
+    event_stages = [event.stage for event in state.trace_events]
+    assert event_stages[0] == "generate"
+    assert "review" in event_stages
+    assert event_stages[-1] == "confirm"
+    assert any("RAG 检索完成" in event.message for event in state.trace_events)
     assert saved_states and persisted_states
+    assert status_updates[0] == (7, "processing")
 
 
 def test_confirm_project_applies_human_corrections(monkeypatch) -> None:
@@ -151,3 +179,46 @@ def test_build_closure_test_report_calculates_detection_rate() -> None:
     assert baseline["detection_rate"] == 0.5
     assert baseline["detected_rules"] == ["a"]
     assert baseline["missed_rules"] == ["c"]
+
+
+def test_persist_state_serializes_trace_event_datetimes(monkeypatch) -> None:
+    dumped_payloads = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, _sql, params):
+            workflow_json = params[0]
+            dumped_payloads.append(workflow_json.dumps(workflow_json.adapted))
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    state = WorkflowState(
+        project_id=7,
+        status="processing",
+        trace_events=[
+            WorkflowTraceEvent(
+                stage="generate",
+                status="running",
+                message="测试 trace 序列化。",
+            )
+        ],
+    )
+    monkeypatch.setattr(workflow_service, "_connect", lambda: FakeConnection())
+
+    workflow_service._persist_state(7, state)
+
+    assert dumped_payloads
+    assert "created_at" in dumped_payloads[0]

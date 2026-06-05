@@ -53,6 +53,14 @@ export type WorkflowState = {
   awaiting_human?: boolean;
   approved?: boolean;
   corrections?: Record<string, unknown>;
+  trace_events?: WorkflowTraceEvent[];
+};
+
+export type WorkflowTraceEvent = {
+  stage: string;
+  status: "running" | "done" | "failed" | string;
+  message: string;
+  created_at?: string;
 };
 
 export type ProjectCreateResponse = {
