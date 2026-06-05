@@ -45,6 +45,9 @@ class Settings(BaseSettings):
         "https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
     )
     openrouter_model: str = Field("deepseek/deepseek-chat", alias="OPENROUTER_MODEL")
+    parser_llm_timeout_seconds: float = Field(
+        45.0, alias="PARSER_LLM_TIMEOUT_SECONDS"
+    )
 
     embedding_model: str = Field("BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_device: str = Field("cpu", alias="EMBEDDING_DEVICE")

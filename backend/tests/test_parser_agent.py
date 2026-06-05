@@ -168,3 +168,49 @@ def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(monkeypatch)
     assert parsed.qualification_list
     assert parsed.technical_score_items
     assert parsed.invalid_bid_items
+
+
+def test_parse_tender_uses_configured_parser_timeout(monkeypatch) -> None:
+    captured: dict[str, float] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured["request_timeout"] = kwargs["timeout"]
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=json.dumps(
+                                {
+                                    "project_name": "测试项目",
+                                    "qualification_list": [],
+                                    "technical_score_items": [],
+                                    "invalid_bid_items": [],
+                                },
+                                ensure_ascii=False,
+                            )
+                        )
+                    )
+                ]
+            )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+    def fake_openai(**kwargs):
+        captured["client_timeout"] = kwargs["timeout"]
+        return fake_client
+
+    monkeypatch.setattr(
+        "agents.parser_agent._get_llm_client_config",
+        lambda: ("test-key", "http://example.test", "test-model"),
+    )
+    monkeypatch.setattr(
+        "agents.parser_agent.get_settings",
+        lambda: SimpleNamespace(parser_llm_timeout_seconds=12),
+    )
+    monkeypatch.setattr("agents.parser_agent.OpenAI", fake_openai)
+
+    parsed = parse_tender("项目名称：测试项目")
+
+    assert parsed.project_name == "测试项目"
+    assert captured == {"client_timeout": 12.0, "request_timeout": 12.0}

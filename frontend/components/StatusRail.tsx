@@ -1,3 +1,5 @@
+"use client";
+
 import {
   CheckCircle2,
   Circle,
@@ -9,6 +11,7 @@ import {
   UploadCloud,
   UserCheck
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 
 type Stage = {
@@ -51,13 +54,23 @@ function statusIndex(status: string) {
   return -1;
 }
 
-function stageProgress(status: string, index: number, current: number) {
+function stageProgress(
+  status: string,
+  index: number,
+  current: number,
+  busy: boolean,
+  elapsedSeconds: number
+) {
   const value = status.toLowerCase();
   if (current > index) {
     return 100;
   }
   if (current < index || current === -1) {
     return 0;
+  }
+
+  if (busy && value === "parsing") {
+    return Math.min(92, 45 + Math.floor(elapsedSeconds / 3) * 3);
   }
 
   const activeProgress: Record<string, number> = {
@@ -77,6 +90,35 @@ function stageProgress(status: string, index: number, current: number) {
     generation_failed: 100
   };
   return activeProgress[value] ?? 35;
+}
+
+function formatElapsed(seconds: number) {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}m ${rest}s`;
+}
+
+function activeDetail(status: string, busy: boolean, elapsedSeconds: number) {
+  if (!busy) {
+    return "";
+  }
+
+  const elapsed = formatElapsed(elapsedSeconds);
+  const value = status.toLowerCase();
+  const details: Record<string, string> = {
+    uploading: `上传原始文件到 MinIO，已等待 ${elapsed}`,
+    parsing: `PDF 文本抽取 + LLM 结构化解析中，已等待 ${elapsed}`,
+    processing: `正在组织技术标/商务标生成上下文，已等待 ${elapsed}`,
+    generating: `正在调用生成 Agent 输出投标文件，已等待 ${elapsed}`,
+    reviewing: `正在进行规则与 LLM 审查，已等待 ${elapsed}`,
+    human_review: `等待人工确认，已等待 ${elapsed}`,
+    needs_revision: `审查发现需要修改，已等待 ${elapsed}`
+  };
+
+  return details[value] ?? `任务运行中，已等待 ${elapsed}`;
 }
 
 function progressTone(status: string, complete: boolean, active: boolean) {
@@ -101,6 +143,21 @@ export function StatusRail({
   busy: boolean;
 }) {
   const current = statusIndex(status);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    setElapsedSeconds(0);
+    if (!busy) {
+      return undefined;
+    }
+
+    const startedAt = Date.now();
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [busy, status]);
 
   return (
     <section className="rounded-lg border border-line bg-panel p-4 shadow-panel">
@@ -115,7 +172,14 @@ export function StatusRail({
           const complete = current > index;
           const active = current === index;
           const Icon = stage.icon;
-          const progress = stageProgress(status, index, current);
+          const progress = stageProgress(
+            status,
+            index,
+            current,
+            busy,
+            elapsedSeconds
+          );
+          const detail = active ? activeDetail(status, busy, elapsedSeconds) : "";
 
           return (
             <li key={stage.label} className="space-y-2">
@@ -164,6 +228,11 @@ export function StatusRail({
                       style={{ width: `${progress}%` }}
                     />
                   </div>
+                  {detail ? (
+                    <p className="mt-1.5 text-xs leading-5 text-muted">
+                      {detail}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </li>

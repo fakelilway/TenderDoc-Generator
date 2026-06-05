@@ -74,6 +74,11 @@ def _get_llm_client_config() -> tuple[str, str, str]:
     raise ParserAgentError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
 
 
+def _get_parser_timeout_seconds() -> float:
+    value = float(getattr(get_settings(), "parser_llm_timeout_seconds", 45.0))
+    return max(5.0, value)
+
+
 def _strip_markdown_fence(content: str) -> str:
     content = content.strip()
     fence_match = re.fullmatch(
@@ -545,13 +550,15 @@ def parse_tender(text: str) -> TenderRequirements:
     tender_text = _prepare_tender_text(text)
 
     try:
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        timeout_seconds = _get_parser_timeout_seconds()
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
         response = client.chat.completions.create(
             model=model,
             messages=build_parser_prompt(tender_text),
             temperature=0,
             max_tokens=3000,
             response_format={"type": "json_object"},
+            timeout=timeout_seconds,
         )
 
         if not response.choices:
