@@ -10,7 +10,9 @@ import {
   RefreshCw,
   TriangleAlert
 } from "lucide-react";
+import { AdminUsersPanel } from "@/components/AdminUsersPanel";
 import { CorrectionModal } from "@/components/CorrectionModal";
+import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
 import { RiskPanel } from "@/components/RiskPanel";
 import { StatusRail } from "@/components/StatusRail";
@@ -397,6 +399,8 @@ export function TenderWorkspace({
             onSubmit={handleCreateAndRun}
           />
           <StatusRail status={status} busy={busy || actionBusy} />
+          <KnowledgePanel />
+          <AdminUsersPanel />
         </div>
 
         <MarkdownPreview markdown={markdown} activeLine={activeLine} />

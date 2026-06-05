@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from agents import generator_agent
+from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT
 from schemas.tender import RequirementItem, TenderRequirements
 
 
@@ -35,6 +36,12 @@ def test_build_bid_outline_uses_technical_score_items() -> None:
     assert "第一章、总体施工组织布置及规划" in titles
     assert "第三章、工期保证体系及保证措施" in titles
     assert "第四章、工程质量管理体系及保证措施" in titles
+
+
+def test_generator_prompt_defines_role_experience_and_task() -> None:
+    assert "角色扮演" in GENERATOR_SYSTEM_PROMPT
+    assert "经验背书" in GENERATOR_SYSTEM_PROMPT
+    assert "你的任务" in GENERATOR_SYSTEM_PROMPT
 
 
 def test_build_bid_outline_maps_input_to_company_template() -> None:
@@ -87,7 +94,7 @@ def test_generate_bid_section_fallback_has_markdown_and_no_placeholder(monkeypat
     assert "待补充" not in markdown
 
 
-def test_generate_bid_document_uses_company_technical_file_shell(monkeypatch):
+def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
     monkeypatch.setattr(
         generator_agent,
         "_generate_document_with_llm",
@@ -101,10 +108,18 @@ def test_generate_bid_document_uses_company_technical_file_shell(monkeypatch):
 
     markdown = generator_agent.generate_bid_document(_requirements(), {})
 
-    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件（技术文件）")
+    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件（技术标及商务标）")
     assert "投标人：安徽正奇建设有限公司" in markdown
-    assert "## 施工组织设计目录" in markdown
+    assert "【商务标】" in markdown
+    assert "## 二、商务标" in markdown
+    assert "### 4. 报价文件" in markdown
+    assert "⚠️人工确认点：【待补充】" in markdown
+    assert "【技术标】" in markdown
+    assert "## 一、技术标" in markdown
+    assert "### 技术标目录" in markdown
     assert "- 第一章、总体施工组织布置及规划" in markdown
+    assert "## 三、废标风险逐条响应自查表" in markdown
+    assert markdown.index("【技术标】") < markdown.index("【商务标】")
 
 
 def test_generate_bid_document_prefers_single_document_llm(monkeypatch):
@@ -112,13 +127,16 @@ def test_generate_bid_document_prefers_single_document_llm(monkeypatch):
     monkeypatch.setattr(
         generator_agent,
         "_generate_document_with_llm",
-        lambda *args, **kwargs: "# 模板化技术文件\n",
+        lambda *args, **kwargs: "# 模板化技术文件\n\n## 施工组织设计目录\n",
     )
 
     markdown = generator_agent.generate_bid_document(_requirements(), {})
 
-    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件（技术文件）")
+    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件（技术标及商务标）")
     assert "投标人：安徽正奇建设有限公司" in markdown
+    assert "## 二、商务标" in markdown
+    assert "## 一、技术标" in markdown
+    assert markdown.index("【技术标】") < markdown.index("【商务标】")
 
 
 def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
@@ -140,6 +158,8 @@ def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
 
     markdown = generator_agent.generate_bid_document(requirements, {})
 
-    assert markdown.startswith("# 萧县2025年农村公路提质改造联网路工程 投标文件（技术文件）")
+    assert markdown.startswith("# 萧县2025年农村公路提质改造联网路工程 投标文件（技术标及商务标）")
     assert "见投标人须知前附表 投标文件" not in markdown
     assert "投标人：安徽正奇建设有限公司" in markdown
+    assert "## 二、商务标" in markdown
+    assert markdown.index("【技术标】") < markdown.index("【商务标】")

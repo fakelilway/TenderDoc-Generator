@@ -61,5 +61,9 @@ class MinioClient:
             expires=timedelta(seconds=expiry),
         )
 
+    def remove_file(self, bucket: str, object_name: str) -> None:
+        self._ensure_bucket(bucket)
+        self.client.remove_object(bucket, object_name)
+
 
 minio_client = MinioClient()

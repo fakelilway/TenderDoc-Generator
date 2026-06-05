@@ -6,6 +6,8 @@ export type AuthSession = {
   username: string;
   displayName?: string | null;
   role: string;
+  canViewKnowledge: boolean;
+  canEditKnowledge: boolean;
   signedInAt: string;
 };
 
@@ -36,6 +38,8 @@ export function getStoredSession(): AuthSession | null {
       username: parsed.username,
       displayName: parsed.displayName ?? null,
       role: parsed.role ?? "user",
+      canViewKnowledge: parsed.canViewKnowledge ?? false,
+      canEditKnowledge: parsed.canEditKnowledge ?? false,
       signedInAt: parsed.signedInAt ?? new Date().toISOString()
     };
   } catch {

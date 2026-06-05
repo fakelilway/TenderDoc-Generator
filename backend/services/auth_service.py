@@ -10,15 +10,24 @@ from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
 
 from core.config import settings
-from schemas.auth import LoginResponse, UserProfile
+from schemas.auth import (
+    LoginResponse,
+    RegisterRequest,
+    UserAdminProfile,
+    UserCreateRequest,
+    UserPermissionsUpdateRequest,
+    UserProfile,
+)
 from services.project_service import _connect
 
 
 HASH_ITERATIONS = 260_000
 TOKEN_ALGORITHM = "HS256"
+REGISTRATION_CODE_TTL_HOURS = 24
 security = HTTPBearer(auto_error=False)
 
 
@@ -58,16 +67,98 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def authenticate_user(username: str, password: str) -> LoginResponse:
+def authenticate_user(
+    username: str,
+    password: str,
+    account_type: str | None = None,
+) -> LoginResponse:
     ensure_default_admin()
     user = _get_user_by_username(username)
     if not user or not user["is_active"]:
         raise AuthError("账号或密码不正确")
     if not verify_password(password, str(user["password_hash"])):
         raise AuthError("账号或密码不正确")
+    if account_type:
+        requested_role = account_type.strip().lower()
+        if requested_role == "admin" and user["role"] != "admin":
+            raise AuthError("账号类型不匹配")
+        if requested_role == "user" and user["role"] != "user":
+            raise AuthError("账号类型不匹配")
 
     _mark_last_login(int(user["id"]))
     profile = _profile_from_row(user)
+    return _login_response_for_profile(profile)
+
+
+def register_user(request: RegisterRequest) -> LoginResponse:
+    username = request.username.strip()
+    if not username:
+        raise ValueError("Username is required")
+    code_hash = _registration_code_hash(request.verification_code)
+    try:
+        with _connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM registration_codes
+                    WHERE code_hash = %s
+                      AND used_at IS NULL
+                      AND expires_at > NOW()
+                    """,
+                    (code_hash,),
+                )
+                code_row = cursor.fetchone()
+                if not code_row:
+                    raise ValueError("验证码无效或已过期")
+
+                cursor.execute(
+                    """
+                    INSERT INTO users (
+                        username,
+                        password_hash,
+                        display_name,
+                        role,
+                        can_view_knowledge,
+                        can_edit_knowledge
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING
+                        id,
+                        username,
+                        display_name,
+                        role,
+                        is_active,
+                        can_view_knowledge,
+                        can_edit_knowledge
+                    """,
+                    (
+                        username,
+                        hash_password(request.password),
+                        request.display_name,
+                        "user",
+                        False,
+                        False,
+                    ),
+                )
+                user = cursor.fetchone()
+                cursor.execute(
+                    """
+                    UPDATE registration_codes
+                    SET used_by = %s,
+                        used_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (user["id"], code_row["id"]),
+                )
+    except IntegrityError as error:
+        raise ValueError("Username already exists") from error
+
+    profile = _profile_from_row(dict(user))
+    return _login_response_for_profile(profile)
+
+
+def _login_response_for_profile(profile: UserProfile) -> LoginResponse:
     expires_delta = timedelta(minutes=settings.jwt_expires_minutes)
     token = create_access_token(
         {
@@ -103,6 +194,30 @@ def get_current_user(
     if not user or not user["is_active"]:
         raise_auth_required()
     return _profile_from_row(user)
+
+
+def require_admin(
+    current_user: Annotated[UserProfile, Depends(get_current_user)],
+) -> UserProfile:
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission required")
+    return current_user
+
+
+def require_knowledge_view(
+    current_user: Annotated[UserProfile, Depends(get_current_user)],
+) -> UserProfile:
+    if not current_user.can_view_knowledge:
+        raise HTTPException(status_code=403, detail="Knowledge view permission required")
+    return current_user
+
+
+def require_knowledge_edit(
+    current_user: Annotated[UserProfile, Depends(get_current_user)],
+) -> UserProfile:
+    if not current_user.can_edit_knowledge:
+        raise HTTPException(status_code=403, detail="Knowledge edit permission required")
+    return current_user
 
 
 def raise_auth_required() -> None:
@@ -168,8 +283,15 @@ def ensure_default_admin() -> None:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO users (username, password_hash, display_name, role)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO users (
+                    username,
+                    password_hash,
+                    display_name,
+                    role,
+                    can_view_knowledge,
+                    can_edit_knowledge
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (LOWER(username)) DO NOTHING
                 """,
                 (
@@ -177,8 +299,144 @@ def ensure_default_admin() -> None:
                     hash_password(password),
                     settings.default_admin_display_name,
                     "admin",
+                    True,
+                    True,
                 ),
             )
+
+
+def list_users() -> list[UserAdminProfile]:
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    username,
+                    display_name,
+                    role,
+                    is_active,
+                    can_view_knowledge,
+                    can_edit_knowledge
+                FROM users
+                ORDER BY role = 'admin' DESC, id ASC
+                """
+            )
+            rows = cursor.fetchall()
+    return [_admin_profile_from_row(dict(row)) for row in rows]
+
+
+def create_user(request: UserCreateRequest) -> UserAdminProfile:
+    username = request.username.strip()
+    if not username:
+        raise ValueError("Username is required")
+    try:
+        with _connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO users (
+                        username,
+                        password_hash,
+                        display_name,
+                        role,
+                        can_view_knowledge,
+                        can_edit_knowledge
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING
+                        id,
+                        username,
+                        display_name,
+                        role,
+                        is_active,
+                        can_view_knowledge,
+                        can_edit_knowledge
+                    """,
+                    (
+                        username,
+                        hash_password(request.password),
+                        request.display_name,
+                        "user",
+                        request.can_view_knowledge or request.can_edit_knowledge,
+                        request.can_edit_knowledge,
+                    ),
+                )
+                row = cursor.fetchone()
+    except IntegrityError as error:
+        raise ValueError("Username already exists") from error
+    return _admin_profile_from_row(dict(row))
+
+
+def create_registration_code(admin_user_id: int) -> dict[str, str]:
+    code = _new_registration_code()
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        hours=REGISTRATION_CODE_TTL_HOURS
+    )
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO registration_codes (code_hash, created_by, expires_at)
+                VALUES (%s, %s, %s)
+                """,
+                (_registration_code_hash(code), admin_user_id, expires_at),
+            )
+    return {"code": code, "expires_at": expires_at.isoformat()}
+
+
+def update_user_permissions(
+    user_id: int,
+    request: UserPermissionsUpdateRequest,
+) -> UserAdminProfile:
+    can_edit_knowledge = request.can_edit_knowledge
+    can_view_knowledge = request.can_view_knowledge or can_edit_knowledge
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE users
+                SET display_name = %s,
+                    is_active = CASE WHEN role = 'admin' THEN TRUE ELSE %s END,
+                    can_view_knowledge = CASE WHEN role = 'admin' THEN TRUE ELSE %s END,
+                    can_edit_knowledge = CASE WHEN role = 'admin' THEN TRUE ELSE %s END
+                WHERE id = %s
+                RETURNING
+                    id,
+                    username,
+                    display_name,
+                    role,
+                    is_active,
+                    can_view_knowledge,
+                    can_edit_knowledge
+                """,
+                (
+                    request.display_name,
+                    request.is_active,
+                    can_view_knowledge,
+                    can_edit_knowledge,
+                    user_id,
+                ),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"User {user_id} was not found")
+    return _admin_profile_from_row(dict(row))
+
+
+def delete_user(user_id: int) -> None:
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT role FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"User {user_id} was not found")
+            if row["role"] == "admin":
+                raise ValueError("Admin users cannot be deleted")
+            cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
 
 def _get_user_by_username(username: str) -> dict[str, Any] | None:
@@ -186,7 +444,15 @@ def _get_user_by_username(username: str) -> dict[str, Any] | None:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                SELECT id, username, password_hash, display_name, role, is_active
+                SELECT
+                    id,
+                    username,
+                    password_hash,
+                    display_name,
+                    role,
+                    is_active,
+                    can_view_knowledge,
+                    can_edit_knowledge
                 FROM users
                 WHERE LOWER(username) = LOWER(%s)
                 """,
@@ -201,7 +467,15 @@ def _get_user_by_id(user_id: int) -> dict[str, Any] | None:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                SELECT id, username, password_hash, display_name, role, is_active
+                SELECT
+                    id,
+                    username,
+                    password_hash,
+                    display_name,
+                    role,
+                    is_active,
+                    can_view_knowledge,
+                    can_edit_knowledge
                 FROM users
                 WHERE id = %s
                 """,
@@ -220,12 +494,39 @@ def _mark_last_login(user_id: int) -> None:
             )
 
 
+def _new_registration_code() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "-".join(
+        "".join(secrets.choice(alphabet) for _ in range(4))
+        for _ in range(2)
+    )
+
+
+def _registration_code_hash(code: str) -> str:
+    normalized = code.strip().replace(" ", "").upper()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def _profile_from_row(row: dict[str, Any]) -> UserProfile:
+    is_admin = row.get("role") == "admin"
+    can_edit_knowledge = is_admin or bool(row.get("can_edit_knowledge"))
     return UserProfile(
         id=int(row["id"]),
         username=str(row["username"]),
         display_name=row.get("display_name"),
         role=str(row["role"]),
+        can_view_knowledge=is_admin
+        or bool(row.get("can_view_knowledge"))
+        or can_edit_knowledge,
+        can_edit_knowledge=can_edit_knowledge,
+    )
+
+
+def _admin_profile_from_row(row: dict[str, Any]) -> UserAdminProfile:
+    profile = _profile_from_row(row)
+    return UserAdminProfile(
+        **profile.model_dump(),
+        is_active=bool(row.get("is_active")),
     )
 
 

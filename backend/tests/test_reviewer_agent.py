@@ -1,4 +1,5 @@
 from agents.reviewer_agent import (
+    REVIEWER_SYSTEM_PROMPT,
     find_markdown_location,
     load_invalid_bid_rules,
     review,
@@ -24,6 +25,12 @@ def test_load_invalid_bid_rules_contains_common_items() -> None:
 
     assert "project_manager_certificate" in rule_ids
     assert "safety_production_license" in rule_ids
+
+
+def test_reviewer_prompt_defines_role_experience_and_task() -> None:
+    assert "角色扮演" in REVIEWER_SYSTEM_PROMPT
+    assert "经验背书" in REVIEWER_SYSTEM_PROMPT
+    assert "你的任务" in REVIEWER_SYSTEM_PROMPT
 
 
 def test_review_marks_missing_required_content_as_fail() -> None:

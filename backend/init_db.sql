@@ -21,8 +21,20 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     role TEXT NOT NULL DEFAULT 'user',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    can_view_knowledge BOOLEAN NOT NULL DEFAULT FALSE,
+    can_edit_knowledge BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_login_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS registration_codes (
+    id BIGSERIAL PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,
+    created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    used_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    used_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_markdown_path TEXT;
@@ -30,6 +42,12 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_docx_path TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS generation_quality_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS review_report_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS workflow_state_json JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE users
+SET can_view_knowledge = TRUE,
+    can_edit_knowledge = TRUE
+WHERE role = 'admin';
 
 CREATE TABLE IF NOT EXISTS documents (
     id BIGSERIAL PRIMARY KEY,
@@ -54,6 +72,7 @@ ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE VECTOR(1024);
 
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_registration_codes_expires_at ON registration_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document_id ON knowledge_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding
     ON knowledge_chunks USING ivfflat (embedding vector_l2_ops)

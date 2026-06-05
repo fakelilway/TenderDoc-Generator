@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { getCurrentUser } from "@/lib/api";
-import { clearSession, getStoredSession } from "@/lib/auth";
+import {
+  AUTH_STORAGE_KEY,
+  clearSession,
+  getStoredSession,
+  storeSession
+} from "@/lib/auth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [checked, setChecked] = useState(false);
@@ -25,7 +30,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        await getCurrentUser();
+        const me = await getCurrentUser();
+        const storage = window.localStorage.getItem(AUTH_STORAGE_KEY)
+          ? "local"
+          : "session";
+        storeSession(
+          {
+            ...session,
+            username: me.user.username,
+            displayName: me.user.display_name,
+            role: me.user.role,
+            canViewKnowledge: me.user.can_view_knowledge,
+            canEditKnowledge: me.user.can_edit_knowledge
+          },
+          storage
+        );
         if (!cancelled) {
           setAllowed(true);
           setChecked(true);

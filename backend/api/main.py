@@ -17,9 +17,20 @@ from schemas.auth import (
     LoginRequest,
     LoginResponse,
     LogoutResponse,
+    RegisterRequest,
+    RegistrationCodeResponse,
+    UserCreateRequest,
+    UserDeleteResponse,
+    UserListResponse,
+    UserPermissionsUpdateRequest,
     UserProfile,
+    UserResponse,
 )
 from schemas.knowledge import (
+    KnowledgeDeleteResponse,
+    KnowledgeDocumentListResponse,
+    KnowledgeDocumentSummary,
+    KnowledgeDocumentUpdateRequest,
     KnowledgeSearchResponse,
     KnowledgeSearchResult,
     KnowledgeUploadResponse,
@@ -66,9 +77,21 @@ def health() -> dict[str, str]:
 @app.post("/api/auth/login", response_model=LoginResponse)
 def login(request: LoginRequest) -> LoginResponse:
     try:
-        return auth_service.authenticate_user(request.username, request.password)
+        return auth_service.authenticate_user(
+            request.username,
+            request.password,
+            account_type=request.account_type,
+        )
     except auth_service.AuthError as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@app.post("/api/auth/register", response_model=LoginResponse)
+def register(request: RegisterRequest) -> LoginResponse:
+    try:
+        return auth_service.register_user(request)
     except Exception as error:
         _raise_http_error(error)
 
@@ -87,10 +110,65 @@ def logout(
     return LogoutResponse(ok=True)
 
 
+@app.get("/api/admin/users", response_model=UserListResponse)
+def list_users(
+    _current_user: UserProfile = Depends(auth_service.require_admin),
+) -> UserListResponse:
+    return UserListResponse(users=auth_service.list_users())
+
+
+@app.post("/api/admin/users", response_model=UserResponse)
+def create_user(
+    request: UserCreateRequest,
+    _current_user: UserProfile = Depends(auth_service.require_admin),
+) -> UserResponse:
+    try:
+        user = auth_service.create_user(request)
+    except Exception as error:
+        _raise_http_error(error)
+    return UserResponse(user=user)
+
+
+@app.post("/api/admin/registration-codes", response_model=RegistrationCodeResponse)
+def create_registration_code(
+    current_user: UserProfile = Depends(auth_service.require_admin),
+) -> RegistrationCodeResponse:
+    try:
+        code = auth_service.create_registration_code(current_user.id)
+    except Exception as error:
+        _raise_http_error(error)
+    return RegistrationCodeResponse(**code)
+
+
+@app.patch("/api/admin/users/{user_id}/permissions", response_model=UserResponse)
+def update_user_permissions(
+    user_id: int,
+    request: UserPermissionsUpdateRequest,
+    _current_user: UserProfile = Depends(auth_service.require_admin),
+) -> UserResponse:
+    try:
+        user = auth_service.update_user_permissions(user_id, request)
+    except Exception as error:
+        _raise_http_error(error)
+    return UserResponse(user=user)
+
+
+@app.delete("/api/admin/users/{user_id}", response_model=UserDeleteResponse)
+def delete_user(
+    user_id: int,
+    _current_user: UserProfile = Depends(auth_service.require_admin),
+) -> UserDeleteResponse:
+    try:
+        auth_service.delete_user(user_id)
+    except Exception as error:
+        _raise_http_error(error)
+    return UserDeleteResponse(ok=True)
+
+
 @app.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
 async def upload_knowledge(
     file: UploadFile = File(...),
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
 ) -> KnowledgeUploadResponse:
     try:
         indexed = knowledge_service.index_uploaded_knowledge(
@@ -104,11 +182,65 @@ async def upload_knowledge(
     return KnowledgeUploadResponse(**indexed)
 
 
+@app.get("/api/knowledge/documents", response_model=KnowledgeDocumentListResponse)
+def list_knowledge_documents(
+    limit: int = Query(50, ge=1, le=200),
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
+) -> KnowledgeDocumentListResponse:
+    try:
+        documents = knowledge_service.list_knowledge_documents(limit=limit)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeDocumentListResponse(
+        documents=[
+            KnowledgeDocumentSummary(**document)
+            for document in documents
+        ]
+    )
+
+
+@app.patch(
+    "/api/knowledge/documents/{document_id}",
+    response_model=KnowledgeDocumentSummary,
+)
+def rename_knowledge_document(
+    document_id: int,
+    request: KnowledgeDocumentUpdateRequest,
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
+) -> KnowledgeDocumentSummary:
+    try:
+        document = knowledge_service.rename_knowledge_document(
+            document_id,
+            request.title,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeDocumentSummary(**document)
+
+
+@app.delete(
+    "/api/knowledge/documents/{document_id}",
+    response_model=KnowledgeDeleteResponse,
+)
+def delete_knowledge_document(
+    document_id: int,
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
+) -> KnowledgeDeleteResponse:
+    try:
+        knowledge_service.delete_knowledge_document(document_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeDeleteResponse(ok=True)
+
+
 @app.get("/api/knowledge/search", response_model=KnowledgeSearchResponse)
 def search_knowledge(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
 ) -> KnowledgeSearchResponse:
     try:
         results = retriever.retrieve(query, top_k=top_k)

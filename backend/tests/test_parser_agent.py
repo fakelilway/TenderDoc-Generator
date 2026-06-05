@@ -33,6 +33,9 @@ def test_build_parser_prompt_contains_tender_text() -> None:
     messages = build_parser_prompt("项目名称：测试项目")
 
     assert messages[0]["role"] == "system"
+    assert "角色扮演" in messages[0]["content"]
+    assert "经验背书" in messages[0]["content"]
+    assert "你的任务" in messages[0]["content"]
     assert messages[1]["role"] == "user"
     assert "项目名称：测试项目" in messages[1]["content"]
     assert "invalid_bid_items" in messages[1]["content"]

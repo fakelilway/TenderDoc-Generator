@@ -11,6 +11,27 @@ class KnowledgeUploadResponse(BaseModel):
     file_path: str
 
 
+class KnowledgeDocumentSummary(BaseModel):
+    document_id: int
+    file_name: str
+    file_path: str | None = None
+    file_type: str | None = None
+    chunk_count: int
+    created_at: str
+
+
+class KnowledgeDocumentListResponse(BaseModel):
+    documents: list[KnowledgeDocumentSummary]
+
+
+class KnowledgeDocumentUpdateRequest(BaseModel):
+    title: str
+
+
+class KnowledgeDeleteResponse(BaseModel):
+    ok: bool = True
+
+
 class KnowledgeSearchResult(BaseModel):
     chunk_id: int
     document_id: int | None

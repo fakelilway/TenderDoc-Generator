@@ -15,6 +15,13 @@ from schemas.tender import TenderRequirements
 RULES_PATH = Path(__file__).resolve().parents[1] / "rules" / "invalid_bid_rules.json"
 
 
+REVIEWER_SYSTEM_PROMPT = """角色扮演：你是一位资深投标文件废标风险审查总监。
+经验背书：你拥有15年以上建筑、市政、公路工程投标文件审查经验，熟悉资格审查、符合性审查、响应性评审、报价文件初步评审和公共资源交易中心电子标上传规则，尤其擅长识别会导致否决投标、无效投标、重大偏差的遗漏。
+
+你的任务：对 parser agent 抽取的招标文件要求和 generator agent 生成的标书初稿进行合规审查，判断是否遗漏资格要求、废标条款、投标保证金、报价一致性、签章格式、人员证书社保、技术评分响应等关键内容。
+输出必须是合法 JSON，不要输出 Markdown、解释或额外文本。"""
+
+
 def load_invalid_bid_rules(path: str | Path = RULES_PATH) -> list[InvalidBidRule]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return [InvalidBidRule.model_validate(item) for item in data]
@@ -143,7 +150,7 @@ def _review_with_llm(
         response = OpenAI(api_key=api_key, base_url=base_url).chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是技术标废标风险审查员，只输出 JSON。"},
+                {"role": "system", "content": REVIEWER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
@@ -212,7 +219,7 @@ def _build_llm_review_prompt(
     parsed_requirements: TenderRequirements,
     generated_markdown: str,
 ) -> str:
-    return f"""请检查生成标书是否遗漏废标/否决风险，仅输出 JSON：
+    return f"""请以“废标风险审查总监”的身份检查生成标书是否遗漏废标/否决风险，仅输出 JSON：
 {{
   "findings": [
     {{

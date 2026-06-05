@@ -102,11 +102,53 @@ export type ProjectDownloadResponse = {
   expires_in: number;
 };
 
+export type KnowledgeUploadResponse = {
+  document_id: number;
+  chunk_ids: number[];
+  file_path: string;
+};
+
+export type KnowledgeDocumentSummary = {
+  document_id: number;
+  file_name: string;
+  file_path?: string | null;
+  file_type?: string | null;
+  chunk_count: number;
+  created_at: string;
+};
+
+export type KnowledgeDocumentListResponse = {
+  documents: KnowledgeDocumentSummary[];
+};
+
+export type KnowledgeSearchResult = {
+  chunk_id: number;
+  document_id?: number | null;
+  content: string;
+  metadata: Record<string, unknown>;
+  score: number;
+};
+
+export type KnowledgeSearchResponse = {
+  query: string;
+  results: KnowledgeSearchResult[];
+};
+
+export type KnowledgeDeleteResponse = {
+  ok: boolean;
+};
+
 export type UserProfile = {
   id: number;
   username: string;
   display_name?: string | null;
   role: string;
+  can_view_knowledge: boolean;
+  can_edit_knowledge: boolean;
+};
+
+export type UserAdminProfile = UserProfile & {
+  is_active: boolean;
 };
 
 export type LoginResponse = {
@@ -121,5 +163,44 @@ export type AuthMeResponse = {
 };
 
 export type LogoutResponse = {
+  ok: boolean;
+};
+
+export type UserListResponse = {
+  users: UserAdminProfile[];
+};
+
+export type UserCreatePayload = {
+  username: string;
+  password: string;
+  display_name?: string | null;
+  can_view_knowledge: boolean;
+  can_edit_knowledge: boolean;
+};
+
+export type RegisterPayload = {
+  username: string;
+  password: string;
+  display_name?: string | null;
+  verification_code: string;
+};
+
+export type UserPermissionsPayload = {
+  display_name?: string | null;
+  is_active: boolean;
+  can_view_knowledge: boolean;
+  can_edit_knowledge: boolean;
+};
+
+export type UserResponse = {
+  user: UserAdminProfile;
+};
+
+export type RegistrationCodeResponse = {
+  code: string;
+  expires_at: string;
+};
+
+export type UserDeleteResponse = {
   ok: boolean;
 };

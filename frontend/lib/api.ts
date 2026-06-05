@@ -1,5 +1,10 @@
 import type {
   AuthMeResponse,
+  KnowledgeDeleteResponse,
+  KnowledgeDocumentListResponse,
+  KnowledgeDocumentSummary,
+  KnowledgeSearchResponse,
+  KnowledgeUploadResponse,
   LoginResponse,
   LogoutResponse,
   ProjectConfirmResponse,
@@ -8,6 +13,13 @@ import type {
   ProjectResultResponse,
   ProjectReviewReportResponse,
   ProjectStatusResponse,
+  RegisterPayload,
+  RegistrationCodeResponse,
+  UserCreatePayload,
+  UserDeleteResponse,
+  UserListResponse,
+  UserPermissionsPayload,
+  UserResponse,
   WorkflowRunResponse
 } from "./types";
 import { getAccessToken } from "./auth";
@@ -52,10 +64,21 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function login(username: string, password: string) {
+export function login(
+  username: string,
+  password: string,
+  accountType: "admin" | "user"
+) {
   return requestJson<LoginResponse>("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ username, password, account_type: accountType })
+  });
+}
+
+export function registerUser(payload: RegisterPayload) {
+  return requestJson<LoginResponse>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 
@@ -115,4 +138,81 @@ export function getProjectDownload(projectId: number) {
   return requestJson<ProjectDownloadResponse>(
     `/api/project/${projectId}/download`
   );
+}
+
+export function uploadKnowledge(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return requestJson<KnowledgeUploadResponse>("/api/knowledge/upload", {
+    method: "POST",
+    body
+  });
+}
+
+export function renameKnowledgeDocument(documentId: number, title: string) {
+  return requestJson<KnowledgeDocumentSummary>(
+    `/api/knowledge/documents/${documentId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title })
+    }
+  );
+}
+
+export function deleteKnowledgeDocument(documentId: number) {
+  return requestJson<KnowledgeDeleteResponse>(
+    `/api/knowledge/documents/${documentId}`,
+    {
+      method: "DELETE"
+    }
+  );
+}
+
+export function listKnowledgeDocuments(limit = 50) {
+  return requestJson<KnowledgeDocumentListResponse>(
+    `/api/knowledge/documents?limit=${limit}`
+  );
+}
+
+export function searchKnowledge(query: string, topK = 5) {
+  const params = new URLSearchParams({
+    query,
+    top_k: String(topK)
+  });
+  return requestJson<KnowledgeSearchResponse>(
+    `/api/knowledge/search?${params.toString()}`
+  );
+}
+
+export function listUsers() {
+  return requestJson<UserListResponse>("/api/admin/users");
+}
+
+export function createUser(payload: UserCreatePayload) {
+  return requestJson<UserResponse>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function createRegistrationCode() {
+  return requestJson<RegistrationCodeResponse>("/api/admin/registration-codes", {
+    method: "POST"
+  });
+}
+
+export function updateUserPermissions(
+  userId: number,
+  payload: UserPermissionsPayload
+) {
+  return requestJson<UserResponse>(`/api/admin/users/${userId}/permissions`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteUser(userId: number) {
+  return requestJson<UserDeleteResponse>(`/api/admin/users/${userId}`, {
+    method: "DELETE"
+  });
 }
