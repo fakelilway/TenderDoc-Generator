@@ -160,6 +160,7 @@ export function TenderWorkspace({
   );
   const autoStartedWorkflowProject = useRef<number | null>(null);
   const lastHumanPromptKey = useRef("");
+  const autoAnalysisTriggered = useRef<Set<string>>(new Set());
 
   const canConfirm = Boolean(projectId && workflowState?.awaiting_human);
   const canStartWorkflow = Boolean(
@@ -204,6 +205,9 @@ export function TenderWorkspace({
         }
         if (state.review_report) {
           setReviewReport(state.review_report);
+        }
+        if (state.pricing_strategy) {
+          setPricingStrategy(state.pricing_strategy as PricingStrategy);
         }
       }
       if (report) {
@@ -368,6 +372,37 @@ export function TenderWorkspace({
     lastHumanPromptKey.current = promptKey;
     setHumanPromptOpen(true);
   }, [humanActionPrompt, projectId, status]);
+
+  // Auto-trigger pricing / score / matrix analyses once workflow produces a draft.
+  useEffect(() => {
+    if (!projectId) return;
+    const triggerStatuses = new Set([
+      "awaiting_human",
+      "reviewing",
+      "approved",
+      "finished",
+      "generated",
+    ]);
+    if (!triggerStatuses.has(status)) return;
+    const key = `${projectId}:${status}`;
+    if (autoAnalysisTriggered.current.has(key)) return;
+    autoAnalysisTriggered.current.add(key);
+
+    buildProjectPricingStrategy(projectId)
+      .then((r) => {
+        setPricingStrategy(r.pricing_strategy);
+        setPricingReport(r.pricing_report);
+      })
+      .catch(() => {});
+
+    buildProjectScorePrediction(projectId)
+      .then((r) => setScorePrediction(r.score_prediction))
+      .catch(() => {});
+
+    buildProjectResponseMatrix(projectId)
+      .then((r) => setResponseMatrix(r.response_matrix))
+      .catch(() => {});
+  }, [projectId, status]);
 
   function handleFileChange(nextFile: File | null) {
     setFile(nextFile);

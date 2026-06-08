@@ -8,6 +8,7 @@ from psycopg2.extras import Json, RealDictCursor
 
 from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
 from agents.parser_agent import parse_tender
+from agents.pricing_agent import extract_pricing_strategy, generate_pricing_strategy_report
 from agents.reviewer_agent import review
 from core.config import settings
 from rag import retriever
@@ -120,6 +121,16 @@ def run_bid_workflow(
     requirements = _ensure_parsed_requirements(project, state)
     state.parsed = requirements.model_dump()
 
+    pricing_strategy = extract_pricing_strategy(requirements)
+    state.pricing_strategy = pricing_strategy.model_dump()
+    _append_trace(
+        state,
+        "generate",
+        "running",
+        f"已提取商务标报价策略：付款条件 {len(pricing_strategy.payment_terms)} 项，担保约束 {len(pricing_strategy.guarantee_requirements)} 项。",
+        project_status="processing",
+    )
+
     from services import template_service
 
     bid_template = template_service.bid_template_for_project(project_id) or load_bid_template()
@@ -177,6 +188,7 @@ def run_bid_workflow(
         requirements,
         retrieved_by_section,
         bid_template,
+        pricing_strategy=pricing_strategy,
     )
     _append_trace(
         state,

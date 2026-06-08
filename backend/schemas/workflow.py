@@ -30,6 +30,7 @@ class WorkflowState(BaseModel):
     final_checklist: dict[str, Any] | None = None
     final_versions: list[dict[str, Any]] = Field(default_factory=list)
     review_report: dict[str, Any] | None = None
+    pricing_strategy: dict[str, Any] | None = None
     iteration_count: int = 0
     status: str = "created"
     awaiting_human: bool = False

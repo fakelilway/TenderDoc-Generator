@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from schemas.bid_template import BidTemplate
+from schemas.strategy import PricingStrategy
 from schemas.tender import TenderRequirements
 
 
@@ -110,6 +111,7 @@ def build_document_prompt(
     retrieved_chunks: list[str],
     company_name: str,
     bid_template: BidTemplate | None = None,
+    pricing_strategy: PricingStrategy | None = None,
 ) -> list[dict[str, str]]:
     cleaned_chunks = [c for c in (_clean_chunk(chunk) for chunk in retrieved_chunks) if c]
     chunks_text = "\n\n".join(
@@ -132,6 +134,7 @@ def build_document_prompt(
 
 {_format_template_summary(bid_template)}
 
+{_format_pricing_summary(pricing_strategy)}
 资格要求：
 {_format_items([item.description for item in requirements.qualification_list])}
 
@@ -177,6 +180,35 @@ def _format_items(items: list[str]) -> str:
     if not items:
         return "- 未明确"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _format_pricing_summary(pricing_strategy: PricingStrategy | None) -> str:
+    if not pricing_strategy:
+        return ""
+    parts: list[str] = ["商务标关键约束（从招标文件抽取，必须在商务标中逐条响应）："]
+    if pricing_strategy.payment_terms:
+        parts.append("付款条件约束：")
+        for c in pricing_strategy.payment_terms[:4]:
+            parts.append(f"  - {c.source_text[:120]}" if c.source_text else f"  - {c.name}")
+    if pricing_strategy.guarantee_requirements:
+        parts.append("担保/保证金约束：")
+        for c in pricing_strategy.guarantee_requirements[:4]:
+            parts.append(f"  - {c.source_text[:120]}" if c.source_text else f"  - {c.name}")
+    if pricing_strategy.extracted_conditions:
+        schedule = [c for c in pricing_strategy.extracted_conditions if "工期" in c.name]
+        quote = [c for c in pricing_strategy.extracted_conditions if "报价" in c.name]
+        if schedule:
+            parts.append("工期约束：")
+            for c in schedule[:2]:
+                parts.append(f"  - {c.source_text[:120]}" if c.source_text else f"  - {c.name}")
+        if quote:
+            parts.append("报价/评标价约束：")
+            for c in quote[:2]:
+                parts.append(f"  - {c.source_text[:120]}" if c.source_text else f"  - {c.name}")
+    if len(parts) == 1:
+        return ""
+    parts.append("（以上商务条件均须转化为我方响应与承诺，不得照抄条款原文，具体金额留下划线空白由投标人填写。）")
+    return "\n".join(parts) + "\n"
 
 
 def _format_template_summary(bid_template: BidTemplate | None) -> str:

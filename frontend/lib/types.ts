@@ -53,6 +53,7 @@ export type WorkflowState = {
   final_checklist?: FinalChecklist | null;
   final_versions?: FinalVersion[];
   review_report?: ReviewReport | null;
+  pricing_strategy?: PricingStrategy | null;
   iteration_count?: number;
   status: string;
   awaiting_human?: boolean;

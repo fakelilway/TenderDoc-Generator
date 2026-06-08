@@ -168,7 +168,7 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     monkeypatch.setattr(
         workflow_service,
         "generate_bid_document",
-        lambda requirements, chunks, bid_template=None: "# 标书\n\n## 施工组织设计\n\n仅说明施工部署。",
+        lambda requirements, chunks, bid_template=None, pricing_strategy=None: "# 标书\n\n## 施工组织设计\n\n仅说明施工部署。",
     )
 
     state = workflow_service.run_bid_workflow(7)

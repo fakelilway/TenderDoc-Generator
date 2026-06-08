@@ -11,6 +11,7 @@ from prompts.generator_prompt import build_document_prompt, build_section_prompt
 from rag.retriever import RetrievalResult
 from schemas.bid import BidSectionOutline
 from schemas.bid_template import BidTemplate
+from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
 
 
@@ -162,6 +163,7 @@ def generate_bid_document(
     requirements: TenderRequirements,
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     bid_template: BidTemplate | None = None,
+    pricing_strategy: PricingStrategy | None = None,
 ) -> str:
     bid_template = bid_template or load_bid_template()
     outline = build_bid_outline(requirements, bid_template)
@@ -175,6 +177,7 @@ def generate_bid_document(
                 retrieved_chunks_by_section,
                 settings.company_name,
                 bid_template,
+                pricing_strategy,
             )
             return sanitize_bid_markdown(
                 _ensure_document_header(markdown, requirements, settings.company_name)
@@ -216,7 +219,7 @@ def generate_bid_document(
     if bid_template and bid_template.appendix_sections:
         parts.extend(_appendix_fallback(bid_template))
         parts.append("")
-    parts.extend(_business_bid_fallback(requirements))
+    parts.extend(_business_bid_fallback(requirements, pricing_strategy))
     return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
@@ -317,37 +320,57 @@ def _document_preface(
 
 def _business_bid_fallback(
     requirements: TenderRequirements,
+    pricing_strategy: PricingStrategy | None = None,
 ) -> list[str]:
     project_name = _project_title(requirements)
     qualification_text = _format_requirement_items(requirements.qualification_list)
     invalid_bid_text = _format_requirement_items(requirements.invalid_bid_items)
-    return [
+
+    payment_note = ""
+    guarantee_note = ""
+    if pricing_strategy:
+        if pricing_strategy.payment_terms:
+            snippets = [
+                c.source_text[:80]
+                for c in pricing_strategy.payment_terms[:2]
+                if c.source_text
+            ]
+            if snippets:
+                payment_note = "本项目付款条件摘要（须人工核实原文）：" + "；".join(snippets)
+        if pricing_strategy.guarantee_requirements:
+            snippets = [
+                c.source_text[:80]
+                for c in pricing_strategy.guarantee_requirements[:2]
+                if c.source_text
+            ]
+            if snippets:
+                guarantee_note = "本项目担保/保证金条款摘要（须人工核实原文）：" + "；".join(snippets)
+
+    parts: list[str] = [
         "【商务标】",
         "",
         "## 二、商务标",
         "",
         "### 1. 投标函及投标函附录",
         "",
-        f"致：⚠️人工确认点：【待补充】招标人名称",
+        "致：________（招标人名称）",
         "",
         f"1. 我方经详细研究{project_name}招标文件及相关资料，决定参加本项目投标，并承诺按招标文件、合同条款、技术标准和工程量清单要求完成全部工作内容。",
-        "2. 投标总报价为：⚠️人工确认点：【待补充】按已标价工程量清单计算值填写；大写金额为：⚠️人工确认点：【待补充】。",
-        "3. 我方承诺的工期为：⚠️人工确认点：【待补充】严格响应招标文件工期要求；质量标准为：⚠️人工确认点：【待补充】严格响应招标文件质量要求。",
-        "4. 我方承诺在投标有效期内不撤销投标文件，不修改投标实质性内容；如中标，将按招标文件规定提交履约担保并签订合同。",
+        "2. 本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准，由造价人员核定后填写。",
+        "3. 我方承诺的工期严格响应招标文件要求（________日历天）；工程质量标准达到招标文件规定的合格及以上等级。",
+        "4. 我方承诺在投标有效期内不撤销投标文件，不修改投标实质性内容；如中标，将按招标文件规定的时限和方式提交履约担保并签订合同。",
+    ]
+    if payment_note:
+        parts += ["", payment_note]
+    parts += [
         "",
-        "投标函附录包括项目名称、投标人名称、投标报价、工期、质量标准、项目经理、投标有效期、权利义务响应等内容。涉及具体数值和人员信息处均由投标人最终核验后填写。",
-        "",
-        "本章响应度自查：完全满足",
+        "投标函附录包括项目名称、投标人名称、投标报价、工期、质量标准、项目经理、投标有效期、权利义务响应等内容；涉及具体数值和人员信息须依据企业真实资料填写。",
         "",
         "### 2. 法定代表人身份证明及授权委托书",
         "",
         "1. 法定代表人身份证明应载明投标人名称、统一社会信用代码、法定代表人姓名、职务、身份证号码，并附身份证复印件或扫描件。",
         "2. 授权委托书应明确授权代理人代表投标人办理本项目投标、澄清、签署文件等事项，授权期限覆盖投标有效期。",
-        "3. 涉及法定代表人、授权代理人姓名、身份证号、联系方式、签章日期等内容，均须依据企业真实资料填写。",
-        "",
-        "⚠️人工确认点：【待补充】法定代表人姓名、身份证号、授权代理人姓名、身份证号、授权期限、签章页扫描件。",
-        "",
-        "本章响应度自查：完全满足",
+        "3. 以下信息须依据企业真实资料填写：法定代表人姓名（________）、身份证号（________）、授权代理人姓名（________）、身份证号（________）、授权期限（________）及签章页扫描件。",
         "",
         "### 3. 资格审查资料",
         "",
@@ -362,13 +385,11 @@ def _business_bid_fallback(
         "招标文件资格要求响应如下：",
         qualification_text,
         "",
-        "⚠️人工确认点：【待补充】企业资质扫描件、人员证书编号、社保证明、类似业绩项目名称及合同金额须使用企业真实资料。",
-        "",
-        "本章响应度自查：完全满足",
+        "注：企业资质证书编号（________）、人员证书编号（________）、社保证明、类似业绩项目名称（________）及合同金额（________元）须使用企业真实资料，并附扫描件或复印件。",
         "",
         "### 4. 报价文件",
         "",
-        "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报。",
+        "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报，系统不自动生成任何报价数值。",
         "",
         "报价文件目录如下：",
         "",
@@ -382,19 +403,17 @@ def _business_bid_fallback(
         "8. 其他项目清单与计价汇总表。",
         "9. 规费、税金项目计价表。",
         "",
-        "⚠️人工确认点：【待补充】所有报价数据、清单编码、工程数量、综合单价、暂列金额、专业工程暂估价及最终投标总价。",
+        "报价编制说明：本次投标报价依据招标工程量清单、招标文件、施工图纸、相关规范及企业自有成本测算编制，所有清单数量以招标文件提供为准，综合单价含完成该清单项目所需的全部费用。具体报价金额、工程量及单价由造价人员核定后填写。",
         "",
-        "本章响应度自查：完全满足",
+        "### 5. 投标保证金",
         "",
-        "### 5. 投标保证金承诺函或已缴凭证说明",
+        "我单位承诺按招标文件规定的金额（________元）、形式（________）、到账时间及有效期提交投标保证金或投标保函；若招标文件要求提供缴纳凭证、电子保函编号或银行回单，将在投标文件相应位置附真实有效资料。",
+    ]
+    if guarantee_note:
+        parts += ["", guarantee_note]
+    parts += [
         "",
-        "我单位承诺按招标文件规定的金额、形式、到账时间、有效期及递交方式提交投标保证金、投标保函或相关承诺文件。若招标文件要求提供缴纳凭证、电子保函编号或银行回单，我单位将在投标文件相应位置附真实有效资料。",
-        "",
-        "⚠️人工确认点：【待补充】保证金金额、缴纳形式、保函编号、到账凭证、有效期。",
-        "",
-        "本章响应度自查：完全满足",
-        "",
-        "### 6. 其他承诺",
+        "### 6. 各项承诺函",
         "",
         "1. 工期承诺：我单位承诺严格响应招标文件工期要求，合理组织人员、机械、材料和资金投入，确保关键节点按期完成。",
         "2. 质量承诺：我单位承诺工程质量达到招标文件、施工图纸、国家及行业验收规范要求。",
@@ -403,11 +422,10 @@ def _business_bid_fallback(
         "5. 农民工工资承诺：我单位承诺依法建立实名制管理和工资支付保障机制，不拖欠农民工工资。",
         "6. 合规承诺：我单位承诺不转包、不违法分包、不串通投标、不弄虚作假，所有投标资料真实、准确、完整。",
         "",
-        "废标/否决风险响应摘要如下：",
+        "否决投标条款响应：",
         invalid_bid_text,
-        "",
-        "本章响应度自查：完全满足",
     ]
+    return parts
 
 
 def _generate_document_with_llm(
@@ -416,6 +434,7 @@ def _generate_document_with_llm(
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     company_name: str,
     bid_template: BidTemplate | None = None,
+    pricing_strategy: PricingStrategy | None = None,
 ) -> str:
     settings = get_settings()
     if _has_real_key(settings.openrouter_api_key):
@@ -439,6 +458,7 @@ def _generate_document_with_llm(
             retrieved_chunks=chunks,
             company_name=company_name,
             bid_template=bid_template,
+            pricing_strategy=pricing_strategy,
         ),
         temperature=0.2,
         max_tokens=9000,
