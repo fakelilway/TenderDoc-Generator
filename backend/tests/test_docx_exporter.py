@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 
 from utils.docx_exporter import (
     build_export_filename,
@@ -126,3 +127,33 @@ def test_build_export_filename_includes_name_and_version() -> None:
         == "高层_住宅_项目_技术标_v2.docx"
     )
     assert build_export_filename("", version=0) == "投标文件_v1.docx"
+
+
+def test_markdown_to_docx_uses_chinese_production_typography(tmp_path: Path) -> None:
+    output_path = tmp_path / "bid.docx"
+    markdown = """# 投标文件
+
+## 第一章、施工组织设计
+
+本工程采用分段流水施工，明确施工部署与资源配置。
+"""
+
+    markdown_to_docx(markdown, output_path)
+
+    document = Document(output_path)
+    normal = document.styles["Normal"]
+    normal_rfonts = normal.element.rPr.rFonts
+    # Body is 宋体 / Times New Roman at 小四 (12pt).
+    assert normal_rfonts.get(qn("w:eastAsia")) == "SimSun"
+    assert normal.font.size.pt == 12
+
+    heading1 = document.styles["Heading 1"]
+    assert heading1.element.rPr.rFonts.get(qn("w:eastAsia")) == "SimHei"
+    assert heading1.font.bold is True
+
+    # Body paragraphs carry a 2-character first-line indent.
+    body = next(
+        p for p in document.paragraphs if p.text.startswith("本工程采用分段流水施工")
+    )
+    assert body.paragraph_format.first_line_indent is not None
+    assert body.paragraph_format.first_line_indent.pt == 24

@@ -174,12 +174,15 @@ def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
     assert "【商务标】" in markdown
     assert "## 二、商务标" in markdown
     assert "### 4. 报价文件" in markdown
-    assert "⚠️人工确认点：【待补充】" in markdown
+    # Authoring meta-text must NOT leak into the production bid.
+    assert "人工确认点" not in markdown
+    assert "待补充" not in markdown
+    assert "本章响应度自查" not in markdown
+    assert "废标风险逐条响应自查表" not in markdown
     assert "【技术标】" in markdown
     assert "## 一、技术标" in markdown
     assert "### 技术标目录" in markdown
     assert "- 第一章、总体施工组织布置及规划" in markdown
-    assert "## 三、废标风险逐条响应自查表" in markdown
     assert markdown.index("【技术标】") < markdown.index("【商务标】")
 
 
@@ -243,3 +246,48 @@ def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
     assert "投标人：安徽正奇建设有限公司" in markdown
     assert "## 二、商务标" in markdown
     assert markdown.index("【技术标】") < markdown.index("【商务标】")
+
+
+def test_sanitize_bid_markdown_removes_meta_and_rag_noise() -> None:
+    raw = (
+        "# 投标文件\n\n"
+        "## 一、技术标\n"
+        "我单位承诺严格响应招标文件要求。\n"
+        "⚠️人工确认点：【待补充】投标总价、保证金金额。\n"
+        "投标总报价为：⚠️人工确认点：【待补充】按清单计算。\n"
+        "本章响应度自查：完全满足\n"
+        "第13页/共892页\n"
+        "……\n"
+        "## 三、废标风险逐条响应自查表\n"
+        "| 序号 | 风险条款 | 人工确认点 |\n"
+    )
+
+    cleaned = generator_agent.sanitize_bid_markdown(raw)
+
+    assert "人工确认点" not in cleaned
+    assert "待补充" not in cleaned
+    assert "本章响应度自查" not in cleaned
+    assert "废标风险逐条响应自查表" not in cleaned
+    assert "第13页/共892页" not in cleaned
+    # Real content is preserved; the fill-in blank replaces the marker.
+    assert "我单位承诺严格响应招标文件要求。" in cleaned
+    assert "________" in cleaned
+
+
+def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:
+    assert "真实投标文件格式与文风规范" in GENERATOR_SYSTEM_PROMPT
+    assert "严禁输出" in GENERATOR_SYSTEM_PROMPT
+    # The prompt no longer mandates emitting authoring meta-text.
+    assert "必须使用“⚠️人工确认点" not in GENERATOR_SYSTEM_PROMPT
+
+    messages = build_document_prompt(
+        requirements=_requirements(),
+        outline_titles=["第一章、总体施工组织布置及规划"],
+        retrieved_chunks=["第13页/共892页\n施工总体部署说明。\n……"],
+        company_name="安徽正奇建设有限公司",
+    )
+    user_prompt = messages[1]["content"]
+    assert "严禁事项" in user_prompt
+    # Leaked RAG page footers / dot leaders are cleaned out of injected chunks.
+    assert "第13页/共892页" not in user_prompt
+    assert "施工总体部署说明。" in user_prompt

@@ -7,7 +7,17 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
+
+# Production typography for Chinese bid documents:
+# body uses 宋体, headings use 黑体 (bold), Latin/digits use Times New Roman.
+BODY_CJK_FONT = "SimSun"  # 宋体
+HEADING_CJK_FONT = "SimHei"  # 黑体
+LATIN_FONT = "Times New Roman"
+BODY_SIZE_PT = 12  # 小四
+HEADING_SIZES_PT = {"Heading 1": 16, "Heading 2": 14, "Heading 3": 12}  # 三号/四号/小四
+# 2-character first-line indent at the body font size.
+FIRST_LINE_INDENT_PT = BODY_SIZE_PT * 2
 
 
 # Headings whose title contains any of these keywords are routed to the
@@ -101,21 +111,45 @@ def _render_markdown_body(document: Document, markdown_text: str) -> None:
         elif line[:3].isdigit() and line[3:5] in {". ", "、"}:
             document.add_paragraph(line[5:].strip(), style="List Number")
         else:
-            document.add_paragraph(line)
+            paragraph = document.add_paragraph(line)
+            # Production body paragraphs start with a 2-character indent.
+            paragraph.paragraph_format.first_line_indent = Pt(FIRST_LINE_INDENT_PT)
         index += 1
+
+
+def _set_fonts(style, cjk_font: str) -> None:
+    """Set Latin + East-Asian fonts on a style (python-docx needs raw XML)."""
+    style.font.name = LATIN_FONT
+    rpr = style.element.get_or_add_rPr()
+    rfonts = rpr.get_or_add_rFonts()
+    rfonts.set(qn("w:ascii"), LATIN_FONT)
+    rfonts.set(qn("w:hAnsi"), LATIN_FONT)
+    rfonts.set(qn("w:cs"), LATIN_FONT)
+    rfonts.set(qn("w:eastAsia"), cjk_font)
 
 
 def _configure_styles(document: Document) -> None:
     normal = document.styles["Normal"]
-    normal.font.name = "Arial"
-    normal.font.size = Pt(10.5)
+    _set_fonts(normal, BODY_CJK_FONT)
+    normal.font.size = Pt(BODY_SIZE_PT)
+    normal.font.bold = False
+    normal.paragraph_format.line_spacing = 1.5
 
-    heading_sizes = {"Heading 1": 16, "Heading 2": 14, "Heading 3": 12}
-    for style_name, size in heading_sizes.items():
+    for style_name, size in HEADING_SIZES_PT.items():
         style = document.styles[style_name]
-        style.font.name = "Arial"
+        _set_fonts(style, HEADING_CJK_FONT)
         style.font.bold = True
         style.font.size = Pt(size)
+        style.font.color.rgb = RGBColor(0, 0, 0)  # avoid the default blue heading colour
+        style.paragraph_format.space_before = Pt(6)
+        style.paragraph_format.space_after = Pt(6)
+
+    for style_name in ("List Bullet", "List Number"):
+        try:
+            _set_fonts(document.styles[style_name], BODY_CJK_FONT)
+            document.styles[style_name].font.size = Pt(BODY_SIZE_PT)
+        except KeyError:
+            continue
 
     for section in document.sections:
         section.top_margin = Pt(72)

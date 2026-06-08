@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from openai import OpenAI
@@ -18,6 +19,44 @@ class GeneratorAgentError(RuntimeError):
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+# --- Output hygiene -------------------------------------------------------
+# Real bids never contain authoring meta-text or leaked source fragments, so
+# the generated markdown is sanitised before it is shown / exported. Spots that
+# need company data are left as a clean fill-in blank for the user to edit in
+# the workspace, rather than an "人工确认点" annotation.
+FILL_IN_BLANK = "________"
+_MANUAL_MARK_RE = re.compile(r"⚠️?\s*人工确认点\s*[：:]\s*【待补充】\s*")
+_PAGE_FOOTER_RE = re.compile(r"第\s*\d+\s*页\s*[/／共]?\s*\d*\s*页?")
+_DOTS_ONLY_RE = re.compile(r"^[.·•・·。……\-—_=\s]+$")
+_EMPTY_TABLE_ROW_RE = re.compile(r"^\s*\|(?:\s*\|)+\s*$")
+_META_LINE_KEYWORDS = ("本章响应度自查", "响应度自查", "废标风险逐条响应自查表")
+
+
+def sanitize_bid_markdown(markdown: str) -> str:
+    """Strip authoring meta-text and leaked RAG fragments from bid markdown."""
+    cleaned: list[str] = []
+    for raw in markdown.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if any(keyword in stripped for keyword in _META_LINE_KEYWORDS):
+            continue
+        if stripped and _PAGE_FOOTER_RE.fullmatch(stripped):
+            continue
+        if stripped and _DOTS_ONLY_RE.match(stripped):
+            continue
+        # A real bid form leaves an underline blank for the bidder to fill,
+        # never an "人工确认点" annotation.
+        line = _MANUAL_MARK_RE.sub(FILL_IN_BLANK, line)
+        line = line.replace("【待补充】", FILL_IN_BLANK)
+        line = line.replace("人工确认点", "").replace("⚠️", "")
+        line = _PAGE_FOOTER_RE.sub("", line)
+        cleaned.append(line)
+    text = "\n".join(cleaned)
+    text = _EMPTY_TABLE_ROW_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip() + "\n"
 
 
 BID_TEMPLATE_SECTION_TITLES = [
@@ -137,7 +176,9 @@ def generate_bid_document(
                 settings.company_name,
                 bid_template,
             )
-            return _ensure_document_header(markdown, requirements, settings.company_name)
+            return sanitize_bid_markdown(
+                _ensure_document_header(markdown, requirements, settings.company_name)
+            )
         except Exception:
             use_local_section_fallback = True
     else:
@@ -176,9 +217,7 @@ def generate_bid_document(
         parts.extend(_appendix_fallback(bid_template))
         parts.append("")
     parts.extend(_business_bid_fallback(requirements))
-    parts.append("")
-    parts.extend(_invalid_bid_checklist(requirements))
-    return "\n".join(parts).strip() + "\n"
+    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
 def _project_title(requirements: TenderRequirements) -> str:
@@ -271,9 +310,7 @@ def _document_preface(
         "",
         "## 投标文件响应总说明",
         "",
-        f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照“技术标先行、商务标支撑、逐条响应、杜绝废标风险”的原则编制。",
-        "",
-        "⚠️人工确认点：【待补充】本文件中涉及投标报价、项目经理姓名及证书编号、业绩合同金额、保证金金额及递交凭证等企业事实数据，须由投标人依据真实资料最终确认。",
+        f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照“技术标先行、商务标支撑、逐条响应、杜绝废标风险”的原则编制，所有内容真实有效，并对所提交资料的真实性负责。",
         "",
     ]
 

@@ -870,6 +870,13 @@
   - `build_document_prompt()` 只保留角色、真实性约束、结构来源优先级和兜底规则；招标 JSON 决定响应内容，模板 JSON 决定输出格式
 - **当前验证**：
   - `tests/test_generator_agent.py` 已覆盖模板章节优先、模板附表输出、prompt 不再包含“输出结构必须严格如下”
+- **production 格式对齐（2026-06-08 补强）**：
+  - 真实投标格式分析：正文宋体（SimSun）、标题黑体（SimHei）加粗、Latin 用 Times New Roman；四级编号“第X章/第X节/一、（一）1.（1）”。据此把这套规范以文字写入 `generator_prompt.REAL_BID_FORMAT_SPEC`
+  - `utils/docx_exporter`：正文宋体小四 + 首行缩进两字 + 1.5 倍行距，标题黑体加粗（三号/四号/小四）且改为黑色，列表沿用正文字体
+  - 生成正文不再出现“人工确认点／待补充／本章响应度自查／废标风险逐条响应自查表”等元文本——这些“待填写”需求改由工作台编辑栏满足；缺企业数据处统一留下划线空白“________”
+  - 新增 `generator_agent.sanitize_bid_markdown()` 兜底清除元文本与 RAG 残片（页码“第X页/共X页”、目录点线、省略号），LLM 与本地兜底两条路径均经过清洗；`generator_prompt` 注入“严禁输出”清单并对检索片段做 `_clean_chunk` 预清洗
+  - 实测：用真实模板走兜底生成的 DOCX，元文本计数全部为 0、RAG 残片为 0、正文宋体/标题黑体加粗，企业数据处留 18 处下划线空白
+  - 测试：`test_docx_exporter` 中文排版断言、`test_generator_agent` 的 sanitizer 与 prompt 格式规范断言均通过
 
 ### M63：真实投标文件差距评估脚本
 - **完成状态**：✅ 已完成
