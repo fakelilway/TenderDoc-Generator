@@ -7,6 +7,7 @@ from pathlib import Path
 from openai import OpenAI
 
 from agents.parser_agent import _has_real_key
+from agents.pricing_agent import markdown_preserves_pricing_manual_points
 from core.config import get_settings
 from schemas.review import InvalidBidRule, ReviewFinding, ReviewLocation, ReviewReport
 from schemas.tender import TenderRequirements
@@ -99,6 +100,36 @@ def _review_with_rules(
                 location=location,
             )
         )
+
+    if _requires_pricing_manual_confirmation(requirement_text):
+        if markdown_preserves_pricing_manual_points(generated_markdown):
+            findings.append(
+                ReviewFinding(
+                    rule="pricing_manual_confirmation",
+                    status="pass",
+                    severity="high",
+                    suggestion="商务标已保留报价人工确认点。",
+                    evidence="生成稿包含报价/清单相关人工确认点。",
+                    location=find_markdown_location(
+                        generated_markdown,
+                        ["人工确认点", "投标总价", "综合单价", "清单"],
+                    ),
+                )
+            )
+        else:
+            findings.append(
+                ReviewFinding(
+                    rule="pricing_manual_confirmation",
+                    status="warning",
+                    severity="high",
+                    suggestion="保留报价人工确认点，投标总价、综合单价和清单金额不得由系统自动填写。",
+                    evidence="招标要求涉及报价/清单/限价，但生成稿未明确保留报价人工确认点。",
+                    location=find_markdown_location(
+                        generated_markdown,
+                        ["报价", "清单", "投标总价", "综合单价"],
+                    ),
+                )
+            )
 
     if not findings:
         findings.append(
@@ -203,6 +234,13 @@ def _requirements_text(requirements: TenderRequirements) -> str:
 
 def _matches_any(patterns: list[str], text: str) -> bool:
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _requires_pricing_manual_confirmation(text: str) -> bool:
+    return any(
+        keyword in text
+        for keyword in ("报价", "清单", "金额", "单价", "投标总价", "最高限价", "控制价")
+    )
 
 
 def _keywords_from_text(text: str) -> list[str]:

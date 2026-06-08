@@ -590,3 +590,95 @@ def test_save_draft_and_final_checklist_endpoints(monkeypatch) -> None:
     assert draft_response.json()["status"] == "draft_saved"
     assert checklist_response.status_code == 200
     assert checklist_response.json()["versions"][0]["version"] == 1
+
+
+def test_strategy_score_and_matrix_endpoints(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.project_service.build_project_pricing_strategy",
+        lambda project_id: {
+            "project_id": project_id,
+            "pricing_strategy": {
+                "project_name": "阶段8项目",
+                "project_scale": "人工确认",
+                "schedule_risk": "medium",
+                "payment_terms": [],
+                "competition_intensity": "人工确认",
+                "quote_risk": "medium",
+                "guarantee_requirements": [],
+                "manual_fields": [
+                    {
+                        "label": "投标总价",
+                        "reason": "人工填写",
+                        "source_text": "",
+                        "required": True,
+                    }
+                ],
+                "extracted_conditions": [],
+            },
+            "pricing_report": {
+                "project_name": "阶段8项目",
+                "strategy_suggestions": ["不自动报价"],
+                "risk_warnings": [],
+                "commercial_response_notes": [],
+                "manual_confirmation_points": ["人工确认点：【待补充】投标总价"],
+                "prohibited_auto_pricing": True,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "api.main.project_service.build_project_score_prediction",
+        lambda project_id: {
+            "project_id": project_id,
+            "score_prediction": {
+                "project_name": "阶段8项目",
+                "total_max_score": 100,
+                "predicted_total_score": 78,
+                "score_rate": 0.78,
+                "win_probability": 0.56,
+                "win_probability_rationale": "覆盖率估算",
+                "uncertainty_notes": ["非真实评标结果"],
+                "strengths": [],
+                "weaknesses": [],
+                "items": [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "api.main.project_service.build_project_response_matrix",
+        lambda project_id: {
+            "project_id": project_id,
+            "response_matrix": {
+                "project_id": project_id,
+                "rows": [
+                    {
+                        "requirement_type": "invalid_bid_item",
+                        "requirement_title": "保证金",
+                        "requirement_text": "未提交保证金否决投标",
+                        "response_status": "found",
+                        "response_location": {
+                            "line_number": 3,
+                            "paragraph_index": 1,
+                            "snippet": "保证金响应",
+                        },
+                        "response_section": "商务响应",
+                        "review_status": "pass",
+                        "manual_confirmation_required": True,
+                        "manual_confirmation_note": "人工核对",
+                    }
+                ],
+                "invalid_bid_coverage_count": 1,
+                "total_invalid_bid_count": 1,
+            },
+        },
+    )
+
+    pricing_response = client.post("/api/project/7/pricing-strategy")
+    score_response = client.post("/api/project/7/score-prediction")
+    matrix_response = client.post("/api/project/7/response-matrix")
+
+    assert pricing_response.status_code == 200
+    assert pricing_response.json()["pricing_report"]["prohibited_auto_pricing"] is True
+    assert score_response.status_code == 200
+    assert score_response.json()["score_prediction"]["win_probability"] == 0.56
+    assert matrix_response.status_code == 200
+    assert matrix_response.json()["response_matrix"]["rows"][0]["response_section"] == "商务响应"

@@ -675,7 +675,7 @@
 目标：对齐图中的“报价 Agent”和“评分预测 Agent”。这两个模块先做辅助策略，不替代人工报价和最终投标判断。
 
 ### M53：报价策略 Schema 与输入抽取
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M12, M14
 - **完成标准**：
   - 定义 `PricingStrategy` schema：项目规模、工期风险、付款条件、竞争强度、报价风险、人工填写项
@@ -684,9 +684,15 @@
 - **测试方法**：
   - 用真实招标文件抽取付款条件/保证金/工期约束
   - schema 校验通过，不生成虚假金额
+- **当前实现**：
+  - 新增 `backend/schemas/strategy.py`，定义 `PricingStrategy`、付款/担保约束和人工填写字段
+  - 新增 `backend/agents/pricing_agent.py`，从资质、评分项、废标项中抽取付款、保证金、工期、报价约束
+  - 具体金额、费率、天数、清单单价和总价均进入人工确认字段，不参与自动报价
+- **当前验证**：
+  - `backend/tests/test_pricing_agent.py` 覆盖付款/保证金/工期/最高限价抽取和人工字段标记
 
 ### M54：报价 Agent（策略建议版）
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M53, M27
 - **完成标准**：
   - 输出报价策略建议、风险提示、商务响应注意事项
@@ -695,9 +701,17 @@
 - **测试方法**：
   - 输入缺少工程量清单数据时，输出必须包含人工确认点
   - 单元测试覆盖“不编造价格”
+- **当前实现**：
+  - `generate_pricing_strategy_report()` 输出报价策略建议、风险提示和商务响应注意事项
+  - 报价报告固定 `prohibited_auto_pricing=true`，并保留“人工确认点：【待补充】”字段
+  - `markdown_preserves_pricing_manual_points()` 可检查商务标中报价人工确认点是否保留
+  - 新增 `POST /api/project/{id}/pricing-strategy`，结果写入 `pricing_strategy_json` 和 `pricing_strategy_report_json`
+- **当前验证**：
+  - `backend/tests/test_pricing_agent.py` 覆盖“不自动填写/不编造价格”
+  - `backend/tests/test_project_api.py` 覆盖报价策略接口响应
 
 ### M55：评分预测 Agent
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M22, M27
 - **完成标准**：
   - 根据评分项模拟专家打分，输出总分、分项分、短板、提升建议
@@ -706,9 +720,17 @@
 - **测试方法**：
   - 对缺少关键章节的标书给出低分和明确原因
   - 对完整样例给出更高分，且分项解释可读
+- **当前实现**：
+  - 新增 `backend/agents/scoring_agent.py`，按评分项和 Markdown 覆盖情况输出模拟总分、分项分、短板和提升建议
+  - 中标概率仅作为策略估计，附带依据和不确定性说明，不影响审批流
+  - 新增 `POST /api/project/{id}/score-prediction`，结果写入 `score_prediction_json`
+  - 前端 `StrategyPanel` 展示预测总分、中标概率和短板
+- **当前验证**：
+  - `backend/tests/test_scoring_agent.py` 覆盖完整样例高于缺失样例、缺失项降分和概率不确定性说明
+  - `backend/tests/test_project_api.py` 覆盖评分预测接口响应
 
 ### M56：审查响应矩阵
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M27, M28, M52
 - **完成标准**：
   - 生成“招标要求 -> 标书响应位置 -> 审查状态 -> 人工确认”矩阵
@@ -717,6 +739,14 @@
 - **测试方法**：
   - 每个 `invalid_bid_item` 至少有一条矩阵记录
   - 点击矩阵项可定位到 Markdown 行或章节
+- **当前实现**：
+  - 新增 `backend/agents/response_matrix_agent.py`，生成“招标要求 -> 标书响应位置 -> 审查状态 -> 人工确认”矩阵
+  - 矩阵覆盖资质、废标项、评分项和报价人工字段，复用 `ReviewLocation` 定位 Markdown 行/章节
+  - 新增 `POST /api/project/{id}/response-matrix`，结果写入 `response_matrix_json`
+  - 终审 checklist 直接嵌入 `response_matrix`；前端矩阵行可点击定位 Markdown 行
+- **当前验证**：
+  - `backend/tests/test_response_matrix_agent.py` 覆盖每个废标项都有矩阵记录、可定位 Markdown 行/章节、商务人工字段入矩阵
+  - `backend/tests/test_project_api.py` 覆盖响应矩阵接口响应
 
 ---
 
@@ -837,7 +867,7 @@
 ## 总结
 
 - 共 **64 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习。
-- 下一阶段优先顺序：优先做 M63 真实投标文件差距评估脚本，再做 M53–M56 的策略 Agent 与高级审查，随后推进 M57–M60/M64 的项目管理、DOCX 格式、通知体验和模板库。
+- 下一阶段优先顺序：优先做 M57–M60 的项目管理、DOCX 格式和通知体验，再推进 M63/M64 的真实投标文件差距评估与模板库闭环。
 - 按顺序执行，即可从可控工作流升级为更接近真实标书编制团队日常使用的产品。
 
 **最后更新**：2026-06-08

@@ -48,6 +48,10 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_chunk_ids JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS edited_markdown TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS final_checklist_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS final_versions_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS pricing_strategy_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS pricing_strategy_report_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS score_prediction_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_matrix_json JSONB;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users
