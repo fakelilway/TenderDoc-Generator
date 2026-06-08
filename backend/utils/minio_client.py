@@ -1,7 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 from io import BytesIO
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from minio import Minio
 
@@ -52,13 +52,26 @@ class MinioClient:
             response.release_conn()
 
     def get_presigned_url(
-        self, bucket: str, object_name: str, expiry: int = 3600
+        self,
+        bucket: str,
+        object_name: str,
+        expiry: int = 3600,
+        response_filename: str | None = None,
     ) -> str:
         self._ensure_bucket(bucket)
+        response_headers = None
+        if response_filename:
+            encoded = quote(response_filename)
+            response_headers = {
+                "response-content-disposition": (
+                    f"attachment; filename*=UTF-8''{encoded}"
+                )
+            }
         return self.client.presigned_get_object(
             bucket,
             object_name,
             expires=timedelta(seconds=expiry),
+            response_headers=response_headers,
         )
 
     def remove_file(self, bucket: str, object_name: str) -> None:

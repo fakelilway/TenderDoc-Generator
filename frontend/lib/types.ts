@@ -254,6 +254,28 @@ export type ProjectDownloadResponse = {
   status: string;
   download_url: string;
   expires_in: number;
+  artifact?: string;
+  artifact_label?: string;
+  filename?: string;
+};
+
+export type ProjectSummary = {
+  project_id: number;
+  name: string;
+  status: string;
+  created_at?: string | null;
+  owner_user_id?: number | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
+  has_download: boolean;
+};
+
+export type ProjectListResponse = {
+  projects: ProjectSummary[];
+};
+
+export type ProjectDeleteResponse = {
+  ok: boolean;
 };
 
 export type KnowledgeSelectionResponse = {

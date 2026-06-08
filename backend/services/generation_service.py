@@ -58,12 +58,22 @@ def export_markdown_for_project(
     markdown: str,
     quality_report: dict[str, float | int],
 ) -> tuple[str, str]:
+    title = _extract_markdown_title(markdown) or "投标文件"
     with TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         markdown_path = tmp_path / f"project_{project_id}_bid.md"
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
         markdown_path.write_text(markdown, encoding="utf-8")
-        markdown_to_docx(markdown, docx_path)
+        markdown_to_docx(
+            markdown,
+            docx_path,
+            title=title,
+            subtitle="投标文件",
+            cover=True,
+            toc=True,
+            header_text=title,
+            page_numbers=True,
+        )
 
         markdown_object = f"projects/{project_id}/generated/bid.md"
         docx_object = f"projects/{project_id}/generated/bid.docx"
@@ -185,6 +195,16 @@ class _status:
         if exc_type is not None:
             _set_status(self.project_id, "generation_failed")
         return False
+
+
+def _extract_markdown_title(markdown_text: str) -> str | None:
+    for line in markdown_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            title = stripped.lstrip("#").strip()
+            if title:
+                return title
+    return None
 
 
 def _section_query(section_title: str, requirements: TenderRequirements) -> str:

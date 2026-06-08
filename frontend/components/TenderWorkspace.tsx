@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
+  FolderOpen,
   Loader2,
   LogOut,
   PencilLine,
@@ -632,15 +633,21 @@ export function TenderWorkspace({
     }
   }
 
-  async function handleDownload() {
+  async function handleDownload(
+    artifact: "docx" | "markdown" | "review" = "docx"
+  ) {
     if (!projectId) {
       return;
     }
     setActionBusy(true);
     setError(null);
     try {
-      const result = await getProjectDownload(projectId);
-      setDownloadUrl(result.download_url);
+      // A fresh presigned URL is generated on every request, so an expired
+      // link can always be recovered by clicking again.
+      const result = await getProjectDownload(projectId, artifact);
+      if (artifact === "docx") {
+        setDownloadUrl(result.download_url);
+      }
       window.open(result.download_url, "_blank", "noopener,noreferrer");
     } catch (downloadError) {
       setError(errorMessage(downloadError));
@@ -689,6 +696,13 @@ export function TenderWorkspace({
                 {username}
               </span>
             ) : null}
+            <a
+              href="/projects"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <FolderOpen className="h-4 w-4" />
+              历史项目
+            </a>
             <button
               type="button"
               disabled={!projectId || actionBusy}
@@ -733,7 +747,7 @@ export function TenderWorkspace({
               type="button"
               disabled={!canDownload || actionBusy}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-              onClick={handleDownload}
+              onClick={() => handleDownload("docx")}
             >
               <Download className="h-4 w-4" />
               下载标书
@@ -754,6 +768,49 @@ export function TenderWorkspace({
         <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger lg:mx-6">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <p>{error}</p>
+        </div>
+      ) : null}
+
+      {canDownload ? (
+        <div className="mx-4 mt-4 flex flex-col gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-ok lg:mx-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold">标书已完成，可下载</p>
+              <p className="text-xs text-green-700">
+                可分别下载最终 DOCX、Markdown 源文件与审查报告；下载链接过期后再次点击即可重新获取。
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => handleDownload("docx")}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+            >
+              <Download className="h-4 w-4" />
+              DOCX
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => handleDownload("markdown")}
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-green-300 bg-white px-3 text-sm font-medium text-ok hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" />
+              Markdown
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => handleDownload("review")}
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-green-300 bg-white px-3 text-sm font-medium text-ok hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" />
+              审查报告
+            </button>
+          </div>
         </div>
       ) : null}
 

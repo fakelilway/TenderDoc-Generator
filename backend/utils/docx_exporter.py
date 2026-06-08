@@ -1,19 +1,80 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt
 
 
-def markdown_to_docx(markdown_text: str, output_path: str | Path) -> str:
+# Headings whose title contains any of these keywords are routed to the
+# commercial (商务标) volume when splitting a bid document into volumes.
+COMMERCIAL_KEYWORDS = (
+    "商务",
+    "报价",
+    "投标函",
+    "投标报价",
+    "开标一览",
+    "资格审查",
+    "资格证明",
+    "营业执照",
+    "财务",
+    "信用",
+    "承诺函",
+    "声明函",
+)
+
+
+def markdown_to_docx(
+    markdown_text: str,
+    output_path: str | Path,
+    *,
+    title: str | None = None,
+    subtitle: str | None = None,
+    cover: bool = False,
+    toc: bool = False,
+    header_text: str | None = None,
+    page_numbers: bool = False,
+    metadata: dict[str, str] | None = None,
+) -> str:
+    """Render markdown into a styled DOCX file.
+
+    The base behaviour (headings/paragraphs/lists/tables) is unchanged; the
+    keyword-only arguments opt into the M58 formatting upgrades: a cover page,
+    an auto-updating table of contents, running headers and page numbers.
+    """
     if not markdown_text.strip():
         raise ValueError("markdown_text is empty")
 
     document = Document()
     _configure_styles(document)
 
+    if header_text or page_numbers:
+        _configure_header_footer(document, header_text, page_numbers)
+
+    if cover:
+        _add_cover_page(
+            document,
+            title or _extract_title(markdown_text) or "投标文件",
+            subtitle,
+            metadata,
+        )
+
+    if toc:
+        _add_table_of_contents(document)
+
+    _render_markdown_body(document, markdown_text)
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    return str(path)
+
+
+def _render_markdown_body(document: Document, markdown_text: str) -> None:
     lines = markdown_text.splitlines()
     index = 0
     while index < len(lines):
@@ -43,27 +104,138 @@ def markdown_to_docx(markdown_text: str, output_path: str | Path) -> str:
             document.add_paragraph(line)
         index += 1
 
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    document.save(path)
-    return str(path)
-
 
 def _configure_styles(document: Document) -> None:
     normal = document.styles["Normal"]
     normal.font.name = "Arial"
     normal.font.size = Pt(10.5)
 
-    for style_name in ("Heading 1", "Heading 2", "Heading 3"):
+    heading_sizes = {"Heading 1": 16, "Heading 2": 14, "Heading 3": 12}
+    for style_name, size in heading_sizes.items():
         style = document.styles[style_name]
         style.font.name = "Arial"
         style.font.bold = True
+        style.font.size = Pt(size)
 
     for section in document.sections:
         section.top_margin = Pt(72)
         section.bottom_margin = Pt(72)
         section.left_margin = Pt(72)
         section.right_margin = Pt(72)
+
+
+def _configure_header_footer(
+    document: Document,
+    header_text: str | None,
+    page_numbers: bool,
+) -> None:
+    for section in document.sections:
+        if header_text:
+            header_paragraph = section.header.paragraphs[0]
+            header_paragraph.text = header_text
+            header_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        if page_numbers:
+            footer_paragraph = section.footer.paragraphs[0]
+            footer_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            footer_paragraph.text = "第 "
+            _append_field(footer_paragraph, "PAGE")
+            footer_paragraph.add_run(" 页 / 共 ")
+            _append_field(footer_paragraph, "NUMPAGES")
+            footer_paragraph.add_run(" 页")
+
+
+def _add_cover_page(
+    document: Document,
+    title: str,
+    subtitle: str | None,
+    metadata: dict[str, str] | None,
+) -> None:
+    for _ in range(4):
+        document.add_paragraph()
+
+    title_paragraph = document.add_paragraph()
+    title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title_paragraph.add_run(title)
+    title_run.bold = True
+    title_run.font.size = Pt(28)
+
+    if subtitle:
+        subtitle_paragraph = document.add_paragraph()
+        subtitle_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        subtitle_run = subtitle_paragraph.add_run(subtitle)
+        subtitle_run.font.size = Pt(16)
+
+    if metadata:
+        for _ in range(2):
+            document.add_paragraph()
+        for key, value in metadata.items():
+            row = document.add_paragraph()
+            row.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = row.add_run(f"{key}：{value}")
+            run.font.size = Pt(12)
+
+    document.add_page_break()
+
+
+def _add_table_of_contents(document: Document) -> None:
+    heading = document.add_heading("目录", level=1)
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    paragraph = document.add_paragraph()
+    run = paragraph.add_run()
+    _append_field(
+        run_or_paragraph=run,
+        instruction='TOC \\o "1-3" \\h \\z \\u',
+        placeholder="请在 Word 中右键“更新域”以生成目录。",
+    )
+    document.add_page_break()
+
+
+def _append_field(
+    run_or_paragraph,
+    instruction: str,
+    placeholder: str | None = None,
+):
+    """Append a Word field (e.g. PAGE/TOC) to a run or paragraph."""
+    run = (
+        run_or_paragraph.add_run()
+        if hasattr(run_or_paragraph, "add_run")
+        else run_or_paragraph
+    )
+    element = run._r
+
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    element.append(begin)
+
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f" {instruction} "
+    element.append(instr)
+
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    element.append(separate)
+
+    if placeholder:
+        text = OxmlElement("w:t")
+        text.text = placeholder
+        element.append(text)
+
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    element.append(end)
+
+
+def _extract_title(markdown_text: str) -> str | None:
+    for line in markdown_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            title = stripped.lstrip("#").strip()
+            if title:
+                return title
+    return None
 
 
 def _is_table_start(lines: list[str], index: int) -> bool:
@@ -99,3 +271,64 @@ def _add_table(document: Document, table_lines: list[str]) -> None:
 def _split_table_row(line: str) -> list[str]:
     stripped = line.strip().strip("|")
     return [cell.strip() for cell in stripped.split("|")]
+
+
+def split_bid_markdown(markdown_text: str) -> dict[str, str]:
+    """Split a single bid markdown into 技术标 / 商务标 volumes.
+
+    Top-level sections (``##``) whose heading mentions commercial keywords are
+    routed to the 商务标 volume; everything else stays in the 技术标 volume. The
+    document title (``#``) is preserved as a prefix for both volumes. Returns a
+    mapping with only the non-empty volumes.
+    """
+    lines = markdown_text.splitlines()
+    doc_title = _extract_title(markdown_text)
+
+    technical: list[str] = []
+    commercial: list[str] = []
+    current = technical
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            # Document level title; skip, it is re-added per volume.
+            continue
+        if stripped.startswith("## "):
+            heading = stripped[3:]
+            current = (
+                commercial
+                if any(keyword in heading for keyword in COMMERCIAL_KEYWORDS)
+                else technical
+            )
+        current.append(line)
+
+    volumes: dict[str, str] = {}
+    for label, body in (("技术标", technical), ("商务标", commercial)):
+        text = "\n".join(body).strip()
+        if not text:
+            continue
+        prefix = f"# {doc_title}（{label}）\n\n" if doc_title else f"# {label}\n\n"
+        volumes[label] = prefix + text
+    return volumes
+
+
+_SAFE_NAME_PATTERN = re.compile(r"[^\w.\-一-鿿]+", flags=re.UNICODE)
+
+
+def build_export_filename(
+    project_name: str,
+    version: int = 1,
+    kind: str | None = None,
+    suffix: str = "docx",
+) -> str:
+    """Build a download filename containing the project name and version.
+
+    Example: ``高层住宅项目_技术标_v2.docx``.
+    """
+    base = _SAFE_NAME_PATTERN.sub("_", (project_name or "投标文件").strip())
+    base = base.strip("._") or "投标文件"
+    parts = [base]
+    if kind:
+        parts.append(kind)
+    parts.append(f"v{max(int(version), 1)}")
+    return f"{'_'.join(parts)}.{suffix}"

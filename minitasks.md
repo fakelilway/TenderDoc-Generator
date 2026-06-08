@@ -755,7 +755,7 @@
 目标：让系统从“能演示”变成“可反复试用”。重点是项目管理、文档格式、真实样本评估和下载通知。
 
 ### M57：项目列表与历史项目恢复
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M34, M39
 - **完成标准**：
   - 用户登录后看到自己的项目列表
@@ -764,9 +764,17 @@
 - **测试方法**：
   - 创建两个项目后刷新页面，项目列表仍可进入对应工作台
   - 普通用户不能查看其他用户项目
+- **当前实现**：
+  - `projects` 表新增 `owner_user_id`（迁移用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` + FK + 索引），`create_project()` 写入当前登录用户
+  - `project_service.list_projects()` 普通用户只返回本人（及历史无主）项目，管理员可选 `owner_user_id` 过滤；`authorize_project_access()` 统一鉴权
+  - `GET /api/projects` 列表接口、`DELETE /api/project/{id}` 删除接口（同步清理 MinIO 产物，documents/knowledge 级联）+ `api.main.authorized_project` 依赖保护所有 `/api/project/{id}/*` 路由，非属主访问/删除返回 403
+  - 历史项目独立成 `/projects` 单独页面（`ProjectsView`），工作台顶部导航栏「历史项目」按钮进入；列表支持打开恢复、删除（带确认），管理员可按用户筛选
+- **当前验证**：
+  - `tests/test_project_service.py` 覆盖 owner 写入、`authorize_project_access` 四种分支、`list_projects` 普通/管理员过滤、`delete_project` 清理与缺失报错
+  - `tests/test_project_api.py` 覆盖 `GET /api/projects`、`DELETE /api/project/{id}`、属主放行与非属主 403；前端 `tsc --noEmit` 通过
 
 ### M58：DOCX 输出格式升级
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M23, M52
 - **完成标准**：
   - 支持封面、目录、页眉页脚、页码、标题样式、表格样式
@@ -775,9 +783,16 @@
 - **测试方法**：
   - 渲染导出的 DOCX，检查封面、目录、标题层级和页码
   - 至少用 2 份真实项目输出并人工验收格式
+- **当前实现**：
+  - `utils/docx_exporter.markdown_to_docx()` 新增 `cover/toc/header_text/page_numbers/title/subtitle/metadata` 关键字参数：封面页、Word 目录域（`TOC \o "1-3"`）、页眉、页脚 `第 X 页 / 共 Y 页`（PAGE/NUMPAGES 域），并强化标题字号与表格样式（保持原有正文渲染向后兼容）
+  - `split_bid_markdown()` 按章节关键字把单份 markdown 拆为技术标/商务标分册，无商务章节时回退单册
+  - `build_export_filename(project_name, version, kind)` 生成包含项目名与版本号的下载文件名（如 `项目_技术标_v2.docx`）
+  - `generation_service.export_markdown_for_project()` 已启用封面/目录/页眉/页码，封面标题取自 markdown 首个标题
+- **当前验证**：
+  - `tests/test_docx_exporter.py` 覆盖封面/目录/页眉/页码域、分册路由、单册回退、文件名生成；`tests/test_generation_service.py` 仍通过
 
 ### M59：真实样本质量评估集
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M45–M58
 - **完成标准**：
   - 建立至少 5 个真实招标文件 + 对应人工投标文件的评估集
@@ -786,9 +801,17 @@
 - **测试方法**：
   - 一键运行评估脚本，输出 Markdown/JSON 报告
   - 至少 3 个指标有可追踪趋势
+- **当前实现**：
+  - `services/quality_eval.py` 提供纯函数指标：`parse_accuracy`（字段/标题 F1）、`section_completeness`、`invalid_detection_rate`（按 `keyword` 匹配废标项是否被响应）、`manual_edit_ratio`（AI 草稿与人工终稿 difflib 距离）、`elapsed_seconds`，并聚合总/平均耗时
+  - `tests/fixtures/quality_eval/` 内置 5 个脱敏样本（manifest + 5 case），新真实样本脱敏后按同结构追加即可纳入回归
+  - `scripts/run_quality_eval.py` 一键运行：输出 `quality_eval_latest.md` / `.json`，并把每次聚合追加到 `quality_eval_history.jsonl`，报告含「版本趋势」表（5 个指标均可追踪）
+- **当前验证**：
+  - `tests/test_quality_eval.py`（10 项）覆盖各指标、评估集 ≥5、聚合报告、Markdown 渲染与趋势、历史追加
+  - 实测：`run_quality_eval.py` 输出解析准确率 0.91 / 章节完整率 0.90 / 废标检出率 0.73 / 人工修改量 0.17 / 总耗时 265.8s，两次运行生成版本趋势
+- **后续**：真实历史投标 PDF 脱敏后替换样本即可得到真实基线（参考 M61 的脱敏流程）
 
 ### M60：完成通知与下载体验
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M44, M52
 - **完成标准**：
   - 工作流完成后前端明确提示“可下载”
@@ -797,6 +820,13 @@
 - **测试方法**：
   - 完成项目后不刷新页面即可看到下载入口
   - 过期链接重新请求后可正常下载
+- **当前实现**：
+  - `GET /api/project/{id}/download?artifact=docx|markdown|review&expiry=` 支持三类产物；`review` 会即时把审查报告渲染成 markdown 上传 MinIO 再签名
+  - 每次请求都重新生成预签名 URL（`minio_client.get_presigned_url` 支持 `response_filename`，按 RFC5987 设置中文下载文件名），过期后再次点击即可恢复
+  - 前端在状态进入 `approved/finished/generated` 时（2 秒轮询，无需刷新）显示绿色“标书已完成，可下载”横幅，提供 DOCX / Markdown / 审查报告三个按钮
+- **当前验证**：
+  - `tests/test_project_service.py` 覆盖 docx/markdown 版本化文件名、review 报告生成与上传、无报告/未知类型报错
+  - `tests/test_project_api.py` 覆盖下载接口的 artifact/expiry 透传与 review 产物；前端 `tsc --noEmit` 通过
 
 ---
 

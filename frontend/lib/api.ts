@@ -15,7 +15,9 @@ import type {
   ParsedConfirmationResponse,
   ProjectConfirmResponse,
   ProjectCreateResponse,
+  ProjectDeleteResponse,
   ProjectDownloadResponse,
+  ProjectListResponse,
   ProjectPricingStrategyResponse,
   ProjectResponseMatrixResponse,
   ProjectResultResponse,
@@ -98,6 +100,23 @@ export function getCurrentUser() {
 export function logout() {
   return requestJson<LogoutResponse>("/api/auth/logout", {
     method: "POST"
+  });
+}
+
+export function listProjects(ownerUserId?: number | null) {
+  const params = new URLSearchParams();
+  if (ownerUserId != null) {
+    params.set("owner_user_id", String(ownerUserId));
+  }
+  const query = params.toString();
+  return requestJson<ProjectListResponse>(
+    `/api/projects${query ? `?${query}` : ""}`
+  );
+}
+
+export function deleteProject(projectId: number) {
+  return requestJson<ProjectDeleteResponse>(`/api/project/${projectId}`, {
+    method: "DELETE"
   });
 }
 
@@ -226,9 +245,13 @@ export function confirmProject(projectId: number, payload: ConfirmPayload) {
   });
 }
 
-export function getProjectDownload(projectId: number) {
+export function getProjectDownload(
+  projectId: number,
+  artifact: "docx" | "markdown" | "review" = "docx"
+) {
+  const params = new URLSearchParams({ artifact });
   return requestJson<ProjectDownloadResponse>(
-    `/api/project/${projectId}/download`
+    `/api/project/${projectId}/download?${params.toString()}`
   );
 }
 

@@ -3,6 +3,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS projects (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
+    owner_user_id BIGINT,
     tender_file_path TEXT,
     parsed_json JSONB,
     generated_markdown_path TEXT,
@@ -52,6 +53,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS pricing_strategy_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS pricing_strategy_report_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS score_prediction_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_matrix_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users
@@ -81,6 +83,7 @@ ALTER TABLE documents ALTER COLUMN project_id DROP NOT NULL;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata_json JSONB;
 ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE VECTOR(1024);
 
+CREATE INDEX IF NOT EXISTS idx_projects_owner_user_id ON projects(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_registration_codes_expires_at ON registration_codes(expires_at);

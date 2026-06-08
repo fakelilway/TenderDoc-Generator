@@ -16,6 +16,9 @@ backend/.env
 # Local persistent data
 data/
 
+# Quality evaluation run artifacts (M59)
+backend/eval_results/
+
 # Python cache and build artifacts
 __pycache__/
 *.pyc

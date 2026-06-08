@@ -1,0 +1,10 @@
+{
+  "description": "投标质量评估集（脱敏样本）。真实历史招标+人工投标文件脱敏后按本结构追加新 case 即可纳入回归。",
+  "cases": [
+    "case_rural_road.json",
+    "case_municipal_pipe.json",
+    "case_school_building.json",
+    "case_bridge_repair.json",
+    "case_landscape.json"
+  ]
+}

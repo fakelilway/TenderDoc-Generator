@@ -21,12 +21,20 @@ from core.config import settings
 from schemas.review import ReviewReport
 from schemas.strategy import PricingStrategy
 from schemas.tender import TenderRequirements
+from utils.docx_exporter import build_export_filename
 from utils.file_parser import extract_text
 from utils.minio_client import minio_client
 
 
 class ProjectNotFoundError(Exception):
     """Raised when a project id is not present in the database."""
+
+
+class ProjectAccessError(Exception):
+    """Raised when a user tries to access a project they do not own."""
+
+
+_RUNNING_STATUSES = {"uploading", "parsing", "processing", "generating", "reviewing"}
 
 
 def _connect():
@@ -97,6 +105,7 @@ def create_project(
     file_bytes: bytes,
     filename: str,
     content_type: str | None = None,
+    owner_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Create a project, upload the tender file, and store its object path."""
     if not file_bytes:
@@ -110,11 +119,11 @@ def create_project(
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                INSERT INTO projects (name, status)
-                VALUES (%s, %s)
+                INSERT INTO projects (name, status, owner_user_id)
+                VALUES (%s, %s, %s)
                 RETURNING id, name, tender_file_path, parsed_json, status, created_at
                 """,
-                (safe_name, "uploading"),
+                (safe_name, "uploading", owner_user_id),
             )
             project = dict(cursor.fetchone())
 
@@ -142,6 +151,133 @@ def create_project(
 
 def get_project(project_id: int) -> dict[str, Any]:
     return _fetch_project(project_id)
+
+
+def get_project_owner(project_id: int) -> int | None:
+    """Return the owner user id for a project, or None when unowned."""
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT owner_user_id FROM projects WHERE id = %s",
+                (project_id,),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return row["owner_user_id"]
+
+
+def authorize_project_access(
+    project_id: int,
+    user_id: int,
+    is_admin: bool = False,
+) -> int | None:
+    """Ensure ``user_id`` may access ``project_id``.
+
+    Admins may access any project. Regular users may access projects they own
+    or legacy projects with no owner recorded. Raises ``ProjectAccessError``
+    otherwise and ``ProjectNotFoundError`` when the project does not exist.
+    """
+    owner_id = get_project_owner(project_id)
+    if is_admin:
+        return owner_id
+    if owner_id is not None and owner_id != user_id:
+        raise ProjectAccessError("无权访问该项目")
+    return owner_id
+
+
+def delete_project(project_id: int) -> None:
+    """Delete a project and its stored artifacts.
+
+    Document/knowledge rows cascade via the ``projects`` foreign key. MinIO
+    objects are removed on a best-effort basis so a missing object never blocks
+    deletion of the database row.
+    """
+    project = _fetch_project(project_id)
+    for object_key in (
+        project.get("tender_file_path"),
+        project.get("generated_markdown_path"),
+        project.get("generated_docx_path"),
+    ):
+        if object_key:
+            try:
+                minio_client.remove_file(settings.minio_bucket, object_key)
+            except Exception:
+                pass
+
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+
+
+def _project_summary(row: dict[str, Any]) -> dict[str, Any]:
+    workflow_state = row.get("workflow_state_json") or {}
+    project_status = row["status"]
+    status = (
+        project_status
+        if project_status in _RUNNING_STATUSES
+        else workflow_state.get("status") or project_status
+    )
+    return {
+        "project_id": int(row["id"]),
+        "name": row["name"],
+        "status": status,
+        "created_at": row["created_at"],
+        "owner_user_id": row.get("owner_user_id"),
+        "owner_username": row.get("owner_username"),
+        "owner_display_name": row.get("owner_display_name"),
+        "has_download": bool(row.get("generated_docx_path")),
+    }
+
+
+def list_projects(
+    viewer_id: int,
+    is_admin: bool = False,
+    owner_user_id: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List projects visible to the requesting user, newest first.
+
+    Regular users only see projects they own (plus legacy ownerless ones).
+    Admins see every project, optionally filtered to a single owner.
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    if is_admin:
+        if owner_user_id is not None:
+            clauses.append("p.owner_user_id = %s")
+            params.append(owner_user_id)
+    else:
+        clauses.append("(p.owner_user_id = %s OR p.owner_user_id IS NULL)")
+        params.append(viewer_id)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.extend([limit, offset])
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                f"""
+                SELECT
+                    p.id,
+                    p.name,
+                    p.status,
+                    p.created_at,
+                    p.owner_user_id,
+                    p.generated_docx_path,
+                    p.workflow_state_json,
+                    u.username AS owner_username,
+                    u.display_name AS owner_display_name
+                FROM projects p
+                LEFT JOIN users u ON u.id = p.owner_user_id
+                {where}
+                ORDER BY p.created_at DESC, p.id DESC
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params),
+            )
+            rows = cursor.fetchall()
+    return [_project_summary(dict(row)) for row in rows]
 
 
 def get_project_status(project_id: int) -> dict[str, Any]:
@@ -665,22 +801,100 @@ def get_project_review(project_id: int) -> dict[str, Any]:
     }
 
 
-def get_project_download_url(project_id: int, expiry: int = 3600) -> dict[str, Any]:
+_DOWNLOAD_ARTIFACTS = {
+    "docx": ("技术标 DOCX", "docx"),
+    "markdown": ("Markdown 源文件", "md"),
+    "review": ("审查报告", "md"),
+}
+
+
+def get_project_download_url(
+    project_id: int,
+    artifact: str = "docx",
+    expiry: int = 3600,
+) -> dict[str, Any]:
     project = _fetch_project(project_id)
-    generated_docx_path = project.get("generated_docx_path")
-    if not generated_docx_path:
-        raise ValueError("Project has no generated document to download")
+    artifact = (artifact or "docx").lower()
+    if artifact not in _DOWNLOAD_ARTIFACTS:
+        raise ValueError(f"不支持的下载类型：{artifact}")
+
+    label, suffix = _DOWNLOAD_ARTIFACTS[artifact]
+    project_name = project.get("name") or "投标文件"
+    version = len(project.get("final_versions_json") or []) or 1
+
+    if artifact == "docx":
+        object_name = project.get("generated_docx_path")
+        if not object_name:
+            raise ValueError("尚未生成可下载的标书文件")
+        filename = build_export_filename(project_name, version, suffix=suffix)
+    elif artifact == "markdown":
+        object_name = project.get("generated_markdown_path")
+        if not object_name:
+            raise ValueError("尚未生成可下载的 Markdown 文件")
+        filename = build_export_filename(project_name, version, suffix=suffix)
+    else:  # review
+        object_name = _export_review_report(project)
+        filename = build_export_filename(
+            f"{project_name}_审查报告", version, suffix=suffix
+        )
 
     return {
         "project_id": project["id"],
         "status": project["status"],
         "download_url": minio_client.get_presigned_url(
             settings.minio_bucket,
-            generated_docx_path,
+            object_name,
             expiry=expiry,
+            response_filename=filename,
         ),
         "expires_in": expiry,
+        "artifact": artifact,
+        "artifact_label": label,
+        "filename": filename,
     }
+
+
+def _export_review_report(project: dict[str, Any]) -> str:
+    """Render the review report to markdown, store it in MinIO, return its key."""
+    report = project.get("review_report_json")
+    if not report:
+        raise ValueError("尚无审查报告可下载")
+    markdown = _build_review_report_markdown(project)
+    object_name = f"projects/{project['id']}/generated/review_report.md"
+    minio_client.upload_file(
+        settings.minio_bucket,
+        markdown.encode("utf-8"),
+        object_name,
+    )
+    return object_name
+
+
+def _build_review_report_markdown(project: dict[str, Any]) -> str:
+    report = project.get("review_report_json") or {}
+    findings = report.get("findings", [])
+    lines = [
+        f"# 审查报告 - {project.get('name', '')}",
+        "",
+        f"- 通过项：{report.get('pass_count', 0)}",
+        f"- 警告项：{report.get('warning_count', 0)}",
+        f"- 失败项：{report.get('fail_count', 0)}",
+        "",
+        "## 审查明细",
+        "",
+    ]
+    if not findings:
+        lines.append("（暂无审查发现）")
+    for finding in findings:
+        lines.append(
+            f"### [{finding.get('status', '')}] {finding.get('rule', '')}"
+        )
+        lines.append(f"- 严重度：{finding.get('severity', '')}")
+        if finding.get("suggestion"):
+            lines.append(f"- 建议：{finding.get('suggestion')}")
+        if finding.get("evidence"):
+            lines.append(f"- 证据：{finding.get('evidence')}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def get_project_review_report(project_id: int) -> dict[str, Any]:

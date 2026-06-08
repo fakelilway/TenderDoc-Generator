@@ -37,11 +37,14 @@ from schemas.knowledge import (
 )
 from schemas.project import (
     ProjectCreateResponse,
+    ProjectDeleteResponse,
     ProjectDownloadResponse,
     ProjectGenerateResponse,
+    ProjectListResponse,
     ProjectResultResponse,
     ProjectReviewResponse,
     ProjectStatusResponse,
+    ProjectSummary,
 )
 from schemas.strategy import (
     ProjectPricingStrategyResponse,
@@ -69,7 +72,7 @@ from services import (
     project_service,
     workflow_service,
 )
-from services.project_service import ProjectNotFoundError
+from services.project_service import ProjectAccessError, ProjectNotFoundError
 
 
 app = FastAPI(title="TenderDoc Generator API")
@@ -78,9 +81,27 @@ app = FastAPI(title="TenderDoc Generator API")
 def _raise_http_error(error: Exception) -> None:
     if isinstance(error, ProjectNotFoundError):
         raise HTTPException(status_code=404, detail=str(error)) from error
+    if isinstance(error, ProjectAccessError):
+        raise HTTPException(status_code=403, detail=str(error)) from error
     if isinstance(error, ValueError):
         raise HTTPException(status_code=400, detail=str(error)) from error
     raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+def authorized_project(
+    project_id: int,
+    current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> int:
+    """Dependency that enforces project ownership for project-scoped routes."""
+    try:
+        project_service.authorize_project_access(
+            project_id,
+            current_user.id,
+            is_admin=current_user.role == "admin",
+        )
+    except Exception as error:
+        _raise_http_error(error)
+    return project_id
 
 
 @app.get("/health")
@@ -119,8 +140,9 @@ def auth_me(
 
 @app.post("/api/auth/logout", response_model=LogoutResponse)
 def logout(
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> LogoutResponse:
+    del current_user
     return LogoutResponse(ok=True)
 
 
@@ -317,7 +339,7 @@ def search_knowledge(
 async def create_project(
     name: str = Form(...),
     tender_file: UploadFile = File(...),
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> ProjectCreateResponse:
     try:
         project = project_service.create_project(
@@ -325,6 +347,7 @@ async def create_project(
             file_bytes=await tender_file.read(),
             filename=tender_file.filename or "tender.txt",
             content_type=tender_file.content_type,
+            owner_user_id=current_user.id,
         )
     except Exception as error:
         _raise_http_error(error)
@@ -336,10 +359,34 @@ async def create_project(
     )
 
 
+@app.get("/api/projects", response_model=ProjectListResponse)
+def list_projects(
+    owner_user_id: int | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectListResponse:
+    is_admin = current_user.role == "admin"
+    try:
+        projects = project_service.list_projects(
+            viewer_id=current_user.id,
+            is_admin=is_admin,
+            owner_user_id=owner_user_id if is_admin else None,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectListResponse(
+        projects=[ProjectSummary(**project) for project in projects]
+    )
+
+
 @app.get("/api/project/{project_id}/status", response_model=ProjectStatusResponse)
 def project_status(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectStatusResponse:
     try:
         return ProjectStatusResponse(**project_service.get_project_status(project_id))
@@ -350,7 +397,7 @@ def project_status(
 @app.post("/api/project/{project_id}/parse", response_model=ProjectResultResponse)
 def parse_project(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectResultResponse:
     try:
         project = project_service.parse_project(project_id)
@@ -371,7 +418,7 @@ def parse_project(
 def confirm_parsed_project(
     project_id: int,
     request: ParsedConfirmationRequest,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ParsedConfirmationResponse:
     try:
         project = project_service.confirm_parsed_result(project_id, request.parsed_json)
@@ -388,7 +435,7 @@ def confirm_parsed_project(
 @app.post("/api/project/{project_id}/outline", response_model=BidOutlineResponse)
 def build_project_outline(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> BidOutlineResponse:
     try:
         project = project_service.build_project_outline(project_id)
@@ -406,7 +453,7 @@ def build_project_outline(
 def save_project_outline(
     project_id: int,
     request: BidOutlineRequest,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> BidOutlineResponse:
     try:
         project = project_service.save_project_outline(project_id, request.outline)
@@ -427,7 +474,7 @@ def save_project_outline(
 def save_project_knowledge_selection(
     project_id: int,
     request: KnowledgeSelectionRequest,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> KnowledgeSelectionResponse:
     try:
         result = project_service.save_selected_knowledge_chunks(
@@ -444,7 +491,7 @@ def save_project_knowledge_selection(
 def save_project_draft(
     project_id: int,
     request: DraftMarkdownRequest,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> DraftMarkdownResponse:
     try:
         result = project_service.save_draft_markdown(project_id, request.markdown)
@@ -465,7 +512,7 @@ def save_project_draft(
 )
 def get_project_final_checklist(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> FinalChecklistResponse:
     try:
         result = project_service.build_final_checklist(project_id)
@@ -481,7 +528,7 @@ def get_project_final_checklist(
 )
 def build_project_pricing_strategy(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectPricingStrategyResponse:
     try:
         result = project_service.build_project_pricing_strategy(project_id)
@@ -497,7 +544,7 @@ def build_project_pricing_strategy(
 )
 def build_project_score_prediction(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectScorePredictionResponse:
     try:
         result = project_service.build_project_score_prediction(project_id)
@@ -513,7 +560,7 @@ def build_project_score_prediction(
 )
 def build_project_response_matrix(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectResponseMatrixResponse:
     try:
         result = project_service.build_project_response_matrix(project_id)
@@ -531,7 +578,7 @@ def build_project_response_matrix(
 def generate_project(
     project_id: int,
     background_tasks: BackgroundTasks,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectGenerateResponse:
     try:
         task_info = generation_service.start_generation(project_id, background_tasks)
@@ -548,10 +595,16 @@ def generate_project(
 @app.get("/api/project/{project_id}/download", response_model=ProjectDownloadResponse)
 def download_project(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    artifact: str = Query("docx"),
+    expiry: int = Query(3600, ge=60, le=86400),
+    _project: int = Depends(authorized_project),
 ) -> ProjectDownloadResponse:
     try:
-        download_info = project_service.get_project_download_url(project_id)
+        download_info = project_service.get_project_download_url(
+            project_id,
+            artifact=artifact,
+            expiry=expiry,
+        )
     except Exception as error:
         _raise_http_error(error)
 
@@ -562,7 +615,7 @@ def download_project(
 def run_project_workflow(
     project_id: int,
     background_tasks: BackgroundTasks,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> WorkflowRunResponse:
     try:
         task = workflow_service.start_bid_workflow(project_id, background_tasks)
@@ -582,7 +635,7 @@ def run_project_workflow(
 def confirm_project(
     project_id: int,
     request: ProjectConfirmRequest,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectConfirmResponse:
     try:
         state = workflow_service.confirm_project(
@@ -604,7 +657,7 @@ def confirm_project(
 @app.get("/api/project/{project_id}/result", response_model=ProjectResultResponse)
 def project_result(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectResultResponse:
     try:
         return ProjectResultResponse(**project_service.get_project_result(project_id))
@@ -615,7 +668,7 @@ def project_result(
 @app.get("/api/project/{project_id}/review", response_model=ProjectReviewResponse)
 def project_review(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> ProjectReviewResponse:
     try:
         return ProjectReviewResponse(**project_service.get_project_review(project_id))
@@ -626,9 +679,22 @@ def project_review(
 @app.get("/api/project/{project_id}/review-report")
 def project_review_report(
     project_id: int,
-    _current_user: UserProfile = Depends(auth_service.get_current_user),
+    _project: int = Depends(authorized_project),
 ) -> dict:
     try:
         return project_service.get_project_review_report(project_id)
     except Exception as error:
         _raise_http_error(error)
+
+
+@app.delete("/api/project/{project_id}", response_model=ProjectDeleteResponse)
+def delete_project(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> ProjectDeleteResponse:
+    try:
+        project_service.delete_project(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectDeleteResponse(ok=True)

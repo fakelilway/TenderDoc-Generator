@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
+from api.main import app, authorized_project
 from rag import retriever
 from schemas.auth import UserAdminProfile, UserProfile
 from schemas.workflow import WorkflowState
@@ -22,6 +22,10 @@ def authenticated_user():
         can_view_knowledge=True,
         can_edit_knowledge=True,
     )
+    # Project-scoped routes guard access through authorized_project; bypass the
+    # database-backed ownership check by default so endpoint behaviour can be
+    # tested in isolation.
+    app.dependency_overrides[authorized_project] = lambda: 0
     yield
     app.dependency_overrides.clear()
 
@@ -29,12 +33,15 @@ def authenticated_user():
 def test_create_project_uploads_tender(monkeypatch) -> None:
     captured = {}
 
-    def fake_create_project(name, file_bytes, filename, content_type=None):
+    def fake_create_project(
+        name, file_bytes, filename, content_type=None, owner_user_id=None
+    ):
         captured.update(
             name=name,
             file_bytes=file_bytes,
             filename=filename,
             content_type=content_type,
+            owner_user_id=owner_user_id,
         )
         return {
             "id": 7,
@@ -61,6 +68,7 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
         "file_bytes": b"hello tender",
         "filename": "sample.txt",
         "content_type": "text/plain",
+        "owner_user_id": 1,
     }
 
 
@@ -121,25 +129,60 @@ def test_generate_project_starts_async_task(monkeypatch) -> None:
 
 
 def test_download_project_returns_presigned_url(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "api.main.project_service.get_project_download_url",
-        lambda project_id: {
+    captured = {}
+
+    def fake_download(project_id, artifact="docx", expiry=3600):
+        captured.update(project_id=project_id, artifact=artifact, expiry=expiry)
+        return {
             "project_id": project_id,
             "status": "generated",
             "download_url": "https://minio.local/projects/7/generated/bid.docx",
-            "expires_in": 3600,
-        },
+            "expires_in": expiry,
+            "artifact": artifact,
+            "artifact_label": "技术标 DOCX",
+            "filename": "项目_v1.docx",
+        }
+
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_download_url", fake_download
     )
 
     response = client.get("/api/project/7/download")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "project_id": 7,
-        "status": "generated",
-        "download_url": "https://minio.local/projects/7/generated/bid.docx",
-        "expires_in": 3600,
-    }
+    body = response.json()
+    assert body["download_url"] == "https://minio.local/projects/7/generated/bid.docx"
+    assert body["artifact"] == "docx"
+    assert body["filename"] == "项目_v1.docx"
+    assert captured == {"project_id": 7, "artifact": "docx", "expiry": 3600}
+
+
+def test_download_project_supports_review_artifact(monkeypatch) -> None:
+    captured = {}
+
+    def fake_download(project_id, artifact="docx", expiry=3600):
+        captured.update(artifact=artifact, expiry=expiry)
+        return {
+            "project_id": project_id,
+            "status": "approved",
+            "download_url": "https://minio.local/projects/7/generated/review_report.md",
+            "expires_in": expiry,
+            "artifact": artifact,
+            "artifact_label": "审查报告",
+            "filename": "项目_审查报告_v1.md",
+        }
+
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_download_url", fake_download
+    )
+
+    response = client.get(
+        "/api/project/7/download", params={"artifact": "review", "expiry": 600}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["artifact_label"] == "审查报告"
+    assert captured == {"artifact": "review", "expiry": 600}
 
 
 def test_review_returns_invalid_bid_items(monkeypatch) -> None:
@@ -682,3 +725,102 @@ def test_strategy_score_and_matrix_endpoints(monkeypatch) -> None:
     assert score_response.json()["score_prediction"]["win_probability"] == 0.56
     assert matrix_response.status_code == 200
     assert matrix_response.json()["response_matrix"]["rows"][0]["response_section"] == "商务响应"
+
+
+def test_list_projects_returns_user_projects(monkeypatch) -> None:
+    captured = {}
+
+    def fake_list_projects(viewer_id, is_admin, owner_user_id, limit, offset):
+        captured.update(
+            viewer_id=viewer_id,
+            is_admin=is_admin,
+            owner_user_id=owner_user_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [
+            {
+                "project_id": 1,
+                "name": "项目A",
+                "status": "approved",
+                "created_at": None,
+                "owner_user_id": 1,
+                "owner_username": "admin",
+                "owner_display_name": "管理员",
+                "has_download": True,
+            }
+        ]
+
+    monkeypatch.setattr("api.main.project_service.list_projects", fake_list_projects)
+
+    response = client.get("/api/projects")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["projects"][0]["project_id"] == 1
+    assert body["projects"][0]["has_download"] is True
+    assert captured["viewer_id"] == 1
+    assert captured["is_admin"] is True
+
+
+def test_project_access_forbidden_for_non_owner(monkeypatch) -> None:
+    app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
+        id=2,
+        username="bob",
+        display_name="Bob",
+        role="user",
+        can_view_knowledge=False,
+        can_edit_knowledge=False,
+    )
+    # Exercise the real ownership dependency instead of the test bypass.
+    app.dependency_overrides.pop(authorized_project, None)
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_owner", lambda project_id: 5
+    )
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_status",
+        lambda project_id: {"project_id": project_id, "status": "parsed", "parsed": True},
+    )
+
+    response = client.get("/api/project/7/status")
+
+    assert response.status_code == 403
+
+
+def test_project_access_allowed_for_owner(monkeypatch) -> None:
+    app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
+        id=5,
+        username="alice",
+        display_name="Alice",
+        role="user",
+        can_view_knowledge=False,
+        can_edit_knowledge=False,
+    )
+    app.dependency_overrides.pop(authorized_project, None)
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_owner", lambda project_id: 5
+    )
+    monkeypatch.setattr(
+        "api.main.project_service.get_project_status",
+        lambda project_id: {"project_id": project_id, "status": "parsed", "parsed": True},
+    )
+
+    response = client.get("/api/project/7/status")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "parsed"
+
+
+def test_delete_project_returns_ok(monkeypatch) -> None:
+    captured = {}
+
+    def fake_delete(project_id):
+        captured["project_id"] = project_id
+
+    monkeypatch.setattr("api.main.project_service.delete_project", fake_delete)
+
+    response = client.delete("/api/project/7")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert captured == {"project_id": 7}
