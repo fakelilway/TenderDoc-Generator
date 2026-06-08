@@ -98,6 +98,13 @@ python scripts/generate_bid.py \
 python scripts/generate_bid.py --demo --output-dir data/output/demo
 ```
 
+### 2.4 生成边界约定
+
+生成链路的结构权威、RAG 作用、Prompt 作用、DOCX 排版和离线脚本定位见
+[docs/generation_contract.md](docs/generation_contract.md)。核心原则是：
+TenderRequirements 只描述招标要求，BidTemplate JSON 是唯一章节结构来源，
+RAG 只提供素材和措辞，DOCX 视觉排版统一由 exporter 负责。
+
 ## 3. 系统架构设计（抽象层）
 
 ### 3.1 逻辑架构图

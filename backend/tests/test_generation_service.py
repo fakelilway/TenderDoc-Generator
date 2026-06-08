@@ -1,4 +1,5 @@
 from services import generation_service
+from schemas.tender import RequirementItem, TenderRequirements
 
 
 def test_evaluate_generation_quality_counts_placeholders() -> None:
@@ -16,6 +17,22 @@ def test_evaluate_generation_quality_counts_placeholders() -> None:
     assert report["total_paragraphs"] == 2
     assert report["needs_revision_paragraphs"] == 1
     assert report["usable_rate"] == 0.5
+
+
+def test_section_query_uses_rag_for_material_reference_only() -> None:
+    requirements = TenderRequirements(
+        project_name="测试项目",
+        technical_score_items=[
+            RequirementItem(title="施工组织设计", description="施工组织设计 30 分")
+        ],
+    )
+
+    query = generation_service._section_query("施工组织设计", requirements)
+
+    assert "素材参考" in query
+    assert "正式标书措辞" in query
+    assert "技术文件格式" not in query
+    assert "安徽正奇" not in query
 
 
 def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> None:

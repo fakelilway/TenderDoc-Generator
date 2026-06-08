@@ -6,9 +6,16 @@ from uuid import uuid4
 import redis
 from psycopg2.extras import Json, RealDictCursor
 
-from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
+from agents.generator_agent import (
+    build_bid_outline,
+    generate_bid_document,
+    load_bid_template,
+)
 from agents.parser_agent import parse_tender
-from agents.pricing_agent import extract_pricing_strategy, generate_pricing_strategy_report
+from agents.pricing_agent import (
+    extract_pricing_strategy,
+    generate_pricing_strategy_report,
+)
 from agents.reviewer_agent import review
 from core.config import settings
 from rag import retriever
@@ -35,7 +42,9 @@ def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, obje
         state.status = "outline_review"
         state.awaiting_human = True
         if project.get("parsed_json"):
-            state.parsed = project.get("confirmed_parsed_json") or project.get("parsed_json")
+            state.parsed = project.get("confirmed_parsed_json") or project.get(
+                "parsed_json"
+            )
         if project.get("bid_outline_json"):
             state.bid_outline = project["bid_outline_json"]
         _append_trace(
@@ -56,7 +65,9 @@ def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, obje
 
     _reset_workflow_state(project_id, "processing")
     initial_state = WorkflowState(project_id=project_id, status="processing")
-    initial_state.parsed = project.get("confirmed_parsed_json") or project.get("parsed_json")
+    initial_state.parsed = project.get("confirmed_parsed_json") or project.get(
+        "parsed_json"
+    )
     initial_state.bid_outline = project.get("bid_outline_json") or []
     initial_state.selected_chunk_ids = project.get("selected_chunk_ids") or []
     _append_trace(
@@ -133,11 +144,11 @@ def run_bid_workflow(
 
     from services import template_service
 
-    bid_template = template_service.bid_template_for_project(project_id) or load_bid_template()
+    bid_template = (
+        template_service.bid_template_for_project(project_id) or load_bid_template()
+    )
     template_note = (
-        f"，使用模板：{bid_template.template_name}"
-        if bid_template
-        else "，未加载真实模板，使用默认兜底大纲"
+        f"，使用模板：{bid_template.template_name}" if bid_template else "，未加载真实模板，使用默认兜底大纲"
     )
     _append_trace(
         state,
@@ -157,7 +168,9 @@ def run_bid_workflow(
     )
     selected_chunk_ids = project.get("selected_chunk_ids") or state.selected_chunk_ids
     state.selected_chunk_ids = [int(chunk_id) for chunk_id in selected_chunk_ids]
-    retrieved_by_section = _retrieve_for_outline(requirements, outline, state.selected_chunk_ids)
+    retrieved_by_section = _retrieve_for_outline(
+        requirements, outline, state.selected_chunk_ids
+    )
     state.retrieved_chunks = {
         title: [chunk.content for chunk in chunks]
         for title, chunks in retrieved_by_section.items()
@@ -239,10 +252,7 @@ def run_bid_workflow(
             state,
             "review",
             "running",
-            (
-                f"第 {state.iteration_count} 轮复查完成："
-                f"剩余风险 {report.fail_count} 项。"
-            ),
+            (f"第 {state.iteration_count} 轮复查完成：" f"剩余风险 {report.fail_count} 项。"),
             project_status="reviewing",
         )
 
@@ -271,7 +281,9 @@ def run_bid_workflow(
         )
         if exported:
             markdown_path, docx_path = exported
-            state.final_versions = append_final_version(project_id, markdown_path, docx_path)
+            state.final_versions = append_final_version(
+                project_id, markdown_path, docx_path
+            )
         state.status = "finished"
         _append_trace(
             state,
@@ -344,7 +356,9 @@ def confirm_project(
     state.final_checklist = _build_final_checklist(requirements, state)
     if exported:
         markdown_path, docx_path = exported
-        state.final_versions = append_final_version(project_id, markdown_path, docx_path)
+        state.final_versions = append_final_version(
+            project_id, markdown_path, docx_path
+        )
     _append_trace(
         state,
         "download",
@@ -486,7 +500,7 @@ def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
         return {section.title: selected_results[:3] for section in outline}
 
     query = (
-        f"安徽正奇建设有限公司 投标文件 施工组织设计 技术文件格式 "
+        "历史投标文件 施工组织设计 技术措施 正式标书措辞 素材参考 "
         f"{requirements.project_name} "
         f"{' '.join(section.title for section in outline)} "
         f"{' '.join(point for section in outline for point in section.focus_points)}"
@@ -597,9 +611,7 @@ def _build_final_checklist(
             for item in requirements.invalid_bid_items
         ],
         "manual_confirmation_points": [
-            line.strip()
-            for line in markdown.splitlines()
-            if "人工确认点" in line
+            line.strip() for line in markdown.splitlines() if "人工确认点" in line
         ],
         "pricing_manual_fields": [
             line.strip()
@@ -615,7 +627,10 @@ def _build_final_checklist(
 
 def _finding_status(title: str, review_report: dict) -> str:
     for finding in review_report.get("findings", []):
-        if title and title in f"{finding.get('rule', '')} {finding.get('evidence', '')}":
+        if (
+            title
+            and title in f"{finding.get('rule', '')} {finding.get('evidence', '')}"
+        ):
             return finding.get("status", "warning")
     return "pending"
 

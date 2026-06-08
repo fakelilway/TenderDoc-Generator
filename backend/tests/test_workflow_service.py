@@ -1,4 +1,6 @@
 from rag.retriever import RetrievalResult
+from schemas.bid import BidSectionOutline
+from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import workflow_service
 
@@ -184,6 +186,33 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     assert any("RAG 检索完成" in event.message for event in state.trace_events)
     assert saved_states and persisted_states
     assert status_updates[0] == (7, "processing")
+
+
+def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) -> None:
+    captured = {}
+
+    def fake_retrieve(query, top_k=9):
+        captured["query"] = query
+        captured["top_k"] = top_k
+        return [RetrievalResult(1, 1, "历史施工措施片段", {}, 0.1, 0.9)]
+
+    monkeypatch.setattr(workflow_service.retriever, "retrieve", fake_retrieve)
+
+    chunks = workflow_service._retrieve_for_outline(
+        TenderRequirements.model_validate(PARSED_JSON),
+        [
+            BidSectionOutline(
+                title="第一章、总体施工组织布置及规划",
+                focus_points=["施工组织设计 30 分"],
+            )
+        ],
+    )
+
+    assert captured["top_k"] == 9
+    assert "安徽正奇" not in captured["query"]
+    assert "技术文件格式" not in captured["query"]
+    assert "素材参考" in captured["query"]
+    assert chunks["第一章、总体施工组织布置及规划"][0].content == "历史施工措施片段"
 
 
 def test_confirm_project_applies_human_corrections(monkeypatch) -> None:

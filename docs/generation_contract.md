@@ -1,0 +1,33 @@
+# 标书生成边界约定
+
+本项目只保留一个章节结构来源，避免模板、Prompt、脚本和知识库互相抢控制权。
+
+## 结构来源
+
+`TenderRequirements` 只表示招标文件要求：资格、评分点、废标条款、工期、保证金等。它回答“必须响应什么”，不回答“标书长什么结构”。
+
+`BidTemplate` 是唯一结构权威。主目录、施工组织设计目录、固定商务表单、附表清单和章节顺序都以模板 JSON 为准。项目如果选中了模板，生成器必须使用项目模板；只有没有模板时，才允许走内置的最低限度 fallback。
+
+## 写作来源
+
+Generator prompt 只约束角色、文风、真实性边界和禁止事项。它不能再内置另一套目录或表单模板。
+
+知识库/RAG 只提供历史材料、技术措施、企业表达习惯和可参考措辞。RAG 片段不能改变章节结构，不能替代模板，也不能把样本里的真实人员、电话、身份证、金额等当作当前项目事实。
+
+## 输出排版
+
+Markdown 负责内容层级和正文。DOCX 的视觉排版、封面、目录、页眉页脚、字体、间距和分册策略统一由 `backend/utils/docx_exporter.py` 负责。
+
+## 脚本定位
+
+`scripts/` 和 `backend/scripts/` 下的命令行工具是离线分析、评估、调试和初始化入口，不属于线上生成链路。线上链路应从 API/service 层进入：解析招标需求，选择模板，检索知识材料，生成 Markdown，再由 exporter 生成 DOCX。
+
+## 默认模板
+
+仓库内置默认模板位于 `backend/templates/bid_templates/road_first_envelope_template.json`。本地或部署环境可用下面命令幂等导入模板库：
+
+```bash
+python backend/scripts/seed_default_template.py
+```
+
+导入后，新项目仍需要通过模板推荐或人工选择绑定模板；没有绑定模板的历史项目会继续使用文件 fallback。

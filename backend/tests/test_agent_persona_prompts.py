@@ -29,4 +29,4 @@ def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
     assert "施工组织设计主笔" in GENERATOR_SYSTEM_PROMPT
     assert "商务标合规顾问" in GENERATOR_SYSTEM_PROMPT
     assert "技术标必须排在商务标之前" in GENERATOR_SYSTEM_PROMPT
-    assert "真实模板优先级高于通用写法" in GENERATOR_SYSTEM_PROMPT
+    assert "BidTemplate/outline 是唯一章节结构来源" in GENERATOR_SYSTEM_PROMPT

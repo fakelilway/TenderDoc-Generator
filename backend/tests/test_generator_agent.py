@@ -82,7 +82,8 @@ def test_document_prompt_uses_template_priority_instead_of_hardcoded_format() ->
     user_prompt = messages[1]["content"]
 
     assert "结构来源优先级" in user_prompt
-    assert "真实投标文件模板 JSON 决定“按照什么格式写”" in user_prompt
+    assert "BidTemplate JSON 是唯一章节结构来源" in user_prompt
+    assert "知识库/RAG 只提供素材" in user_prompt
     assert "输出结构必须严格如下" not in user_prompt
     assert "### 1. 施工组织设计" not in user_prompt
     assert "第二章、专项交通导改与保通方案" in user_prompt
@@ -99,9 +100,7 @@ def test_build_bid_outline_maps_input_to_company_template() -> None:
     outline = generator_agent.build_bid_outline(requirements)
 
     safety = next(
-        section
-        for section in outline
-        if section.title == "第五章、安全生产管理体系及保证措施"
+        section for section in outline if section.title == "第五章、安全生产管理体系及保证措施"
     )
     assert safety.focus_points == ["安全文明施工 15 分"]
     assert outline[0].title == "第一章、总体施工组织布置及规划"
@@ -135,6 +134,19 @@ def test_build_bid_outline_caps_mvp_section_count() -> None:
 
     assert len(outline) == generator_agent.MAX_OUTLINE_SECTIONS
     assert len(outline) == len(generator_agent.BID_TEMPLATE_SECTION_TITLES)
+
+
+def test_build_bid_outline_does_not_cap_real_bid_template() -> None:
+    template = _bid_template()
+    template.construction_design_sections = [
+        BidTemplateSection(title=f"第{index}章、模板专项章节", level=1)
+        for index in range(generator_agent.MAX_OUTLINE_SECTIONS + 3)
+    ]
+
+    outline = generator_agent.build_bid_outline(_requirements(), template)
+
+    assert len(outline) == generator_agent.MAX_OUTLINE_SECTIONS + 3
+    assert outline[-1].title == f"第{generator_agent.MAX_OUTLINE_SECTIONS + 2}章、模板专项章节"
 
 
 def test_generate_bid_section_fallback_has_markdown_and_no_placeholder(monkeypatch):
@@ -173,7 +185,7 @@ def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
     assert "投标人：安徽正奇建设有限公司" in markdown
     assert "【商务标】" in markdown
     assert "## 二、商务标" in markdown
-    assert "### 4. 报价文件" in markdown
+    assert "### 报价文件" in markdown
     # Authoring meta-text must NOT leak into the production bid.
     assert "人工确认点" not in markdown
     assert "待补充" not in markdown
@@ -202,6 +214,8 @@ def test_generate_bid_document_includes_template_appendices(monkeypatch):
     assert "- 第二章、专项交通导改与保通方案" in markdown
     assert "## 附图附表" in markdown
     assert "### 附表一、施工总体计划表" in markdown
+    assert "### 1. 一、投标函及投标函附录" in markdown
+    assert "### 2. 八、资格审查资料" in markdown
     assert "### 1. 施工组织设计" not in markdown
 
 
@@ -233,10 +247,7 @@ def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
     monkeypatch.setattr(
         generator_agent,
         "_generate_document_with_llm",
-        lambda *args, **kwargs: (
-            "# 见投标人须知前附表 投标文件（技术文件）\n\n"
-            "## 施工组织设计目录\n"
-        ),
+        lambda *args, **kwargs: ("# 见投标人须知前附表 投标文件（技术文件）\n\n" "## 施工组织设计目录\n"),
     )
 
     markdown = generator_agent.generate_bid_document(requirements, {})
@@ -275,7 +286,9 @@ def test_sanitize_bid_markdown_removes_meta_and_rag_noise() -> None:
 
 
 def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:
-    assert "真实投标文件格式与文风规范" in GENERATOR_SYSTEM_PROMPT
+    assert "真实投标文件文风与正文规范" in GENERATOR_SYSTEM_PROMPT
+    assert "BidTemplate JSON 是唯一章节结构来源" in GENERATOR_SYSTEM_PROMPT
+    assert "知识库/RAG 只提供措辞和素材" in GENERATOR_SYSTEM_PROMPT
     assert "严禁输出" in GENERATOR_SYSTEM_PROMPT
     # The prompt no longer mandates emitting authoring meta-text.
     assert "必须使用“⚠️人工确认点" not in GENERATOR_SYSTEM_PROMPT

@@ -10,6 +10,7 @@ project's selected template over the default file-based one.
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any
 
 from psycopg2.extras import Json, RealDictCursor
@@ -17,6 +18,14 @@ from psycopg2.extras import Json, RealDictCursor
 from schemas.bid_template import BidTemplate
 from services.project_service import ProjectNotFoundError, _connect
 from utils.bid_template_parser import parse_bid_template_bytes
+
+
+DEFAULT_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "templates"
+    / "bid_templates"
+    / "road_first_envelope_template.json"
+)
 
 
 class TemplateNotFoundError(Exception):
@@ -108,6 +117,79 @@ def create_template(
     return _template_summary(dict(row))
 
 
+def seed_template_from_json(
+    template_path: str | Path = DEFAULT_TEMPLATE_PATH,
+    name: str | None = None,
+    project_type: str | None = "公路工程",
+    specialty: str | None = "道路",
+    envelope_type: str | None = None,
+    region: str | None = None,
+    project_year: int | None = None,
+    tags: list[str] | None = None,
+    created_by: int | None = None,
+) -> dict[str, Any]:
+    """Idempotently import a checked-in BidTemplate JSON into the DB library."""
+    path = Path(template_path)
+    template = BidTemplate.model_validate_json(path.read_text(encoding="utf-8"))
+    clean_name = (name or template.template_name or path.stem).strip()
+    source_filename = template.source_file or path.name
+    clean_tags = tags if tags is not None else ["默认模板", "公路", "第一信封"]
+    clean_envelope = envelope_type or template.envelope_type or None
+
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT id, name, source_filename, project_type, specialty,
+                       envelope_type, region, project_year, tags,
+                       template_json, created_by, created_at
+                FROM bid_templates
+                WHERE source_filename = %s OR name = %s
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (source_filename, clean_name),
+            )
+            row = cursor.fetchone()
+            if row:
+                return {**_template_summary(dict(row)), "seeded": False}
+
+            cursor.execute(
+                """
+                INSERT INTO bid_templates (
+                    name,
+                    source_filename,
+                    project_type,
+                    specialty,
+                    envelope_type,
+                    region,
+                    project_year,
+                    tags,
+                    template_json,
+                    created_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, name, source_filename, project_type, specialty,
+                          envelope_type, region, project_year, tags,
+                          template_json, created_by, created_at
+                """,
+                (
+                    clean_name,
+                    source_filename,
+                    project_type,
+                    specialty,
+                    clean_envelope,
+                    region,
+                    project_year,
+                    Json(clean_tags),
+                    Json(template.model_dump(mode="json")),
+                    created_by,
+                ),
+            )
+            inserted = cursor.fetchone()
+    return {**_template_summary(dict(inserted)), "seeded": True}
+
+
 def list_templates() -> list[dict[str, Any]]:
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -178,11 +260,17 @@ def update_template(
                 """,
                 (
                     new_name,
-                    project_type if project_type is not None else current.get("project_type"),
+                    project_type
+                    if project_type is not None
+                    else current.get("project_type"),
                     specialty if specialty is not None else current.get("specialty"),
-                    envelope_type if envelope_type is not None else current.get("envelope_type"),
+                    envelope_type
+                    if envelope_type is not None
+                    else current.get("envelope_type"),
                     region if region is not None else current.get("region"),
-                    project_year if project_year is not None else current.get("project_year"),
+                    project_year
+                    if project_year is not None
+                    else current.get("project_year"),
                     Json(tags if tags is not None else (current.get("tags") or [])),
                     template_id,
                 ),
@@ -221,7 +309,11 @@ def _match_score(
         ("region", region, 1.0, "地区"),
     )
     for field, value, weight, label in criteria:
-        if value and summary.get(field) and str(summary[field]).strip() == str(value).strip():
+        if (
+            value
+            and summary.get(field)
+            and str(summary[field]).strip() == str(value).strip()
+        ):
             score += weight
             reasons.append(f"{label}匹配：{value}")
 

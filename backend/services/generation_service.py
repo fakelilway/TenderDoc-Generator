@@ -6,7 +6,11 @@ from uuid import uuid4
 
 from psycopg2.extras import Json, RealDictCursor
 
-from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
+from agents.generator_agent import (
+    build_bid_outline,
+    generate_bid_document,
+    load_bid_template,
+)
 from core.config import settings
 from rag import retriever
 from schemas.bid import BidGenerationResult
@@ -28,7 +32,9 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
     requirements = TenderRequirements.model_validate(parsed_json)
     from services import template_service
 
-    bid_template = template_service.bid_template_for_project(project_id) or load_bid_template()
+    bid_template = (
+        template_service.bid_template_for_project(project_id) or load_bid_template()
+    )
     outline = build_bid_outline(requirements, bid_template)
     retrieved_chunks_by_section = {
         section.title: retriever.retrieve(
@@ -38,7 +44,9 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
     }
 
     with _status(project_id, "generating"):
-        markdown = generate_bid_document(requirements, retrieved_chunks_by_section, bid_template)
+        markdown = generate_bid_document(
+            requirements, retrieved_chunks_by_section, bid_template
+        )
         quality_report = evaluate_generation_quality(markdown)
         markdown_object, docx_object = export_markdown_for_project(
             project_id,
@@ -219,4 +227,7 @@ def _section_query(section_title: str, requirements: TenderRequirements) -> str:
         descriptions = [
             item.description for item in requirements.technical_score_items[:2]
         ]
-    return f"{requirements.project_name} {section_title} {' '.join(descriptions)}"
+    return (
+        "历史投标文件 施工组织设计 技术措施 正式标书措辞 素材参考 "
+        f"{requirements.project_name} {section_title} {' '.join(descriptions)}"
+    )

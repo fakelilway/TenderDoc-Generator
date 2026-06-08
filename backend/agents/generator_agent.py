@@ -148,15 +148,16 @@ def build_bid_outline(
     template_titles = _technical_titles_from_template(bid_template)
     source_titles = template_titles or BID_TEMPLATE_SECTION_TITLES
     outlines: list[BidSectionOutline] = [
-        BidSectionOutline(title=title, required=True)
-        for title in source_titles
+        BidSectionOutline(title=title, required=True) for title in source_titles
     ]
 
     for item in requirements.technical_score_items:
         title = _section_title_for_item(item, [outline.title for outline in outlines])
         _append_focus(outlines, title, item.description)
 
-    return outlines[:MAX_OUTLINE_SECTIONS]
+    # BidTemplate JSON is the single structural authority when present. The
+    # fallback section cap only applies when no real template is available.
+    return outlines if template_titles else outlines[:MAX_OUTLINE_SECTIONS]
 
 
 def generate_bid_document(
@@ -212,14 +213,12 @@ def generate_bid_document(
                 requirements,
                 chunk_text,
             )
-        parts.append(
-            section_markdown
-        )
+        parts.append(section_markdown)
         parts.append("")
     if bid_template and bid_template.appendix_sections:
         parts.extend(_appendix_fallback(bid_template))
         parts.append("")
-    parts.extend(_business_bid_fallback(requirements, pricing_strategy))
+    parts.extend(_business_bid_fallback(requirements, pricing_strategy, bid_template))
     return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
@@ -255,16 +254,8 @@ def _ensure_document_header(
         lines.insert(insert_at + 1, "")
 
     text = "\n".join(lines).strip()
-    has_business_block = (
-        "【商务标】" in text
-        or "## 一、商务标" in text
-        or "## 二、商务标" in text
-    )
-    has_technical_block = (
-        "【技术标】" in text
-        or "## 一、技术标" in text
-        or "## 二、技术标" in text
-    )
+    has_business_block = "【商务标】" in text or "## 一、商务标" in text or "## 二、商务标" in text
+    has_technical_block = "【技术标】" in text or "## 一、技术标" in text or "## 二、技术标" in text
     if not has_business_block:
         fallback_business = _business_bid_fallback(requirements)
         technical_body = "\n".join(lines[1:]).strip()
@@ -290,7 +281,11 @@ def _ensure_document_header(
 def _ensure_technical_before_business(markdown: str) -> str:
     technical_index = markdown.find("【技术标】")
     business_index = markdown.find("【商务标】")
-    if technical_index == -1 or business_index == -1 or technical_index < business_index:
+    if (
+        technical_index == -1
+        or business_index == -1
+        or technical_index < business_index
+    ):
         return markdown
 
     preface = markdown[:business_index].rstrip()
@@ -321,6 +316,7 @@ def _document_preface(
 def _business_bid_fallback(
     requirements: TenderRequirements,
     pricing_strategy: PricingStrategy | None = None,
+    bid_template: BidTemplate | None = None,
 ) -> list[str]:
     project_name = _project_title(requirements)
     qualification_text = _format_requirement_items(requirements.qualification_list)
@@ -345,6 +341,14 @@ def _business_bid_fallback(
             ]
             if snippets:
                 guarantee_note = "本项目担保/保证金条款摘要（须人工核实原文）：" + "；".join(snippets)
+
+    if bid_template and bid_template.fixed_form_sections:
+        return _business_bid_from_template(
+            requirements,
+            bid_template,
+            payment_note=payment_note,
+            guarantee_note=guarantee_note,
+        )
 
     parts: list[str] = [
         "【商务标】",
@@ -426,6 +430,103 @@ def _business_bid_fallback(
         invalid_bid_text,
     ]
     return parts
+
+
+def _business_bid_from_template(
+    requirements: TenderRequirements,
+    bid_template: BidTemplate,
+    *,
+    payment_note: str = "",
+    guarantee_note: str = "",
+) -> list[str]:
+    project_name = _project_title(requirements)
+    qualification_text = _format_requirement_items(requirements.qualification_list)
+    invalid_bid_text = _format_requirement_items(requirements.invalid_bid_items)
+    lines: list[str] = ["【商务标】", "", "## 二、商务标", ""]
+
+    for index, section in enumerate(bid_template.fixed_form_sections, start=1):
+        title = section.title
+        lines.extend([f"### {index}. {title}", ""])
+        section_text = _template_business_section_body(
+            title,
+            project_name,
+            qualification_text,
+            invalid_bid_text,
+            payment_note,
+            guarantee_note,
+        )
+        lines.extend(section_text)
+        lines.append("")
+
+    if not any(
+        "报价" in section.title or "清单" in section.title
+        for section in bid_template.fixed_form_sections
+    ):
+        lines.extend(
+            [
+                "### 报价文件",
+                "",
+                "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报，系统不自动生成任何报价数值。",
+                "",
+            ]
+        )
+
+    return lines
+
+
+def _template_business_section_body(
+    title: str,
+    project_name: str,
+    qualification_text: str,
+    invalid_bid_text: str,
+    payment_note: str,
+    guarantee_note: str,
+) -> list[str]:
+    if "投标函" in title:
+        body = [
+            f"我方经详细研究{project_name}招标文件及相关资料，决定参加本项目投标，并承诺按招标文件、合同条款、技术标准和工程量清单要求完成全部工作内容。",
+            "本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准，由造价人员核定后填写。",
+            "我方承诺工期、质量、安全、投标有效期、履约担保和合同义务均实质性响应招标文件要求。",
+        ]
+        if payment_note:
+            body.append(payment_note)
+        return body
+    if "授权" in title or "法定代表人" in title:
+        return [
+            "法定代表人身份证明及授权委托书按招标文件固定格式填写，载明投标人名称、统一社会信用代码、法定代表人、授权代理人、授权范围和授权期限。",
+            "法定代表人姓名（________）、身份证号（________）、授权代理人姓名（________）、身份证号（________）及签章页须使用企业真实资料。",
+        ]
+    if "联合体" in title:
+        return [
+            "如本项目允许并采用联合体投标，联合体协议书应明确牵头人、成员单位、职责分工、权利义务和签章要求。",
+            "如本项目不采用联合体投标，应按招标文件要求保留相应声明或填写“不适用”。",
+        ]
+    if "保证金" in title or "保函" in title:
+        body = [
+            "我单位承诺按招标文件规定的金额（________元）、形式（________）、到账时间及有效期提交投标保证金或投标保函。",
+            "若招标文件要求提供缴纳凭证、电子保函编号或银行回单，将在投标文件相应位置附真实有效资料。",
+        ]
+        if guarantee_note:
+            body.append(guarantee_note)
+        return body
+    if "资格" in title:
+        return [
+            "资格审查资料按招标文件要求编制，包含企业营业执照、资质证书、安全生产许可证、项目经理资格、技术负责人、专职安全员、类似业绩、财务信誉和信用查询等资料。",
+            "招标文件资格要求响应如下：",
+            qualification_text,
+            "企业资质证书编号（________）、人员证书编号（________）、社保证明、类似业绩项目名称（________）及合同金额（________元）须使用企业真实资料，并附扫描件或复印件。",
+        ]
+    if "声明" in title or "承诺" in title:
+        return [
+            "我单位承诺投标资料真实、准确、完整，不存在串通投标、弄虚作假、行贿、转包或违法分包等情形。",
+            "我单位承诺依法履行质量、安全、环保、文明施工、农民工工资支付和廉洁履约义务。",
+            "否决投标条款响应：",
+            invalid_bid_text,
+        ]
+    return [
+        "本章节按真实投标模板固定表单保留，具体企业事实信息、证书编号、金额、人员姓名、日期和签章页由投标人依据真实资料填写。",
+        "我单位承诺本章节内容与招标文件实质性要求一致，并在最终提交前逐项复核附件、签章和上传格式。",
+    ]
 
 
 def _generate_document_with_llm(
@@ -619,7 +720,11 @@ def _section_title_for_item(
 
     for section_title, keywords in SECTION_KEYWORDS.items():
         if any(keyword in combined for keyword in keywords):
-            return section_title if section_title in candidate_titles else candidate_titles[0]
+            return (
+                section_title
+                if section_title in candidate_titles
+                else candidate_titles[0]
+            )
     return candidate_titles[0] if candidate_titles else "第二章、主要工程项目的施工方案、方法与技术措施"
 
 
@@ -671,55 +776,6 @@ def _format_requirement_items(items: list[RequirementItem]) -> str:
     return "\n".join(lines) if lines else "- 招标文件未解析出明确条款。"
 
 
-def _invalid_bid_checklist(requirements: TenderRequirements) -> list[str]:
-    lines = [
-        "## 三、废标风险逐条响应自查表",
-        "",
-        "| 序号 | 风险条款 | 响应章节 | 响应措施 | 人工确认点 |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    if not requirements.invalid_bid_items:
-        lines.append(
-            "| 1 | 招标文件未解析出明确废标条款 | 技术标及商务标全文 | 按招标文件实质性要求逐项响应，最终由投标负责人复核 | ⚠️人工确认点：【待补充】人工复核全部否决条款 |"
-        )
-    else:
-        for index, item in enumerate(requirements.invalid_bid_items, start=1):
-            clause = item.description or item.title
-            chapter = _response_chapter_for_invalid_item(item)
-            measure = _response_measure_for_invalid_item(item)
-            lines.append(
-                f"| {index} | {clause} | {chapter} | {measure} | ⚠️人工确认点：【待补充】核验对应证明材料、签章和上传格式 |"
-            )
-    lines.extend(["", "本章响应度自查：完全满足"])
-    return lines
-
-
-def _response_chapter_for_invalid_item(item: RequirementItem) -> str:
-    combined = f"{item.title} {item.description}"
-    if any(keyword in combined for keyword in ("保证金", "报价", "清单", "投标函")):
-        return "一、商务标：投标函、报价文件、投标保证金"
-    if any(keyword in combined for keyword in ("资质", "证书", "社保", "项目经理", "安全生产许可证")):
-        return "一、商务标：资格审查资料"
-    if any(keyword in combined for keyword in ("质量", "安全", "工期", "施工组织")):
-        return "二、技术标：施工组织设计及保证措施"
-    return "一、商务标：其他承诺；二、技术标：风险与合规控制"
-
-
-def _response_measure_for_invalid_item(item: RequirementItem) -> str:
-    combined = f"{item.title} {item.description}"
-    if "保证金" in combined:
-        return "按招标文件要求提交保证金、保函或缴纳凭证，核验金额、有效期和到账时间"
-    if any(keyword in combined for keyword in ("报价", "清单")):
-        return "由造价人员依据工程量清单填报并复核投标函大写金额、清单总价和限价要求"
-    if any(keyword in combined for keyword in ("资质", "证书", "社保", "项目经理")):
-        return "提供真实有效资质、人员证书、社保证明和无在建承诺，确保名称及证书编号一致"
-    if any(keyword in combined for keyword in ("转包", "分包")):
-        return "承诺不转包、不违法分包，依法履约并接受招标人和主管部门监督"
-    if any(keyword in combined for keyword in ("串通", "弄虚作假", "行贿")):
-        return "承诺投标资料真实合法，不串通投标、不弄虚作假、不行贿"
-    return "设置专人按招标文件否决条款逐项复核，确保投标文件签章、格式、资料和承诺完整"
-
-
 def _chunk_content(chunk: RetrievalResult | str) -> str:
     if isinstance(chunk, str):
         return chunk
@@ -754,12 +810,12 @@ def _technical_titles_from_template(
         if section.level == 1 and section.title
     ]
     if titles:
-        return titles[:MAX_OUTLINE_SECTIONS]
+        return titles
     return [
         section.title
         for section in bid_template.main_sections
         if section.section_type == "construction_design" and section.title
-    ][:MAX_OUTLINE_SECTIONS]
+    ]
 
 
 def _appendix_fallback(bid_template: BidTemplate) -> list[str]:
