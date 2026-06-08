@@ -149,6 +149,34 @@ def test_build_bid_outline_does_not_cap_real_bid_template() -> None:
     assert outline[-1].title == f"第{generator_agent.MAX_OUTLINE_SECTIONS + 2}章、模板专项章节"
 
 
+def test_build_bid_document_outline_includes_business_technical_and_price_gap() -> None:
+    outline = generator_agent.build_bid_document_outline(
+        _requirements(), _bid_template()
+    )
+
+    titles = [section.title for section in outline]
+    assert "一、投标函及投标函附录" in titles
+    assert "五、施工组织设计" in titles
+    assert "八、资格审查资料" in titles
+    assert "附图附表" in titles
+    assert "报价文件（第二信封/经济标，如招标文件要求）" in titles
+
+    technical = next(section for section in outline if section.title == "五、施工组织设计")
+    assert technical.volume == "技术标"
+    assert [child.title for child in technical.children] == [
+        "第一章、总体施工组织布置及规划",
+        "第二章、专项交通导改与保通方案",
+    ]
+
+    price = next(
+        section
+        for section in outline
+        if section.section_type == "price_missing_template"
+    )
+    assert price.required is False
+    assert "系统不自动编造" in price.focus_points[0]
+
+
 def test_generate_bid_section_fallback_has_markdown_and_no_placeholder(monkeypatch):
     monkeypatch.setattr(
         generator_agent,
@@ -181,21 +209,20 @@ def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
 
     markdown = generator_agent.generate_bid_document(_requirements(), {})
 
-    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件（技术标及商务标）")
+    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
     assert "投标人：安徽正奇建设有限公司" in markdown
-    assert "【商务标】" in markdown
-    assert "## 二、商务标" in markdown
-    assert "### 报价文件" in markdown
+    assert "## 投标文件目录" in markdown
+    assert "## 一、投标函及投标函附录" in markdown
+    assert "## 五、施工组织设计" in markdown
+    assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
     # Authoring meta-text must NOT leak into the production bid.
     assert "人工确认点" not in markdown
     assert "待补充" not in markdown
     assert "本章响应度自查" not in markdown
     assert "废标风险逐条响应自查表" not in markdown
-    assert "【技术标】" in markdown
-    assert "## 一、技术标" in markdown
-    assert "### 技术标目录" in markdown
+    assert "### 施工组织设计目录" in markdown
     assert "- 第一章、总体施工组织布置及规划" in markdown
-    assert markdown.index("【技术标】") < markdown.index("【商务标】")
+    assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 五、施工组织设计")
 
 
 def test_generate_bid_document_includes_template_appendices(monkeypatch):
@@ -214,8 +241,10 @@ def test_generate_bid_document_includes_template_appendices(monkeypatch):
     assert "- 第二章、专项交通导改与保通方案" in markdown
     assert "## 附图附表" in markdown
     assert "### 附表一、施工总体计划表" in markdown
-    assert "### 1. 一、投标函及投标函附录" in markdown
-    assert "### 2. 八、资格审查资料" in markdown
+    assert "## 一、投标函及投标函附录" in markdown
+    assert "## 八、资格审查资料" in markdown
+    assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 五、施工组织设计")
+    assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
     assert "### 1. 施工组织设计" not in markdown
 
 
@@ -229,7 +258,7 @@ def test_generate_bid_document_prefers_single_document_llm(monkeypatch):
 
     markdown = generator_agent.generate_bid_document(_requirements(), {})
 
-    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件（技术标及商务标）")
+    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
     assert "投标人：安徽正奇建设有限公司" in markdown
     assert "## 二、商务标" in markdown
     assert "## 一、技术标" in markdown
@@ -252,7 +281,7 @@ def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
 
     markdown = generator_agent.generate_bid_document(requirements, {})
 
-    assert markdown.startswith("# 萧县2025年农村公路提质改造联网路工程 投标文件（技术标及商务标）")
+    assert markdown.startswith("# 萧县2025年农村公路提质改造联网路工程 投标文件")
     assert "见投标人须知前附表 投标文件" not in markdown
     assert "投标人：安徽正奇建设有限公司" in markdown
     assert "## 二、商务标" in markdown

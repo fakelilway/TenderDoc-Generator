@@ -372,7 +372,9 @@ def test_delete_knowledge_document_removes_document(monkeypatch) -> None:
     assert captured == {"document_id": 9}
 
 
-def test_admin_can_list_create_update_delete_users_and_generate_codes(monkeypatch) -> None:
+def test_admin_can_list_create_update_delete_users_and_generate_codes(
+    monkeypatch,
+) -> None:
     users = [
         UserAdminProfile(
             id=1,
@@ -567,17 +569,20 @@ def test_build_and_save_outline_endpoints(monkeypatch) -> None:
             "id": project_id,
             "status": "outline_ready",
             "bid_outline_json": outline,
+            "document_outline_json": [],
         },
     )
     saved = {}
 
-    def fake_save(project_id, payload):
+    def fake_save(project_id, payload, document_outline=None):
         saved["project_id"] = project_id
         saved["outline"] = payload
+        saved["document_outline"] = document_outline
         return {
             "id": project_id,
             "status": "outline_confirmed",
             "bid_outline_json": payload,
+            "document_outline_json": document_outline or [],
         }
 
     monkeypatch.setattr("api.main.project_service.save_project_outline", fake_save)
@@ -589,7 +594,7 @@ def test_build_and_save_outline_endpoints(monkeypatch) -> None:
     assert build_response.json()["status"] == "outline_ready"
     assert save_response.status_code == 200
     assert save_response.json()["status"] == "outline_confirmed"
-    assert saved == {"project_id": 7, "outline": outline}
+    assert saved == {"project_id": 7, "outline": outline, "document_outline": None}
 
 
 def test_save_knowledge_selection_endpoint(monkeypatch) -> None:
@@ -731,7 +736,10 @@ def test_strategy_score_and_matrix_endpoints(monkeypatch) -> None:
     assert score_response.status_code == 200
     assert score_response.json()["score_prediction"]["win_probability"] == 0.56
     assert matrix_response.status_code == 200
-    assert matrix_response.json()["response_matrix"]["rows"][0]["response_section"] == "商务响应"
+    assert (
+        matrix_response.json()["response_matrix"]["rows"][0]["response_section"]
+        == "商务响应"
+    )
 
 
 def test_list_projects_returns_user_projects(monkeypatch) -> None:
@@ -786,7 +794,11 @@ def test_project_access_forbidden_for_non_owner(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "api.main.project_service.get_project_status",
-        lambda project_id: {"project_id": project_id, "status": "parsed", "parsed": True},
+        lambda project_id: {
+            "project_id": project_id,
+            "status": "parsed",
+            "parsed": True,
+        },
     )
 
     response = client.get("/api/project/7/status")
@@ -809,7 +821,11 @@ def test_project_access_allowed_for_owner(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "api.main.project_service.get_project_status",
-        lambda project_id: {"project_id": project_id, "status": "parsed", "parsed": True},
+        lambda project_id: {
+            "project_id": project_id,
+            "status": "parsed",
+            "parsed": True,
+        },
     )
 
     response = client.get("/api/project/7/status")

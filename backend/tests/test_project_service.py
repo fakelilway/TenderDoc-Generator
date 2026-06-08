@@ -1,5 +1,6 @@
 import pytest
 
+from schemas.bid_template import BidTemplate, BidTemplateSection
 from schemas.tender import TenderRequirements
 from services import project_service
 
@@ -208,6 +209,97 @@ def test_create_project_records_owner_user_id(monkeypatch) -> None:
     assert insert_params == ("项目", "uploading", 5, 3)
 
 
+def test_build_project_outline_saves_complete_document_outline(monkeypatch) -> None:
+    parsed_json = {
+        "project_name": "项目",
+        "qualification_list": [],
+        "technical_score_items": [],
+        "invalid_bid_items": [],
+    }
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "name": "项目",
+                "tender_file_path": "projects/7/tender/file.txt",
+                "parsed_json": parsed_json,
+                "generated_markdown_path": None,
+                "generated_docx_path": None,
+                "generation_quality_json": None,
+                "review_report_json": None,
+                "workflow_state_json": None,
+                "confirmed_parsed_json": None,
+                "bid_outline_json": None,
+                "document_outline_json": None,
+                "selected_chunk_ids": [],
+                "edited_markdown": None,
+                "final_checklist_json": None,
+                "final_versions_json": None,
+                "pricing_strategy_json": None,
+                "pricing_strategy_report_json": None,
+                "score_prediction_json": None,
+                "response_matrix_json": None,
+                "status": "parsed",
+                "template_id": None,
+                "created_at": None,
+            },
+            {
+                "id": 7,
+                "status": "outline_ready",
+                "bid_outline_json": [
+                    {
+                        "title": "第一章、总体施工组织布置及规划",
+                        "required": True,
+                        "source_item": "",
+                        "focus_points": [],
+                    }
+                ],
+                "document_outline_json": [
+                    {
+                        "title": "一、投标函及投标函附录",
+                        "volume": "商务/资格标",
+                        "section_type": "fixed_form",
+                        "required": True,
+                        "source_item": "",
+                        "focus_points": [],
+                        "children": [],
+                    }
+                ],
+            },
+        ]
+    )
+    template = BidTemplate(
+        template_name="完整模板",
+        source_file="template.json",
+        page_count=10,
+        main_sections=[
+            BidTemplateSection(title="一、投标函及投标函附录", section_type="fixed_form"),
+            BidTemplateSection(title="五、施工组织设计", section_type="construction_design"),
+        ],
+        construction_design_sections=[
+            BidTemplateSection(title="第一章、总体施工组织布置及规划", level=1)
+        ],
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+    monkeypatch.setattr(project_service, "load_bid_template", lambda: template)
+    monkeypatch.setattr(
+        "services.template_service.bid_template_for_project",
+        lambda project_id: None,
+    )
+
+    result = project_service.build_project_outline(7)
+
+    assert result["status"] == "outline_ready"
+    update_statement, update_params = cursor.statements[-1]
+    assert "document_outline_json" in update_statement
+    document_outline = update_params[1].adapted
+    assert [section["title"] for section in document_outline][:2] == [
+        "一、投标函及投标函附录",
+        "五、施工组织设计",
+    ]
+    assert document_outline[-1]["section_type"] == "price_missing_template"
+
+
 def test_authorize_project_access_allows_owner(monkeypatch) -> None:
     cursor = FakeCursor([{"owner_user_id": 5}])
     monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
@@ -305,7 +397,9 @@ class FakePresignMinio:
         self.uploads.append((bucket, file_bytes, object_name))
         return object_name
 
-    def get_presigned_url(self, bucket, object_name, expiry=3600, response_filename=None):
+    def get_presigned_url(
+        self, bucket, object_name, expiry=3600, response_filename=None
+    ):
         self.presigned.append(
             {
                 "bucket": bucket,
@@ -404,7 +498,10 @@ def test_download_url_review_artifact_builds_and_uploads_report(monkeypatch) -> 
     bucket, payload, object_name = fake_minio.uploads[0]
     assert object_name == "projects/7/generated/review_report.md"
     assert b"\xe5\xae\xa1\xe6\x9f\xa5\xe6\x8a\xa5\xe5\x91\x8a" in payload  # "审查报告"
-    assert fake_minio.presigned[0]["object_name"] == "projects/7/generated/review_report.md"
+    assert (
+        fake_minio.presigned[0]["object_name"]
+        == "projects/7/generated/review_report.md"
+    )
 
 
 def test_download_url_review_without_report_raises(monkeypatch) -> None:
@@ -445,7 +542,9 @@ def test_delete_project_removes_objects_and_row(monkeypatch) -> None:
     assert "projects/7/generated/bid.docx" in removed_objects
     assert "projects/7/generated/bid.md" in removed_objects
     delete_statements = [
-        statement for statement, _params in cursor.statements if "DELETE FROM projects" in statement
+        statement
+        for statement, _params in cursor.statements
+        if "DELETE FROM projects" in statement
     ]
     assert delete_statements, "project row should be deleted"
 

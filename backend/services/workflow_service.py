@@ -8,6 +8,7 @@ from psycopg2.extras import Json, RealDictCursor
 
 from agents.generator_agent import (
     build_bid_outline,
+    build_bid_document_outline,
     generate_bid_document,
     load_bid_template,
 )
@@ -47,6 +48,8 @@ def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, obje
             )
         if project.get("bid_outline_json"):
             state.bid_outline = project["bid_outline_json"]
+        if project.get("document_outline_json"):
+            state.document_outline = project["document_outline_json"]
         _append_trace(
             state,
             "outline",
@@ -69,6 +72,7 @@ def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, obje
         "parsed_json"
     )
     initial_state.bid_outline = project.get("bid_outline_json") or []
+    initial_state.document_outline = project.get("document_outline_json") or []
     initial_state.selected_chunk_ids = project.get("selected_chunk_ids") or []
     _append_trace(
         initial_state,
@@ -159,11 +163,15 @@ def run_bid_workflow(
     )
     outline = _outline_from_project(project, requirements, bid_template)
     state.bid_outline = [section.model_dump() for section in outline]
+    state.document_outline = project.get("document_outline_json") or [
+        section.model_dump()
+        for section in build_bid_document_outline(requirements, bid_template)
+    ]
     _append_trace(
         state,
         "generate",
         "running",
-        f"已生成 {len(outline)} 个大纲章节，开始检索企业知识库。",
+        f"已生成 {len(state.document_outline) or len(outline)} 个完整标书目录节点，开始检索企业知识库。",
         project_status="processing",
     )
     selected_chunk_ids = project.get("selected_chunk_ids") or state.selected_chunk_ids
@@ -523,6 +531,7 @@ def _fetch_project(project_id: int) -> dict:
                     parsed_json,
                     confirmed_parsed_json,
                     bid_outline_json,
+                    document_outline_json,
                     selected_chunk_ids,
                     edited_markdown
                 FROM projects
@@ -632,10 +641,7 @@ def _finding_status(title: str, review_report: dict) -> str:
             f"{finding.get('field', '')} "
             f"{finding.get('evidence', '')}"
         )
-        if (
-            title
-            and title in haystack
-        ):
+        if title and title in haystack:
             return finding.get("status", "warning")
     return "pending"
 

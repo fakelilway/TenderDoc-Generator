@@ -257,10 +257,7 @@ def list_knowledge_documents(
         _raise_http_error(error)
 
     return KnowledgeDocumentListResponse(
-        documents=[
-            KnowledgeDocumentSummary(**document)
-            for document in documents
-        ]
+        documents=[KnowledgeDocumentSummary(**document) for document in documents]
     )
 
 
@@ -461,6 +458,7 @@ def build_project_outline(
         project_id=project["id"],
         status=project["status"],
         bid_outline=project["bid_outline_json"],
+        document_outline=project.get("document_outline_json") or [],
     )
 
 
@@ -471,7 +469,11 @@ def save_project_outline(
     _project: int = Depends(authorized_project),
 ) -> BidOutlineResponse:
     try:
-        project = project_service.save_project_outline(project_id, request.outline)
+        project = project_service.save_project_outline(
+            project_id,
+            request.outline,
+            document_outline=request.document_outline,
+        )
     except Exception as error:
         _raise_http_error(error)
 
@@ -479,6 +481,7 @@ def save_project_outline(
         project_id=project["id"],
         status=project["status"],
         bid_outline=project["bid_outline_json"],
+        document_outline=project.get("document_outline_json") or [],
     )
 
 

@@ -45,6 +45,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS review_report_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS workflow_state_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS confirmed_parsed_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS bid_outline_json JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS document_outline_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_chunk_ids JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS edited_markdown TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS final_checklist_json JSONB;

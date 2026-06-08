@@ -9,7 +9,7 @@ from agents.parser_agent import _has_real_key, _is_placeholder_project_name
 from core.config import get_settings
 from prompts.generator_prompt import build_document_prompt, build_section_prompt
 from rag.retriever import RetrievalResult
-from schemas.bid import BidSectionOutline
+from schemas.bid import BidDocumentOutlineSection, BidSectionOutline
 from schemas.bid_template import BidTemplate
 from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
@@ -160,6 +160,110 @@ def build_bid_outline(
     return outlines if template_titles else outlines[:MAX_OUTLINE_SECTIONS]
 
 
+def build_bid_document_outline(
+    requirements: TenderRequirements,
+    bid_template: BidTemplate | None = None,
+) -> list[BidDocumentOutlineSection]:
+    """Build the complete bid package outline, not only construction design."""
+    technical_outline = build_bid_outline(requirements, bid_template)
+    technical_children = [
+        BidDocumentOutlineSection(
+            title=section.title,
+            volume="技术标",
+            section_type="construction_design",
+            required=section.required,
+            source_item=section.source_item,
+            focus_points=section.focus_points,
+        )
+        for section in technical_outline
+    ]
+    if not bid_template or not bid_template.main_sections:
+        return [
+            BidDocumentOutlineSection(
+                title="一、技术标",
+                volume="技术标",
+                section_type="technical_volume",
+                children=technical_children,
+            ),
+            BidDocumentOutlineSection(
+                title="二、商务标",
+                volume="商务标",
+                section_type="business_volume",
+                children=[
+                    BidDocumentOutlineSection(
+                        title=title,
+                        volume="商务标",
+                        section_type="fixed_form",
+                    )
+                    for title in (
+                        "投标函",
+                        "授权委托书或法定代表人身份证明",
+                        "资格审查资料",
+                        "投标保证金",
+                        "承诺函",
+                    )
+                ],
+            ),
+            BidDocumentOutlineSection(
+                title="报价文件",
+                volume="报价/经济标",
+                section_type="price",
+                focus_points=["具体报价金额和工程量清单必须由造价人员或清单数据填报。"],
+            ),
+        ]
+
+    document_outline: list[BidDocumentOutlineSection] = []
+    has_price_section = False
+    for section in bid_template.main_sections:
+        volume = _document_volume_for_section(section.title, section.section_type)
+        if volume == "报价/经济标":
+            has_price_section = True
+        children = (
+            technical_children if section.section_type == "construction_design" else []
+        )
+        document_outline.append(
+            BidDocumentOutlineSection(
+                title=section.title,
+                volume=volume,
+                section_type=section.section_type,
+                required=True,
+                source_item=section.source_page_label,
+                children=children,
+            )
+        )
+
+    if bid_template.appendix_sections:
+        document_outline.append(
+            BidDocumentOutlineSection(
+                title="附图附表",
+                volume="技术标",
+                section_type="appendix_group",
+                children=[
+                    BidDocumentOutlineSection(
+                        title=section.title,
+                        volume="技术标",
+                        section_type="appendix",
+                        source_item=section.source_page_label,
+                    )
+                    for section in bid_template.appendix_sections
+                ],
+            )
+        )
+
+    if not has_price_section:
+        document_outline.append(
+            BidDocumentOutlineSection(
+                title="报价文件（第二信封/经济标，如招标文件要求）",
+                volume="报价/经济标",
+                section_type="price_missing_template",
+                required=False,
+                source_item="当前模板未包含报价卷；如招标文件要求第二信封，需绑定报价模板或接入工程量清单。",
+                focus_points=["系统不自动编造投标总价、综合单价或清单合价。"],
+            )
+        )
+    return document_outline
+
+
 def generate_bid_document(
     requirements: TenderRequirements,
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
@@ -187,6 +291,15 @@ def generate_bid_document(
             use_local_section_fallback = True
     else:
         use_local_section_fallback = True
+
+    if bid_template and bid_template.main_sections:
+        return _generate_template_ordered_document_fallback(
+            requirements,
+            retrieved_chunks_by_section,
+            bid_template,
+            pricing_strategy,
+            use_local_section_fallback,
+        )
 
     parts = _document_preface(requirements, settings.company_name)
     parts.extend(["", "【技术标】", "", "## 一、技术标", "", "### 技术标目录", ""])
@@ -235,7 +348,7 @@ def _ensure_document_header(
     requirements: TenderRequirements,
     company_name: str,
 ) -> str:
-    title = f"# {_project_title(requirements)} 投标文件（技术标及商务标）"
+    title = f"# {_project_title(requirements)} 投标文件"
     lines = markdown.lstrip().splitlines()
     if not lines:
         lines = [title]
@@ -275,25 +388,7 @@ def _ensure_document_header(
         lines.insert(5, "")
         lines.insert(6, "## 一、技术标")
 
-    return _ensure_technical_before_business("\n".join(lines)).strip() + "\n"
-
-
-def _ensure_technical_before_business(markdown: str) -> str:
-    technical_index = markdown.find("【技术标】")
-    business_index = markdown.find("【商务标】")
-    if (
-        technical_index == -1
-        or business_index == -1
-        or technical_index < business_index
-    ):
-        return markdown
-
-    preface = markdown[:business_index].rstrip()
-    business_block = markdown[business_index:technical_index].strip()
-    technical_block = markdown[technical_index:].strip()
-    return "\n\n".join(
-        block for block in [preface, technical_block, business_block] if block
-    )
+    return "\n".join(lines).strip() + "\n"
 
 
 def _document_preface(
@@ -302,15 +397,179 @@ def _document_preface(
 ) -> list[str]:
     project_name = _project_title(requirements)
     return [
-        f"# {project_name} 投标文件（技术标及商务标）",
+        f"# {project_name} 投标文件",
         "",
         f"投标人：{company_name}",
         "",
         "## 投标文件响应总说明",
         "",
-        f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照“技术标先行、商务标支撑、逐条响应、杜绝废标风险”的原则编制，所有内容真实有效，并对所提交资料的真实性负责。",
+        f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照招标文件和模板目录顺序编制，做到资格、商务、技术、报价及附表资料逐项响应，并对所提交资料的真实性负责。",
         "",
     ]
+
+
+def _generate_template_ordered_document_fallback(
+    requirements: TenderRequirements,
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    bid_template: BidTemplate,
+    pricing_strategy: PricingStrategy | None,
+    use_local_section_fallback: bool,
+) -> str:
+    settings = get_settings()
+    outline = build_bid_outline(requirements, bid_template)
+    parts = _document_preface(requirements, settings.company_name)
+    parts.extend(["## 投标文件目录", ""])
+    for section in build_bid_document_outline(requirements, bid_template):
+        parts.append(f"- [{section.volume}] {section.title}")
+        for child in section.children[:12]:
+            parts.append(f"  - {child.title}")
+    parts.append("")
+
+    emitted_appendices = False
+    emitted_price = False
+    for section in bid_template.main_sections:
+        if section.section_type == "construction_design":
+            parts.extend(
+                _technical_volume_from_outline(
+                    requirements,
+                    outline,
+                    retrieved_chunks_by_section,
+                    use_local_section_fallback,
+                )
+            )
+            if bid_template.appendix_sections and not emitted_appendices:
+                parts.extend(_appendix_fallback(bid_template))
+                emitted_appendices = True
+            continue
+
+        if (
+            _document_volume_for_section(section.title, section.section_type)
+            == "报价/经济标"
+        ):
+            parts.extend(_price_bid_fallback(pricing_strategy))
+            emitted_price = True
+            continue
+
+        parts.extend(
+            _business_section_from_template(requirements, section, pricing_strategy)
+        )
+
+    if bid_template.appendix_sections and not emitted_appendices:
+        parts.extend(_appendix_fallback(bid_template))
+    if not emitted_price:
+        parts.extend(_price_bid_fallback(pricing_strategy, missing_template=True))
+
+    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
+
+
+def _technical_volume_from_outline(
+    requirements: TenderRequirements,
+    outline: list[BidSectionOutline],
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    use_local_section_fallback: bool,
+) -> list[str]:
+    parts = ["## 五、施工组织设计", "", "### 施工组织设计目录", ""]
+    for section in outline:
+        parts.append(f"- {section.title}")
+    parts.append("")
+    for section in outline:
+        chunks = retrieved_chunks_by_section.get(section.title, [])
+        chunk_text = [_chunk_content(chunk) for chunk in chunks]
+        if use_local_section_fallback:
+            section_markdown = _generate_section_fallback(
+                section.title,
+                requirements,
+                chunk_text,
+            )
+        else:
+            section_markdown = generate_bid_section(
+                section.title,
+                requirements,
+                chunk_text,
+            )
+        parts.extend([section_markdown, ""])
+    return parts
+
+
+def _business_section_from_template(
+    requirements: TenderRequirements,
+    section,
+    pricing_strategy: PricingStrategy | None,
+) -> list[str]:
+    payment_note, guarantee_note = _pricing_context_notes(pricing_strategy)
+    body = _template_business_section_body(
+        section.title,
+        _project_title(requirements),
+        _format_requirement_items(requirements.qualification_list),
+        _format_requirement_items(requirements.invalid_bid_items),
+        payment_note,
+        guarantee_note,
+    )
+    return [f"## {section.title}", "", *body, ""]
+
+
+def _price_bid_fallback(
+    pricing_strategy: PricingStrategy | None,
+    missing_template: bool = False,
+) -> list[str]:
+    heading = "## 报价文件"
+    if missing_template:
+        heading = "## 报价文件（第二信封/经济标，如招标文件要求）"
+    lines = [
+        heading,
+        "",
+        "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报，系统不自动生成任何报价数值。",
+        "",
+        "报价文件目录如下：",
+        "- 投标总价",
+        "- 已标价工程量清单",
+        "- 分部分项工程量清单计价表",
+        "- 措施项目清单计价表",
+        "- 其他项目清单计价表",
+        "- 主要材料、设备价格表",
+        "- 报价编制说明",
+        "",
+    ]
+    payment_note, guarantee_note = _pricing_context_notes(pricing_strategy)
+    if payment_note:
+        lines.extend([payment_note, ""])
+    if guarantee_note:
+        lines.extend([guarantee_note, ""])
+    return lines
+
+
+def _pricing_context_notes(
+    pricing_strategy: PricingStrategy | None,
+) -> tuple[str, str]:
+    payment_note = ""
+    guarantee_note = ""
+    if pricing_strategy:
+        if pricing_strategy.payment_terms:
+            snippets = [
+                condition.source_text or condition.name
+                for condition in pricing_strategy.payment_terms[:3]
+            ]
+            if snippets:
+                payment_note = "本项目付款及合同商务条件摘要（须以招标文件原文复核）：" + "；".join(snippets)
+        if pricing_strategy.guarantee_requirements:
+            snippets = [
+                condition.source_text or condition.name
+                for condition in pricing_strategy.guarantee_requirements[:3]
+            ]
+            if snippets:
+                guarantee_note = "本项目担保/保证金条款摘要（须以招标文件原文复核）：" + "；".join(snippets)
+    return payment_note, guarantee_note
+
+
+def _document_volume_for_section(title: str, section_type: str) -> str:
+    combined = f"{title} {section_type}"
+    if any(keyword in combined for keyword in ("报价", "清单", "投标总价", "price")):
+        return "报价/经济标"
+    if section_type == "construction_design" or "施工组织设计" in title:
+        return "技术标"
+    if section_type == "appendix":
+        return "技术标"
+    return "商务/资格标"
 
 
 def _business_bid_fallback(

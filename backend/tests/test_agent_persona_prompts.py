@@ -21,12 +21,14 @@ def test_all_agent_prompts_have_role_playing_experience_and_task_boundary() -> N
         assert "经验背书" in prompt, agent_name
         assert "人格化工作方式" in prompt, agent_name
         assert "你的任务" in prompt, agent_name
-        assert "不要编造" in prompt or "不得编造" in prompt or "不替生成 Agent 找借口" in prompt, agent_name
+        assert (
+            "不要编造" in prompt or "不得编造" in prompt or "不替生成 Agent 找借口" in prompt
+        ), agent_name
 
 
 def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
     assert "真实投标文件总编" in GENERATOR_SYSTEM_PROMPT
     assert "施工组织设计主笔" in GENERATOR_SYSTEM_PROMPT
     assert "商务标合规顾问" in GENERATOR_SYSTEM_PROMPT
-    assert "技术标必须排在商务标之前" in GENERATOR_SYSTEM_PROMPT
+    assert "章节顺序必须以 BidTemplate 主目录为准" in GENERATOR_SYSTEM_PROMPT
     assert "BidTemplate/outline 是唯一章节结构来源" in GENERATOR_SYSTEM_PROMPT

@@ -51,6 +51,7 @@ import {
 } from "@/lib/api";
 import { clearSession, getStoredSession } from "@/lib/auth";
 import type {
+  BidDocumentOutlineSection,
   BidOutlineSection,
   FinalChecklist,
   FinalVersion,
@@ -143,6 +144,9 @@ export function TenderWorkspace({
   const [parsedJson, setParsedJson] = useState<TenderRequirements | null>(null);
   const [parsedJsonText, setParsedJsonText] = useState("");
   const [outline, setOutline] = useState<BidOutlineSection[]>([]);
+  const [documentOutline, setDocumentOutline] = useState<BidDocumentOutlineSection[]>(
+    []
+  );
   const [ragQuery, setRagQuery] = useState("施工组织设计 技术标 模板");
   const [ragDocumentType, setRagDocumentType] = useState("");
   const [ragSpecialty, setRagSpecialty] = useState("");
@@ -196,6 +200,9 @@ export function TenderWorkspace({
         }
         if (state.bid_outline) {
           setOutline(state.bid_outline);
+        }
+        if (state.document_outline) {
+          setDocumentOutline(state.document_outline);
         }
         if (state.selected_chunk_ids) {
           setSelectedChunkIds(state.selected_chunk_ids);
@@ -487,6 +494,7 @@ export function TenderWorkspace({
       const built = await buildProjectOutline(projectId);
       setStatus(built.status);
       setOutline(built.bid_outline);
+      setDocumentOutline(built.document_outline ?? []);
     } catch (confirmError) {
       setError(errorMessage(confirmError));
     } finally {
@@ -504,6 +512,7 @@ export function TenderWorkspace({
       const built = await buildProjectOutline(projectId);
       setStatus(built.status);
       setOutline(built.bid_outline);
+      setDocumentOutline(built.document_outline ?? []);
     } catch (outlineError) {
       setError(errorMessage(outlineError));
     } finally {
@@ -521,6 +530,7 @@ export function TenderWorkspace({
       const saved = await saveProjectOutline(projectId, outline);
       setStatus(saved.status);
       setOutline(saved.bid_outline);
+      setDocumentOutline(saved.document_outline ?? []);
     } catch (outlineError) {
       setError(errorMessage(outlineError));
     } finally {
@@ -961,6 +971,7 @@ export function TenderWorkspace({
           />
           <OutlineEditor
             outline={outline}
+            documentOutline={documentOutline}
             busy={actionBusy}
             onChange={setOutline}
             onBuild={handleBuildOutline}

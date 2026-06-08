@@ -8,7 +8,12 @@ from uuid import uuid4
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 
-from agents.generator_agent import build_bid_outline, load_bid_template
+from agents.generator_agent import (
+    build_bid_document_outline,
+    build_bid_outline,
+    load_bid_template,
+)
+from schemas.bid import BidDocumentOutlineSection
 from agents.parser_agent import parse_tender
 from agents.pricing_agent import (
     extract_pricing_strategy,
@@ -77,6 +82,7 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     workflow_state_json,
                     confirmed_parsed_json,
                     bid_outline_json,
+                    document_outline_json,
                     selected_chunk_ids,
                     edited_markdown,
                     final_checklist_json,
@@ -86,6 +92,7 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     score_prediction_json,
                     response_matrix_json,
                     status,
+                    template_id,
                     created_at
                 FROM projects
                 WHERE id = %s
@@ -369,7 +376,9 @@ def get_project_result(project_id: int) -> dict[str, Any]:
     }
 
 
-def confirm_parsed_result(project_id: int, parsed_json: dict[str, Any]) -> dict[str, Any]:
+def confirm_parsed_result(
+    project_id: int, parsed_json: dict[str, Any]
+) -> dict[str, Any]:
     confirmed = TenderRequirements.model_validate(parsed_json).model_dump()
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -396,16 +405,31 @@ def build_project_outline(project_id: int) -> dict[str, Any]:
     if not parsed_json:
         raise ValueError("Project has no parsed requirements")
     requirements = TenderRequirements.model_validate(parsed_json)
+    from services import template_service
+
+    bid_template = (
+        template_service.bid_template_for_project(project_id) or load_bid_template()
+    )
     outline = [
         section.model_dump()
-        for section in build_bid_outline(requirements, load_bid_template())
+        for section in build_bid_outline(requirements, bid_template)
     ]
-    return save_project_outline(project_id, outline, status="outline_ready")
+    document_outline = [
+        section.model_dump()
+        for section in build_bid_document_outline(requirements, bid_template)
+    ]
+    return save_project_outline(
+        project_id,
+        outline,
+        document_outline=document_outline,
+        status="outline_ready",
+    )
 
 
 def save_project_outline(
     project_id: int,
     outline: list[dict[str, Any]],
+    document_outline: list[dict[str, Any]] | None = None,
     status: str = "outline_confirmed",
 ) -> dict[str, Any]:
     if not outline:
@@ -427,22 +451,70 @@ def save_project_outline(
                 ],
             }
         )
+    clean_document_outline = (
+        _clean_document_outline(document_outline)
+        if document_outline
+        else _build_document_outline_for_saved_technical_outline(
+            project_id, clean_outline
+        )
+    )
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
                 UPDATE projects
                 SET bid_outline_json = %s,
+                    document_outline_json = %s,
                     status = %s
                 WHERE id = %s
-                RETURNING id, status, bid_outline_json
+                RETURNING id, status, bid_outline_json, document_outline_json
                 """,
-                (Json(clean_outline), status, project_id),
+                (Json(clean_outline), Json(clean_document_outline), status, project_id),
             )
             row = cursor.fetchone()
     if not row:
         raise ProjectNotFoundError(f"Project {project_id} was not found")
     return dict(row)
+
+
+def _clean_document_outline(outline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        BidDocumentOutlineSection.model_validate(item).model_dump()
+        for item in outline
+        if str(item.get("title", "")).strip()
+    ]
+
+
+def _build_document_outline_for_saved_technical_outline(
+    project_id: int,
+    technical_outline: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    project = _fetch_project(project_id)
+    parsed_json = project.get("confirmed_parsed_json") or project.get("parsed_json")
+    if not parsed_json:
+        return []
+    requirements = TenderRequirements.model_validate(parsed_json)
+    from services import template_service
+
+    bid_template = (
+        template_service.bid_template_for_project(project_id) or load_bid_template()
+    )
+    document_outline = build_bid_document_outline(requirements, bid_template)
+    technical_children = [
+        BidDocumentOutlineSection(
+            title=item["title"],
+            volume="技术标",
+            section_type="construction_design",
+            required=item["required"],
+            source_item=item.get("source_item", ""),
+            focus_points=item.get("focus_points", []),
+        )
+        for item in technical_outline
+    ]
+    for section in document_outline:
+        if section.section_type in {"technical_volume", "construction_design"}:
+            section.children = technical_children
+    return [section.model_dump() for section in document_outline]
 
 
 def save_selected_knowledge_chunks(
@@ -603,7 +675,9 @@ def build_project_response_matrix(project_id: int) -> dict[str, Any]:
     requirements = _project_requirements(project)
     markdown = _project_markdown(project)
     review_report = _project_review_report(project)
-    strategy = _project_pricing_strategy(project) or extract_pricing_strategy(requirements)
+    strategy = _project_pricing_strategy(project) or extract_pricing_strategy(
+        requirements
+    )
     matrix = build_response_matrix(
         project_id,
         requirements,
@@ -634,18 +708,25 @@ def build_project_response_matrix(project_id: int) -> dict[str, Any]:
 
 def build_final_checklist(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
-    parsed_json = project.get("confirmed_parsed_json") or project.get("parsed_json") or {}
+    parsed_json = (
+        project.get("confirmed_parsed_json") or project.get("parsed_json") or {}
+    )
     review_report = project.get("review_report_json") or {}
     markdown = project.get("edited_markdown") or (
         project.get("workflow_state_json") or {}
     ).get("draft_markdown", "")
-    requirements = TenderRequirements.model_validate(parsed_json) if parsed_json else TenderRequirements()
+    requirements = (
+        TenderRequirements.model_validate(parsed_json)
+        if parsed_json
+        else TenderRequirements()
+    )
     matrix = build_response_matrix(
         project_id,
         requirements,
         markdown,
         review_report=_review_report_from_json(review_report),
-        pricing_strategy=_project_pricing_strategy(project) or extract_pricing_strategy(requirements),
+        pricing_strategy=_project_pricing_strategy(project)
+        or extract_pricing_strategy(requirements),
     )
     checklist = {
         "invalid_bid_responses": _checklist_items(
@@ -769,11 +850,7 @@ def _matching_status(item: dict[str, Any], findings: list[dict[str, Any]]) -> st
 
 
 def _manual_confirmation_points(markdown: str) -> list[str]:
-    return [
-        line.strip()
-        for line in markdown.splitlines()
-        if "人工确认点" in line
-    ]
+    return [line.strip() for line in markdown.splitlines() if "人工确认点" in line]
 
 
 def _pricing_manual_fields(markdown: str) -> list[str]:
@@ -786,7 +863,9 @@ def _pricing_manual_fields(markdown: str) -> list[str]:
 
 
 def _attachment_list(parsed_json: dict[str, Any]) -> list[str]:
-    titles = [item.get("title", "") for item in parsed_json.get("qualification_list", [])]
+    titles = [
+        item.get("title", "") for item in parsed_json.get("qualification_list", [])
+    ]
     defaults = ["营业执照", "资质证书", "安全生产许可证", "项目经理证书", "业绩证明"]
     return [title for title in titles if title] or defaults
 
@@ -835,9 +914,7 @@ def get_project_download_url(
         filename = build_export_filename(project_name, version, suffix=suffix)
     else:  # review
         object_name = _export_review_report(project)
-        filename = build_export_filename(
-            f"{project_name}_审查报告", version, suffix=suffix
-        )
+        filename = build_export_filename(f"{project_name}_审查报告", version, suffix=suffix)
 
     return {
         "project_id": project["id"],
@@ -886,9 +963,7 @@ def _build_review_report_markdown(project: dict[str, Any]) -> str:
     if not findings:
         lines.append("（暂无审查发现）")
     for finding in findings:
-        lines.append(
-            f"### [{finding.get('status', '')}] {finding.get('rule', '')}"
-        )
+        lines.append(f"### [{finding.get('status', '')}] {finding.get('rule', '')}")
         lines.append(f"- 严重度：{finding.get('severity', '')}")
         if finding.get("suggestion"):
             lines.append(f"- 建议：{finding.get('suggestion')}")

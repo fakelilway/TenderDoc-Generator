@@ -1,10 +1,11 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from "lucide-react";
-import type { BidOutlineSection } from "@/lib/types";
+import type { BidDocumentOutlineSection, BidOutlineSection } from "@/lib/types";
 
 type Props = {
   outline: BidOutlineSection[];
+  documentOutline?: BidDocumentOutlineSection[];
   busy: boolean;
   onChange: (outline: BidOutlineSection[]) => void;
   onBuild: () => void;
@@ -13,6 +14,7 @@ type Props = {
 
 export function OutlineEditor({
   outline,
+  documentOutline = [],
   busy,
   onChange,
   onBuild,
@@ -65,6 +67,37 @@ export function OutlineEditor({
           </button>
         </div>
       </div>
+      {documentOutline.length > 0 ? (
+        <div className="mt-3 rounded-md border border-line bg-field p-3">
+          <div className="text-xs font-semibold text-ink">完整标书目录</div>
+          <div className="mt-2 space-y-2">
+            {documentOutline.map((section, index) => (
+              <div key={`${section.title}-${index}`} className="text-xs text-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded bg-white px-2 py-0.5 font-medium text-ink">
+                    {section.volume}
+                  </span>
+                  <span className="text-ink">{section.title}</span>
+                  {!section.required ? <span>可选/需另行确认</span> : null}
+                </div>
+                {section.children.length > 0 ? (
+                  <div className="mt-1 grid gap-1 pl-3">
+                    {section.children.slice(0, 8).map((child) => (
+                      <div key={child.title}>- {child.title}</div>
+                    ))}
+                    {section.children.length > 8 ? (
+                      <div>还有 {section.children.length - 8} 个子章节</div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {section.focus_points.length > 0 ? (
+                  <div className="mt-1 pl-3">{section.focus_points[0]}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="mt-3 space-y-2">
         {outline.map((section, index) => (
           <div key={`${section.title}-${index}`} className="rounded-md border border-line bg-field p-3">

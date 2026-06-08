@@ -47,6 +47,7 @@ export type WorkflowState = {
   tender_text?: string;
   parsed?: TenderRequirements | null;
   bid_outline?: BidOutlineSection[];
+  document_outline?: BidDocumentOutlineSection[];
   selected_chunk_ids?: number[];
   rag_references?: RagReference[];
   retrieved_chunks?: Record<string, string[]>;
@@ -78,6 +79,16 @@ export type BidOutlineSection = {
   required: boolean;
   source_item?: string;
   focus_points: string[];
+};
+
+export type BidDocumentOutlineSection = {
+  title: string;
+  volume: string;
+  section_type: string;
+  required: boolean;
+  source_item?: string;
+  focus_points: string[];
+  children: BidDocumentOutlineSection[];
 };
 
 export type RagReference = {
@@ -227,6 +238,7 @@ export type BidOutlineResponse = {
   project_id: number;
   status: string;
   bid_outline: BidOutlineSection[];
+  document_outline?: BidDocumentOutlineSection[];
 };
 
 export type WorkflowRunResponse = {
