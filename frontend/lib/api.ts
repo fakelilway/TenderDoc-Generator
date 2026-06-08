@@ -1,12 +1,18 @@
 import type {
   AuthMeResponse,
+  BidOutlineResponse,
+  BidOutlineSection,
+  DraftMarkdownResponse,
+  FinalChecklistResponse,
   KnowledgeDeleteResponse,
   KnowledgeDocumentListResponse,
   KnowledgeDocumentSummary,
+  KnowledgeSelectionResponse,
   KnowledgeSearchResponse,
   KnowledgeUploadResponse,
   LoginResponse,
   LogoutResponse,
+  ParsedConfirmationResponse,
   ProjectConfirmResponse,
   ProjectCreateResponse,
   ProjectDownloadResponse,
@@ -112,6 +118,62 @@ export function parseProject(projectId: number) {
   });
 }
 
+export function getProjectResult(projectId: number) {
+  return requestJson<ProjectResultResponse>(`/api/project/${projectId}/result`);
+}
+
+export function confirmParsedProject(
+  projectId: number,
+  parsedJson: Record<string, unknown>
+) {
+  return requestJson<ParsedConfirmationResponse>(
+    `/api/project/${projectId}/parsed`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ parsed_json: parsedJson })
+    }
+  );
+}
+
+export function buildProjectOutline(projectId: number) {
+  return requestJson<BidOutlineResponse>(`/api/project/${projectId}/outline`, {
+    method: "POST"
+  });
+}
+
+export function saveProjectOutline(
+  projectId: number,
+  outline: BidOutlineSection[]
+) {
+  return requestJson<BidOutlineResponse>(`/api/project/${projectId}/outline`, {
+    method: "PATCH",
+    body: JSON.stringify({ outline })
+  });
+}
+
+export function saveKnowledgeSelection(projectId: number, chunkIds: number[]) {
+  return requestJson<KnowledgeSelectionResponse>(
+    `/api/project/${projectId}/knowledge-selection`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ selected_chunk_ids: chunkIds })
+    }
+  );
+}
+
+export function saveDraftMarkdown(projectId: number, markdown: string) {
+  return requestJson<DraftMarkdownResponse>(`/api/project/${projectId}/draft`, {
+    method: "PATCH",
+    body: JSON.stringify({ markdown })
+  });
+}
+
+export function getFinalChecklist(projectId: number) {
+  return requestJson<FinalChecklistResponse>(
+    `/api/project/${projectId}/final-checklist`
+  );
+}
+
 export function runProjectWorkflow(projectId: number) {
   return requestJson<WorkflowRunResponse>(
     `/api/project/${projectId}/workflow/run`,
@@ -140,21 +202,56 @@ export function getProjectDownload(projectId: number) {
   );
 }
 
-export function uploadKnowledge(file: File) {
+export function uploadKnowledge(
+  file: File,
+  metadata?: {
+    documentType?: string;
+    specialty?: string;
+    projectYear?: number | null;
+    tags?: string[];
+  }
+) {
   const body = new FormData();
   body.append("file", file);
+  if (metadata?.documentType) {
+    body.append("document_type", metadata.documentType);
+  }
+  if (metadata?.specialty) {
+    body.append("specialty", metadata.specialty);
+  }
+  if (metadata?.projectYear) {
+    body.append("project_year", String(metadata.projectYear));
+  }
+  if (metadata?.tags?.length) {
+    body.append("tags", metadata.tags.join(","));
+  }
   return requestJson<KnowledgeUploadResponse>("/api/knowledge/upload", {
     method: "POST",
     body
   });
 }
 
-export function renameKnowledgeDocument(documentId: number, title: string) {
+export function renameKnowledgeDocument(
+  documentId: number,
+  title: string,
+  metadata?: {
+    documentType?: string | null;
+    specialty?: string | null;
+    projectYear?: number | null;
+    tags?: string[];
+  }
+) {
   return requestJson<KnowledgeDocumentSummary>(
     `/api/knowledge/documents/${documentId}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ title })
+      body: JSON.stringify({
+        title,
+        document_type: metadata?.documentType ?? null,
+        specialty: metadata?.specialty ?? null,
+        project_year: metadata?.projectYear ?? null,
+        tags: metadata?.tags ?? []
+      })
     }
   );
 }
@@ -174,11 +271,22 @@ export function listKnowledgeDocuments(limit = 50) {
   );
 }
 
-export function searchKnowledge(query: string, topK = 5) {
+export function searchKnowledge(
+  query: string,
+  topK = 5,
+  filters?: { documentType?: string; specialty?: string; tags?: string[] }
+) {
   const params = new URLSearchParams({
     query,
     top_k: String(topK)
   });
+  if (filters?.documentType) {
+    params.set("document_type", filters.documentType);
+  }
+  if (filters?.specialty) {
+    params.set("specialty", filters.specialty);
+  }
+  filters?.tags?.forEach((tag) => params.append("tags", tag));
   return requestJson<KnowledgeSearchResponse>(
     `/api/knowledge/search?${params.toString()}`
   );

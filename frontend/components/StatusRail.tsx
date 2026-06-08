@@ -39,7 +39,7 @@ const stages: Stage[] = [
     key: "parse",
     label: "解析",
     icon: FileText,
-    traceStages: ["parse", "parsing"],
+    traceStages: ["parse", "parsing", "outline"],
     pendingText: "等待解析 Agent 提取结构化要求",
     activeText: "PDF/Word 文本抽取 + LLM 结构化解析",
     doneText: "资质、评分项、废标条款已保存"
@@ -87,7 +87,7 @@ function statusIndex(status: string) {
   if (["uploading", "uploaded"].includes(value)) {
     return 0;
   }
-  if (["parsing", "parsed"].includes(value)) {
+  if (["parsing", "parsed", "parsed_confirmed", "outline_ready", "outline_review", "outline_confirmed"].includes(value)) {
     return 1;
   }
   if (["processing", "generating", "generated"].includes(value)) {
@@ -132,6 +132,10 @@ function stageProgress(
     uploaded: 100,
     parsing: 55,
     parsed: 100,
+    parsed_confirmed: 100,
+    outline_ready: 85,
+    outline_review: 85,
+    outline_confirmed: 100,
     processing: 35,
     generating: 70,
     generated: 100,
@@ -202,7 +206,14 @@ export function StatusRail({
     if (matched.length) {
       return matched.slice(-3).map((event) => ({
         status: event.status,
-        message: event.message
+        message: event.message,
+        meta: [
+          event.model_name,
+          event.duration_ms ? `${event.duration_ms}ms` : "",
+          event.fallback ? "fallback" : ""
+        ]
+          .filter(Boolean)
+          .join(" · ")
       }));
     }
     if (active) {
@@ -314,7 +325,14 @@ export function StatusRail({
                             traceDotClass(trace.status)
                           ].join(" ")}
                         />
-                        <span>{trace.message}</span>
+                        <span>
+                          {trace.message}
+                          {"meta" in trace && trace.meta ? (
+                            <span className="ml-1 text-[11px] text-muted">
+                              {trace.meta}
+                            </span>
+                          ) : null}
+                        </span>
                       </div>
                     ))}
                   </div>

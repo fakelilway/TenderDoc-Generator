@@ -55,6 +55,10 @@ export function KnowledgePanel() {
   const canEdit = Boolean(session?.canEditKnowledge);
   const [documents, setDocuments] = useState<KnowledgeDocumentSummary[]>([]);
   const [file, setFile] = useState<File | null>(null);
+  const [documentType, setDocumentType] = useState("");
+  const [specialty, setSpecialty] = useState("");
+  const [projectYear, setProjectYear] = useState("");
+  const [tagText, setTagText] = useState("");
   const [query, setQuery] = useState("施工组织设计 工期 质量 安全");
   const [results, setResults] = useState<KnowledgeSearchResult[]>([]);
   const [busy, setBusy] = useState(false);
@@ -99,9 +103,21 @@ export function KnowledgePanel() {
     setError(null);
     setLastUpload(null);
     try {
-      const response = await uploadKnowledge(file);
+      const response = await uploadKnowledge(file, {
+        documentType: documentType.trim() || undefined,
+        specialty: specialty.trim() || undefined,
+        projectYear: projectYear.trim() ? Number(projectYear) : null,
+        tags: tagText
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean)
+      });
       setLastUpload(`${file.name}：${response.chunk_ids.length} 个片段`);
       setFile(null);
+      setDocumentType("");
+      setSpecialty("");
+      setProjectYear("");
+      setTagText("");
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -261,6 +277,33 @@ export function KnowledgePanel() {
               </button>
             )}
 
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={documentType}
+                onChange={(event) => setDocumentType(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="资料类型"
+              />
+              <input
+                value={specialty}
+                onChange={(event) => setSpecialty(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="专业"
+              />
+              <input
+                value={projectYear}
+                onChange={(event) => setProjectYear(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="年份"
+              />
+              <input
+                value={tagText}
+                onChange={(event) => setTagText(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="标签，逗号分隔"
+              />
+            </div>
+
             <button
               type="button"
               disabled={!file || busy}
@@ -379,6 +422,13 @@ export function KnowledgePanel() {
                         <p className="mt-1 text-xs text-muted">
                           {document.chunk_count} 片段 · {formatDate(document.created_at)}
                         </p>
+                        {document.document_type || document.specialty || document.tags?.length ? (
+                          <p className="mt-1 truncate text-xs text-muted">
+                            {[document.document_type, document.specialty, ...(document.tags ?? [])]
+                              .filter(Boolean)
+                              .join(" / ")}
+                          </p>
+                        ) : null}
                       </div>
                       {canEdit ? (
                         <div className="flex shrink-0 gap-1">

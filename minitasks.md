@@ -526,7 +526,7 @@
 目标：对齐 `tender_flow.png` 中“用户确认大纲 -> 检索 -> 生成 -> 审查 -> 修正 -> 终审”的可控流程。MVP 已能跑通主链路，但下一阶段要让用户能看懂、能改、能追踪每一步。
 
 ### M45：解析结果确认页
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M14, M41
 - **完成标准**：
   - 上传并解析完成后，前端先展示 `project.parsed_json`
@@ -535,9 +535,15 @@
 - **测试方法**：
   - 上传真实招标文件，修改一个评分项，刷新页面后修改仍存在
   - 后端测试覆盖解析 JSON 更新接口
+- **当前实现**：
+  - `PATCH /api/project/{id}/parsed` 保存确认版解析结果到 `confirmed_parsed_json`
+  - 前端 `ParsedReviewPanel` 支持查看/编辑解析 JSON，保存后自动生成默认大纲
+- **当前验证**：
+  - `backend/tests/test_project_api.py` 覆盖解析确认接口
+  - `cd frontend && pnpm run typecheck && pnpm run build` 通过
 
 ### M46：动态大纲编辑器
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M21, M45
 - **完成标准**：
   - 根据解析出的技术评分项生成默认大纲
@@ -546,9 +552,16 @@
 - **测试方法**：
   - 修改章节顺序后触发生成，生成 Agent 按用户确认的大纲输出
   - 前端 typecheck/build 通过
+- **当前实现**：
+  - `POST /api/project/{id}/outline` 基于解析结果和真实模板生成默认大纲
+  - `PATCH /api/project/{id}/outline` 保存用户调整后的 `bid_outline_json`
+  - 前端 `OutlineEditor` 支持章节标题编辑、重点编辑、上移、下移和删除
+- **当前验证**：
+  - `backend/tests/test_project_api.py` 覆盖生成和保存大纲接口
+  - workflow 生成时优先使用项目确认后的 `bid_outline_json`
 
 ### M47：生成前人工确认分支
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M45, M46, M32
 - **完成标准**：
   - workflow 在解析和大纲生成后暂停
@@ -557,9 +570,15 @@
 - **测试方法**：
   - E2E smoke 验证 workflow 不会绕过确认直接生成
   - 单元测试覆盖确认/退回两条分支
+- **当前实现**：
+  - `/api/project/{id}/workflow/run` 在缺少 `confirmed_parsed_json` 或 `bid_outline_json` 时暂停到 `outline_review`
+  - 前端移除上传后自动生成，改为用户确认解析/大纲后点击“开始生成”
+- **当前验证**：
+  - `backend/tests/test_workflow_service.py` 覆盖 workflow 不绕过大纲确认
+  - 全量后端测试 `88 passed, 2 skipped`
 
 ### M48：细粒度任务状态与 Agent Trace
-- **完成状态**：⚠️ 部分完成（前端已有等待时间提示，后端缺少事件流）
+- **完成状态**：✅ 已完成
 - **依赖**：M35, M41
 - **完成标准**：
   - 后端记录每个项目的 step events：上传、解析文本、LLM 请求、RAG 检索、生成、审查、导出
@@ -568,9 +587,16 @@
 - **测试方法**：
   - 上传大 PDF 时前端不再停留在模糊百分比，而能看到当前步骤和已耗时
   - parser timeout 单元测试和前端 typecheck 通过
+- **当前实现**：
+  - `WorkflowTraceEvent` 增加 `duration_ms`、`model_name`、`fallback`
+  - workflow 持续写入 `trace_events`，前端 `StatusRail` 展示 outline、生成、审查、确认、下载事件
+  - 前端展示模型名、耗时、fallback 标记；不展示隐藏链式思考
+- **当前验证**：
+  - `backend/tests/test_workflow_service.py` 覆盖 trace 序列化
+  - `cd frontend && pnpm run typecheck && pnpm run build` 通过
 
 ### M49：知识库资料分类与引用展示
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M20
 - **完成标准**：
   - 知识库文档支持标题、类型、专业、项目年份、标签
@@ -579,9 +605,17 @@
 - **测试方法**：
   - 上传两个不同类型资料，按标签检索只返回对应资料
   - 生成结果中可追踪引用来源
+- **当前实现**：
+  - `documents.metadata_json` 保存资料类型、专业、年份和标签
+  - 知识库上传、重命名和列表接口支持 metadata
+  - `retrieve_filtered()` 支持按资料类型、专业和标签过滤
+  - workflow state 输出 `rag_references`，前端展示已采用片段
+- **当前验证**：
+  - `backend/tests/test_project_api.py` 覆盖知识库接口兼容
+  - `backend/tests/test_rag_retriever.py` 和全量后端测试通过
 
 ### M50：知识库检索结果人工选择
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M49
 - **完成标准**：
   - 生成前展示 RAG 检索结果
@@ -590,9 +624,16 @@
 - **测试方法**：
   - 排除某个模板后，生成内容不再引用该模板内容
   - API 测试覆盖 selected_chunk_ids
+- **当前实现**：
+  - `PATCH /api/project/{id}/knowledge-selection` 保存 `selected_chunk_ids`
+  - workflow 生成时优先使用人工选择的知识片段
+  - 前端 `RagSelectionPanel` 支持筛选检索、勾选采用/排除资料片段
+- **当前验证**：
+  - `backend/tests/test_project_api.py` 覆盖资料选择接口
+  - `backend/tests/test_workflow_service.py` 覆盖 workflow 生成链路
 
 ### M51：正文级在线编辑器
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M41, M43
 - **完成标准**：
   - 用户可以直接编辑生成后的 Markdown 正文
@@ -601,9 +642,16 @@
 - **测试方法**：
   - 编辑一段正文并保存，刷新项目后内容仍存在
   - 导出的 DOCX 包含编辑后的内容
+- **当前实现**：
+  - `PATCH /api/project/{id}/draft` 保存 `edited_markdown` 并重新运行审查
+  - `confirm_project()` 导出时优先使用已保存正文
+  - 前端 `DraftEditor` 支持正文 Markdown 编辑和保存
+- **当前验证**：
+  - `backend/tests/test_project_api.py` 覆盖正文保存接口
+  - `cd frontend && pnpm run typecheck && pnpm run build` 通过
 
 ### M52：最终确认 Checklist 与版本记录
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M51, M44
 - **完成标准**：
   - 终审前显示废标项响应、人工确认点、报价人工填写点、附件清单
@@ -612,6 +660,13 @@
 - **测试方法**：
   - 同一项目多次修改后可下载不同版本
   - DB 中可查询 final version 历史
+- **当前实现**：
+  - `GET /api/project/{id}/final-checklist` 输出废标响应、人工确认点、报价填写点和附件清单
+  - `final_versions_json` 记录最终 Markdown/DOCX 路径版本
+  - 前端 `FinalChecklistPanel` 展示终审清单和版本数量
+- **当前验证**：
+  - `backend/tests/test_project_api.py` 覆盖终审清单接口
+  - 全量后端测试、前端 typecheck/build 均通过
 
 ---
 
@@ -781,8 +836,8 @@
 
 ## 总结
 
-- 共 **64 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M60 覆盖下一阶段 workflow 产品化，M61 到 M64 覆盖真实投标模板学习。
-- 下一阶段优先顺序：M45–M48 先补人工可控和真实状态，再做 M61–M63 的真实模板生成质量闭环，然后做 M49–M52 的知识库引用/在线编辑/版本，最后做 M53–M60/M64 的策略 Agent、模板库和输出体验。
-- 按顺序执行，即可从可演示 MVP 升级为更接近真实标书编制流程的产品。
+- 共 **64 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习。
+- 下一阶段优先顺序：优先做 M63 真实投标文件差距评估脚本，再做 M53–M56 的策略 Agent 与高级审查，随后推进 M57–M60/M64 的项目管理、DOCX 格式、通知体验和模板库。
+- 按顺序执行，即可从可控工作流升级为更接近真实标书编制团队日常使用的产品。
 
-**最后更新**：2026-06-05
+**最后更新**：2026-06-08

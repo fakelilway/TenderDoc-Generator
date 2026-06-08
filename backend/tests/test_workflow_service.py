@@ -61,6 +61,24 @@ def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -
         "_set_project_status",
         lambda project_id, status: status_updates.append((project_id, status)),
     )
+    monkeypatch.setattr(
+        workflow_service,
+        "_fetch_project",
+        lambda project_id: {
+            "id": project_id,
+            "parsed_json": PARSED_JSON,
+            "confirmed_parsed_json": PARSED_JSON,
+            "bid_outline_json": [
+                {
+                    "title": "第一章、总体施工组织布置及规划",
+                    "required": True,
+                    "source_item": "",
+                    "focus_points": [],
+                }
+            ],
+            "selected_chunk_ids": [],
+        },
+    )
     monkeypatch.setattr(workflow_service, "Thread", FakeThread)
 
     task = workflow_service.start_bid_workflow(7)
@@ -72,6 +90,47 @@ def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -
     assert thread_calls[0]["args"] == (7,)
     assert thread_calls[0]["daemon"] is True
     assert thread_calls[-1] == {"started": True}
+
+
+def test_start_bid_workflow_waits_for_outline_confirmation(monkeypatch) -> None:
+    saved_states = []
+    persisted_states = []
+    status_updates = []
+    monkeypatch.setattr(
+        workflow_service,
+        "_fetch_project",
+        lambda project_id: {
+            "id": project_id,
+            "parsed_json": PARSED_JSON,
+            "confirmed_parsed_json": None,
+            "bid_outline_json": None,
+            "selected_chunk_ids": [],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_service,
+        "load_workflow_state",
+        lambda project_id: None,
+    )
+    monkeypatch.setattr(workflow_service, "save_workflow_state", saved_states.append)
+    monkeypatch.setattr(
+        workflow_service,
+        "_persist_state",
+        lambda project_id, state: persisted_states.append(state),
+    )
+    monkeypatch.setattr(
+        workflow_service,
+        "_set_project_status",
+        lambda project_id, status: status_updates.append((project_id, status)),
+    )
+
+    task = workflow_service.start_bid_workflow(7)
+
+    assert task["status"] == "outline_review"
+    assert task["awaiting_human"] is True
+    assert saved_states[0].status == "outline_review"
+    assert persisted_states[0].awaiting_human is True
+    assert status_updates[-1] == (7, "outline_review")
 
 
 def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) -> None:

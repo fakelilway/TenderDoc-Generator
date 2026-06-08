@@ -44,6 +44,15 @@ from schemas.project import (
     ProjectStatusResponse,
 )
 from schemas.workflow import (
+    BidOutlineRequest,
+    BidOutlineResponse,
+    DraftMarkdownRequest,
+    DraftMarkdownResponse,
+    FinalChecklistResponse,
+    KnowledgeSelectionRequest,
+    KnowledgeSelectionResponse,
+    ParsedConfirmationRequest,
+    ParsedConfirmationResponse,
     ProjectConfirmRequest,
     ProjectConfirmResponse,
     WorkflowRunResponse,
@@ -168,13 +177,28 @@ def delete_user(
 @app.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
 async def upload_knowledge(
     file: UploadFile = File(...),
+    document_type: str | None = Form(None),
+    specialty: str | None = Form(None),
+    project_year: int | None = Form(None),
+    tags: str | None = Form(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
 ) -> KnowledgeUploadResponse:
     try:
+        metadata_kwargs = {}
+        if document_type is not None:
+            metadata_kwargs["document_type"] = document_type
+        if specialty is not None:
+            metadata_kwargs["specialty"] = specialty
+        if project_year is not None:
+            metadata_kwargs["project_year"] = project_year
+        parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
+        if parsed_tags:
+            metadata_kwargs["tags"] = parsed_tags
         indexed = knowledge_service.index_uploaded_knowledge(
             file_bytes=await file.read(),
             filename=file.filename or "knowledge.txt",
             content_type=file.content_type,
+            **metadata_kwargs,
         )
     except Exception as error:
         _raise_http_error(error)
@@ -210,9 +234,19 @@ def rename_knowledge_document(
     _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
 ) -> KnowledgeDocumentSummary:
     try:
+        kwargs = {}
+        if request.document_type is not None:
+            kwargs["document_type"] = request.document_type
+        if request.specialty is not None:
+            kwargs["specialty"] = request.specialty
+        if request.project_year is not None:
+            kwargs["project_year"] = request.project_year
+        if request.tags:
+            kwargs["tags"] = request.tags
         document = knowledge_service.rename_knowledge_document(
             document_id,
             request.title,
+            **kwargs,
         )
     except Exception as error:
         _raise_http_error(error)
@@ -240,10 +274,22 @@ def delete_knowledge_document(
 def search_knowledge(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
+    document_type: str | None = Query(None),
+    specialty: str | None = Query(None),
+    tags: list[str] | None = Query(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
 ) -> KnowledgeSearchResponse:
     try:
-        results = retriever.retrieve(query, top_k=top_k)
+        if document_type or specialty or tags:
+            results = retriever.retrieve_filtered(
+                query,
+                top_k=top_k,
+                document_type=document_type,
+                specialty=specialty,
+                tags=tags,
+            )
+        else:
+            results = retriever.retrieve(query, top_k=top_k)
     except Exception as error:
         _raise_http_error(error)
 
@@ -311,6 +357,117 @@ def parse_project(
         status=project["status"],
         parsed_json=project["parsed_json"],
     )
+
+
+@app.patch(
+    "/api/project/{project_id}/parsed",
+    response_model=ParsedConfirmationResponse,
+)
+def confirm_parsed_project(
+    project_id: int,
+    request: ParsedConfirmationRequest,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ParsedConfirmationResponse:
+    try:
+        project = project_service.confirm_parsed_result(project_id, request.parsed_json)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ParsedConfirmationResponse(
+        project_id=project["id"],
+        status=project["status"],
+        confirmed_parsed_json=project["confirmed_parsed_json"],
+    )
+
+
+@app.post("/api/project/{project_id}/outline", response_model=BidOutlineResponse)
+def build_project_outline(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> BidOutlineResponse:
+    try:
+        project = project_service.build_project_outline(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return BidOutlineResponse(
+        project_id=project["id"],
+        status=project["status"],
+        bid_outline=project["bid_outline_json"],
+    )
+
+
+@app.patch("/api/project/{project_id}/outline", response_model=BidOutlineResponse)
+def save_project_outline(
+    project_id: int,
+    request: BidOutlineRequest,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> BidOutlineResponse:
+    try:
+        project = project_service.save_project_outline(project_id, request.outline)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return BidOutlineResponse(
+        project_id=project["id"],
+        status=project["status"],
+        bid_outline=project["bid_outline_json"],
+    )
+
+
+@app.patch(
+    "/api/project/{project_id}/knowledge-selection",
+    response_model=KnowledgeSelectionResponse,
+)
+def save_project_knowledge_selection(
+    project_id: int,
+    request: KnowledgeSelectionRequest,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> KnowledgeSelectionResponse:
+    try:
+        result = project_service.save_selected_knowledge_chunks(
+            project_id,
+            request.selected_chunk_ids,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeSelectionResponse(**result)
+
+
+@app.patch("/api/project/{project_id}/draft", response_model=DraftMarkdownResponse)
+def save_project_draft(
+    project_id: int,
+    request: DraftMarkdownRequest,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> DraftMarkdownResponse:
+    try:
+        result = project_service.save_draft_markdown(project_id, request.markdown)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return DraftMarkdownResponse(
+        project_id=result["id"],
+        status=result["status"],
+        draft_markdown=result["edited_markdown"],
+        review_report=result["review_report_json"],
+    )
+
+
+@app.get(
+    "/api/project/{project_id}/final-checklist",
+    response_model=FinalChecklistResponse,
+)
+def get_project_final_checklist(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> FinalChecklistResponse:
+    try:
+        result = project_service.build_final_checklist(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return FinalChecklistResponse(**result)
 
 
 @app.post(
