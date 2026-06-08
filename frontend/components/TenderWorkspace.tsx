@@ -114,6 +114,18 @@ function errorMessage(error: unknown) {
   return String(error);
 }
 
+function triggerDownload(url: string, filename?: string) {
+  const link = document.createElement("a");
+  link.href = url;
+  if (filename) {
+    link.download = filename;
+  }
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 export function TenderWorkspace({
   initialProjectId = null
 }: {
@@ -146,7 +158,6 @@ export function TenderWorkspace({
   const [responseMatrix, setResponseMatrix] = useState<ResponseMatrix | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [activeLine, setActiveLine] = useState<number | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [humanPromptOpen, setHumanPromptOpen] = useState(false);
   const [username, setUsername] = useState("");
@@ -433,7 +444,6 @@ export function TenderWorkspace({
       setMarkdown("");
       setHumanPromptOpen(false);
       lastHumanPromptKey.current = "";
-    setDownloadUrl(null);
     setActiveLine(null);
 
     try {
@@ -726,10 +736,7 @@ export function TenderWorkspace({
       // A fresh presigned URL is generated on every request, so an expired
       // link can always be recovered by clicking again.
       const result = await getProjectDownload(projectId, artifact);
-      if (artifact === "docx") {
-        setDownloadUrl(result.download_url);
-      }
-      window.open(result.download_url, "_blank", "noopener,noreferrer");
+      triggerDownload(result.download_url, result.filename);
     } catch (downloadError) {
       setError(errorMessage(downloadError));
     } finally {
@@ -758,15 +765,15 @@ export function TenderWorkspace({
               <span className="rounded-md border border-line bg-field px-2 py-1 font-medium text-ink">
                 {statusText}
               </span>
-              {downloadUrl ? (
-                <a
-                  href={downloadUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-medium text-brand hover:underline"
+              {canDownload ? (
+                <button
+                  type="button"
+                  disabled={actionBusy}
+                  onClick={() => handleDownload("docx")}
+                  className="font-medium text-brand hover:underline disabled:cursor-not-allowed disabled:text-muted"
                 >
                   DOCX
-                </a>
+                </button>
               ) : null}
             </div>
           </div>
