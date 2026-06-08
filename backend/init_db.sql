@@ -54,6 +54,23 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS pricing_strategy_report_json JSONB
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS score_prediction_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_matrix_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS bid_templates (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    source_filename TEXT,
+    project_type TEXT,
+    specialty TEXT,
+    envelope_type TEXT,
+    region TEXT,
+    project_year INT,
+    tags JSONB,
+    template_json JSONB NOT NULL,
+    created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS template_id BIGINT REFERENCES bid_templates(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users
@@ -84,6 +101,8 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata_json JSONB;
 ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE VECTOR(1024);
 
 CREATE INDEX IF NOT EXISTS idx_projects_owner_user_id ON projects(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_template_id ON projects(template_id);
+CREATE INDEX IF NOT EXISTS idx_bid_templates_project_type ON bid_templates(project_type);
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_registration_codes_expires_at ON registration_codes(expires_at);

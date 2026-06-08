@@ -872,17 +872,29 @@
   - `tests/test_generator_agent.py` 已覆盖模板章节优先、模板附表输出、prompt 不再包含“输出结构必须严格如下”
 
 ### M63：真实投标文件差距评估脚本
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M61, M62
 - **完成标准**：
   - 输入 AI 生成 DOCX 和真实投标 PDF/DOCX，输出结构差异、缺失章节、固定表单缺失、内容长度差异、人工确认点统计
   - 生成 Markdown/JSON 质量报告，作为每次 prompt/generator 改动后的回归指标
 - **测试方法**：
-  - 对 `bid.docx` 与 `1投标文件.PDF` 输出差距报告
+  ```bash
+  backend/venv/bin/python -m pytest backend/tests/test_bid_gap_eval.py
+  backend/venv/bin/python backend/scripts/run_bid_gap_eval.py \
+    --ai /path/to/bid.docx \
+    --reference backend/tests/fixtures/bid_templates/road_first_envelope_template.json
+  ```
   - 至少能识别缺少施工附表、项目管理机构、资格审查资料、中小企业声明函等问题
+- **当前实现**：
+  - `services/bid_gap_eval.py`：`extract_markdown_structure()` / `extract_docx_structure()` 抽取章节、各章字数、人工确认点；`evaluate_gap()` 对照 `BidTemplate` 计算缺失主章节/施工子章节/施工附表/固定表单、覆盖率、篇幅比例，输出 `issues` 清单
+  - `load_reference_template()` 支持真实投标 PDF（即时解析+全文字数）或已抽取模板 JSON 作参照；`load_ai_structure()` 支持 `.docx/.md/.txt`
+  - `scripts/run_bid_gap_eval.py` 一键输出 `bid_gap_latest.md` / `.json`
+- **当前验证**：
+  - `tests/test_bid_gap_eval.py`（7 项）覆盖前缀剥离、结构抽取、缺失章节识别（项目管理机构/资格审查/中小企业声明函/8 张施工附表）、篇幅比例、报告渲染
+  - 实测：用 M58 导出的 AI DOCX 对照真实投标模板 JSON，识别出 19 项结构差距（主章节覆盖率 0、施工附表覆盖率 0）
 
 ### M64：模板库管理与项目类型匹配
-- **完成状态**：❌ 未开始
+- **完成状态**：✅ 已完成
 - **依赖**：M49, M61
 - **完成标准**：
   - 管理员可上传历史投标文件作为模板样本，系统解析并保存模板 JSON
@@ -891,13 +903,21 @@
 - **测试方法**：
   - 上传至少 2 份不同类型历史投标文件，创建新项目时能推荐对应模板
   - 普通用户无模板编辑权限，管理员可删除/重命名模板
+- **当前实现**：
+  - 新增 `bid_templates` 表（标签：project_type/specialty/envelope_type/region/project_year/tags + template_json）与 `projects.template_id`
+  - `utils/bid_template_parser.parse_bid_template_bytes()` 支持从上传字节解析；`services/template_service.py` 提供 create/list/get/update/delete、`recommend_templates()`（按项目类型/专业/信封/地区/年份/项目名相似度加权打分）、`bid_template_for_project()`、`set_project_template()`
+  - API：`POST/PATCH/DELETE /api/templates`（`require_admin`）、`GET /api/templates` 与 `GET /api/templates/recommend`（登录可用）、`PATCH /api/project/{id}/template` 切换；生成时 `generation_service` 与 `workflow_service` 优先使用项目所选模板
+  - 前端 `/templates` 模板库页面（管理员上传/打标签/重命名/删除，普通用户只读），工作台与历史项目页加「模板库」导航（仅管理员）；创建项目时 `UploadPanel` 下拉选择模板并按项目名自动推荐（可手动切换），`createProject` 传 `template_id`
+- **当前验证**：
+  - `tests/test_template_service.py`（9 项）覆盖解析入库、非 PDF 拒绝、列表、重命名/标签、删除缺失报错、推荐排序、按项目取模板、切换模板
+  - `tests/test_template_api.py`（8 项）覆盖上传/删除的管理员 RBAC（普通用户 403）、列表、推荐、重命名、项目模板切换；前端 `tsc --noEmit` 通过
 
 ---
 
 ## 总结
 
 - 共 **64 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习。
-- 下一阶段优先顺序：优先做 M57–M60 的项目管理、DOCX 格式和通知体验，再推进 M63/M64 的真实投标文件差距评估与模板库闭环。
+- **M1–M64 全部完成**：阶段 9（M57–M60 项目管理/DOCX/评估/下载体验）与阶段 10（M61–M64 真实投标模板学习与差距评估、模板库闭环）均已实现并通过测试。
 - 按顺序执行，即可从可控工作流升级为更接近真实标书编制团队日常使用的产品。
 
 **最后更新**：2026-06-08

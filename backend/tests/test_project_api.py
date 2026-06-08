@@ -34,7 +34,12 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
     captured = {}
 
     def fake_create_project(
-        name, file_bytes, filename, content_type=None, owner_user_id=None
+        name,
+        file_bytes,
+        filename,
+        content_type=None,
+        owner_user_id=None,
+        template_id=None,
     ):
         captured.update(
             name=name,
@@ -42,6 +47,7 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
             filename=filename,
             content_type=content_type,
             owner_user_id=owner_user_id,
+            template_id=template_id,
         )
         return {
             "id": 7,
@@ -53,7 +59,7 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
 
     response = client.post(
         "/api/project/create",
-        data={"name": "测试项目"},
+        data={"name": "测试项目", "template_id": "3"},
         files={"tender_file": ("sample.txt", b"hello tender", "text/plain")},
     )
 
@@ -69,6 +75,7 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
         "filename": "sample.txt",
         "content_type": "text/plain",
         "owner_user_id": 1,
+        "template_id": 3,
     }
 
 

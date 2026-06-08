@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from io import BytesIO
 from pathlib import Path
 from typing import Iterable
 
@@ -40,6 +41,20 @@ def parse_bid_template_pdf(
         pages,
         source_file=path.name,
         template_name=template_name or path.stem,
+    )
+
+
+def parse_bid_template_bytes(
+    file_bytes: bytes,
+    source_file: str = "",
+    template_name: str = "",
+) -> BidTemplate:
+    reader = PdfReader(BytesIO(file_bytes))
+    pages = [page.extract_text() or "" for page in reader.pages]
+    return parse_bid_template_pages(
+        pages,
+        source_file=source_file,
+        template_name=template_name or Path(source_file).stem,
     )
 
 

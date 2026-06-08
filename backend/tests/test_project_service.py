@@ -198,11 +198,14 @@ def test_create_project_records_owner_user_id(monkeypatch) -> None:
         lambda project_id, filename: f"projects/{project_id}/tender/file.txt",
     )
 
-    project_service.create_project("项目", b"text", "file.txt", owner_user_id=5)
+    project_service.create_project(
+        "项目", b"text", "file.txt", owner_user_id=5, template_id=3
+    )
 
     insert_statement, insert_params = cursor.statements[0]
     assert "owner_user_id" in insert_statement
-    assert insert_params == ("项目", "uploading", 5)
+    assert "template_id" in insert_statement
+    assert insert_params == ("项目", "uploading", 5, 3)
 
 
 def test_authorize_project_access_allows_owner(monkeypatch) -> None:

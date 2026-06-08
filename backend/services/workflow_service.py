@@ -120,7 +120,9 @@ def run_bid_workflow(
     requirements = _ensure_parsed_requirements(project, state)
     state.parsed = requirements.model_dump()
 
-    bid_template = load_bid_template()
+    from services import template_service
+
+    bid_template = template_service.bid_template_for_project(project_id) or load_bid_template()
     template_note = (
         f"，使用模板：{bid_template.template_name}"
         if bid_template

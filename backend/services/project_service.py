@@ -106,6 +106,7 @@ def create_project(
     filename: str,
     content_type: str | None = None,
     owner_user_id: int | None = None,
+    template_id: int | None = None,
 ) -> dict[str, Any]:
     """Create a project, upload the tender file, and store its object path."""
     if not file_bytes:
@@ -119,11 +120,11 @@ def create_project(
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                INSERT INTO projects (name, status, owner_user_id)
-                VALUES (%s, %s, %s)
+                INSERT INTO projects (name, status, owner_user_id, template_id)
+                VALUES (%s, %s, %s, %s)
                 RETURNING id, name, tender_file_path, parsed_json, status, created_at
                 """,
-                (safe_name, "uploading", owner_user_id),
+                (safe_name, "uploading", owner_user_id, template_id),
             )
             project = dict(cursor.fetchone())
 

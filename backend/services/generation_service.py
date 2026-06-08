@@ -26,7 +26,9 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
         raise ValueError("Project has no parsed tender requirements")
 
     requirements = TenderRequirements.model_validate(parsed_json)
-    bid_template = load_bid_template()
+    from services import template_service
+
+    bid_template = template_service.bid_template_for_project(project_id) or load_bid_template()
     outline = build_bid_outline(requirements, bid_template)
     retrieved_chunks_by_section = {
         section.title: retriever.retrieve(

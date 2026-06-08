@@ -157,6 +157,10 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
         lambda project_id: {"id": project_id, "parsed_json": PARSED_JSON},
     )
     monkeypatch.setattr(
+        "services.template_service.bid_template_for_project",
+        lambda project_id: None,
+    )
+    monkeypatch.setattr(
         workflow_service.retriever,
         "retrieve",
         lambda query, top_k=3: [RetrievalResult(1, 1, "施工组织设计知识片段", {}, 0.1, 0.9)],

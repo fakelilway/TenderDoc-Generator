@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
+  FileStack,
   FolderOpen,
   Loader2,
   LogOut,
@@ -33,6 +34,8 @@ import {
   confirmParsedProject,
   confirmProject,
   createProject,
+  listTemplates,
+  recommendTemplates,
   getFinalChecklist,
   getProjectDownload,
   getProjectReviewReport,
@@ -58,6 +61,7 @@ import type {
   ResponseMatrix,
   ReviewReport,
   ScorePrediction,
+  TemplateSummary,
   TenderRequirements,
   WorkflowState
 } from "@/lib/types";
@@ -148,6 +152,12 @@ export function TenderWorkspace({
   const [modalOpen, setModalOpen] = useState(false);
   const [humanPromptOpen, setHumanPromptOpen] = useState(false);
   const [username, setUsername] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [recommendedTemplateId, setRecommendedTemplateId] = useState<number | null>(
+    null
+  );
   const autoStartedWorkflowProject = useRef<number | null>(null);
   const lastHumanPromptKey = useRef("");
 
@@ -294,7 +304,41 @@ export function TenderWorkspace({
   useEffect(() => {
     const session = getStoredSession();
     setUsername(session?.displayName || session?.username || "");
+    setIsAdmin(session?.role === "admin");
   }, []);
+
+  useEffect(() => {
+    if (initialProjectId) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await listTemplates();
+        if (cancelled) return;
+        setTemplates(response.templates);
+        if (response.templates.length && projectName.trim()) {
+          const recommendation = await recommendTemplates({
+            projectName: projectName.trim(),
+            limit: 1
+          });
+          if (cancelled) return;
+          const top = recommendation.recommendations[0];
+          if (top && top.match_score > 0) {
+            setRecommendedTemplateId(top.template.id);
+            setSelectedTemplateId((current) => current ?? top.template.id);
+          }
+        }
+      } catch {
+        // Template recommendation is best-effort; ignore failures.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only run when entering the blank workspace (new project flow).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProjectId]);
 
   useEffect(() => {
     if (!projectId || finalStatuses.has(status)) {
@@ -361,7 +405,11 @@ export function TenderWorkspace({
 
     try {
       setStatus("uploading");
-      const created = await createProject(projectName.trim(), file);
+      const created = await createProject(
+        projectName.trim(),
+        file,
+        selectedTemplateId
+      );
       setProjectId(created.project_id);
       window.history.pushState(null, "", `/project/${created.project_id}`);
       setStatus(created.status);
@@ -703,6 +751,15 @@ export function TenderWorkspace({
               <FolderOpen className="h-4 w-4" />
               历史项目
             </a>
+            {isAdmin ? (
+              <a
+                href="/templates"
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+              >
+                <FileStack className="h-4 w-4" />
+                模板库
+              </a>
+            ) : null}
             <button
               type="button"
               disabled={!projectId || actionBusy}
@@ -820,8 +877,12 @@ export function TenderWorkspace({
             projectName={projectName}
             file={file}
             busy={busy}
+            templates={templates}
+            selectedTemplateId={selectedTemplateId}
+            recommendedTemplateId={recommendedTemplateId}
             onProjectNameChange={setProjectName}
             onFileChange={handleFileChange}
+            onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
           />
           <StatusRail

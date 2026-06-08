@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Download,
+  FileStack,
   FolderOpen,
   Loader2,
   LogOut,
@@ -181,6 +182,15 @@ export function ProjectsView() {
               )}
               刷新
             </button>
+            {isAdmin ? (
+              <a
+                href="/templates"
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+              >
+                <FileStack className="h-4 w-4" />
+                模板库
+              </a>
+            ) : null}
             <a
               href="/"
               className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700"

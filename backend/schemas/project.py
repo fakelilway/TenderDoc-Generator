@@ -31,6 +31,15 @@ class ProjectDeleteResponse(BaseModel):
     ok: bool = True
 
 
+class ProjectTemplateRequest(BaseModel):
+    template_id: int | None = None
+
+
+class ProjectTemplateResponse(BaseModel):
+    project_id: int
+    template_id: int | None = None
+
+
 class ProjectStatusResponse(BaseModel):
     project_id: int
     status: str

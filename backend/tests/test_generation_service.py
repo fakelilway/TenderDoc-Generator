@@ -71,6 +71,10 @@ def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> No
     monkeypatch.setattr(generation_service, "_connect", lambda: FakeConnection())
     monkeypatch.setattr(generation_service, "minio_client", fake_minio)
     monkeypatch.setattr(
+        "services.template_service.bid_template_for_project",
+        lambda project_id: None,
+    )
+    monkeypatch.setattr(
         generation_service.retriever,
         "retrieve",
         lambda query, top_k=3: ["高层住宅施工组织设计知识片段"],

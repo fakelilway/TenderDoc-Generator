@@ -24,6 +24,7 @@ import type {
   ProjectReviewReportResponse,
   ProjectScorePredictionResponse,
   ProjectStatusResponse,
+  ProjectTemplateResponse,
   RegisterPayload,
   RegistrationCodeResponse,
   UserCreatePayload,
@@ -31,7 +32,13 @@ import type {
   UserListResponse,
   UserPermissionsPayload,
   UserResponse,
-  WorkflowRunResponse
+  WorkflowRunResponse,
+  TemplateDeleteResponse,
+  TemplateListResponse,
+  TemplateRecommendResponse,
+  TemplateUpdatePayload,
+  TemplateUploadPayload,
+  TemplateUploadResponse
 } from "./types";
 import { getAccessToken } from "./auth";
 
@@ -120,13 +127,97 @@ export function deleteProject(projectId: number) {
   });
 }
 
-export function createProject(name: string, file: File) {
+export function createProject(
+  name: string,
+  file: File,
+  templateId?: number | null
+) {
   const body = new FormData();
   body.append("name", name);
   body.append("tender_file", file);
+  if (templateId != null) {
+    body.append("template_id", String(templateId));
+  }
   return requestJson<ProjectCreateResponse>("/api/project/create", {
     method: "POST",
     body
+  });
+}
+
+export function setProjectTemplate(
+  projectId: number,
+  templateId: number | null
+) {
+  return requestJson<ProjectTemplateResponse>(
+    `/api/project/${projectId}/template`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ template_id: templateId })
+    }
+  );
+}
+
+export function listTemplates() {
+  return requestJson<TemplateListResponse>("/api/templates");
+}
+
+export function recommendTemplates(criteria: {
+  projectType?: string;
+  specialty?: string;
+  envelopeType?: string;
+  region?: string;
+  projectYear?: number | null;
+  projectName?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (criteria.projectType) params.set("project_type", criteria.projectType);
+  if (criteria.specialty) params.set("specialty", criteria.specialty);
+  if (criteria.envelopeType) params.set("envelope_type", criteria.envelopeType);
+  if (criteria.region) params.set("region", criteria.region);
+  if (criteria.projectYear != null) {
+    params.set("project_year", String(criteria.projectYear));
+  }
+  if (criteria.projectName) params.set("project_name", criteria.projectName);
+  if (criteria.limit != null) params.set("limit", String(criteria.limit));
+  const query = params.toString();
+  return requestJson<TemplateRecommendResponse>(
+    `/api/templates/recommend${query ? `?${query}` : ""}`
+  );
+}
+
+export function uploadTemplate(
+  file: File,
+  name: string,
+  payload?: TemplateUploadPayload
+) {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("name", name);
+  if (payload?.projectType) body.append("project_type", payload.projectType);
+  if (payload?.specialty) body.append("specialty", payload.specialty);
+  if (payload?.envelopeType) body.append("envelope_type", payload.envelopeType);
+  if (payload?.region) body.append("region", payload.region);
+  if (payload?.projectYear != null) {
+    body.append("project_year", String(payload.projectYear));
+  }
+  if (payload?.tags?.length) body.append("tags", payload.tags.join(","));
+  return requestJson<TemplateUploadResponse>("/api/templates", {
+    method: "POST",
+    body
+  });
+}
+
+export function updateTemplate(templateId: number, payload: TemplateUpdatePayload) {
+  return requestJson<TemplateUploadResponse>(`/api/templates/${templateId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteTemplate(templateId: number) {
+  return requestJson<TemplateDeleteResponse>(`/api/templates/${templateId}`, {
+    method: "DELETE"
   });
 }
 

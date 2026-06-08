@@ -278,6 +278,68 @@ export type ProjectDeleteResponse = {
   ok: boolean;
 };
 
+export type TemplateSummary = {
+  id: number;
+  name: string;
+  source_filename?: string | null;
+  project_type?: string | null;
+  specialty?: string | null;
+  envelope_type?: string | null;
+  region?: string | null;
+  project_year?: number | null;
+  tags?: string[];
+  project_name?: string | null;
+  page_count?: number | null;
+  created_by?: number | null;
+  created_at?: string | null;
+};
+
+export type TemplateListResponse = {
+  templates: TemplateSummary[];
+};
+
+export type TemplateUploadResponse = {
+  template: TemplateSummary;
+};
+
+export type TemplateRecommendation = {
+  template: TemplateSummary;
+  match_score: number;
+  match_reasons: string[];
+};
+
+export type TemplateRecommendResponse = {
+  recommendations: TemplateRecommendation[];
+};
+
+export type TemplateDeleteResponse = {
+  ok: boolean;
+};
+
+export type ProjectTemplateResponse = {
+  project_id: number;
+  template_id: number | null;
+};
+
+export type TemplateUploadPayload = {
+  projectType?: string;
+  specialty?: string;
+  envelopeType?: string;
+  region?: string;
+  projectYear?: number | null;
+  tags?: string[];
+};
+
+export type TemplateUpdatePayload = {
+  name?: string;
+  project_type?: string | null;
+  specialty?: string | null;
+  envelope_type?: string | null;
+  region?: string | null;
+  project_year?: number | null;
+  tags?: string[];
+};
+
 export type KnowledgeSelectionResponse = {
   project_id: number;
   selected_chunk_ids: number[];
