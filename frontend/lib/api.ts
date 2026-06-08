@@ -16,8 +16,11 @@ import type {
   ProjectConfirmResponse,
   ProjectCreateResponse,
   ProjectDownloadResponse,
+  ProjectPricingStrategyResponse,
+  ProjectResponseMatrixResponse,
   ProjectResultResponse,
   ProjectReviewReportResponse,
+  ProjectScorePredictionResponse,
   ProjectStatusResponse,
   RegisterPayload,
   RegistrationCodeResponse,
@@ -171,6 +174,33 @@ export function saveDraftMarkdown(projectId: number, markdown: string) {
 export function getFinalChecklist(projectId: number) {
   return requestJson<FinalChecklistResponse>(
     `/api/project/${projectId}/final-checklist`
+  );
+}
+
+export function buildProjectPricingStrategy(projectId: number) {
+  return requestJson<ProjectPricingStrategyResponse>(
+    `/api/project/${projectId}/pricing-strategy`,
+    {
+      method: "POST"
+    }
+  );
+}
+
+export function buildProjectScorePrediction(projectId: number) {
+  return requestJson<ProjectScorePredictionResponse>(
+    `/api/project/${projectId}/score-prediction`,
+    {
+      method: "POST"
+    }
+  );
+}
+
+export function buildProjectResponseMatrix(projectId: number) {
+  return requestJson<ProjectResponseMatrixResponse>(
+    `/api/project/${projectId}/response-matrix`,
+    {
+      method: "POST"
+    }
   );
 }
 

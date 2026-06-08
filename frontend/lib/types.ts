@@ -100,6 +100,101 @@ export type FinalChecklist = {
   manual_confirmation_points?: string[];
   pricing_manual_fields?: string[];
   attachment_list?: string[];
+  response_matrix?: ResponseMatrix;
+};
+
+export type PricingManualField = {
+  label: string;
+  reason: string;
+  source_text?: string;
+  required: boolean;
+};
+
+export type PricingCondition = {
+  name: string;
+  value: string;
+  risk_level: string;
+  source_text?: string;
+  manual_verify: boolean;
+};
+
+export type PricingStrategy = {
+  project_name: string;
+  project_scale: string;
+  schedule_risk: string;
+  payment_terms: PricingCondition[];
+  competition_intensity: string;
+  quote_risk: string;
+  guarantee_requirements: PricingCondition[];
+  manual_fields: PricingManualField[];
+  extracted_conditions: PricingCondition[];
+};
+
+export type PricingStrategyReport = {
+  project_name: string;
+  strategy_suggestions: string[];
+  risk_warnings: string[];
+  commercial_response_notes: string[];
+  manual_confirmation_points: string[];
+  prohibited_auto_pricing: boolean;
+};
+
+export type ProjectPricingStrategyResponse = {
+  project_id: number;
+  pricing_strategy: PricingStrategy;
+  pricing_report: PricingStrategyReport;
+};
+
+export type ScoreItemPrediction = {
+  title: string;
+  max_score: number;
+  predicted_score: number;
+  coverage_status: string;
+  rationale: string;
+  improvement_suggestion: string;
+  location: ReviewLocation;
+};
+
+export type ScorePrediction = {
+  project_name: string;
+  total_max_score: number;
+  predicted_total_score: number;
+  score_rate: number;
+  win_probability?: number | null;
+  win_probability_rationale: string;
+  uncertainty_notes: string[];
+  strengths: string[];
+  weaknesses: string[];
+  items: ScoreItemPrediction[];
+};
+
+export type ProjectScorePredictionResponse = {
+  project_id: number;
+  score_prediction: ScorePrediction;
+};
+
+export type ResponseMatrixRow = {
+  requirement_type: string;
+  requirement_title: string;
+  requirement_text: string;
+  response_status: string;
+  response_location: ReviewLocation;
+  response_section: string;
+  review_status: string;
+  manual_confirmation_required: boolean;
+  manual_confirmation_note: string;
+};
+
+export type ResponseMatrix = {
+  project_id: number;
+  rows: ResponseMatrixRow[];
+  invalid_bid_coverage_count: number;
+  total_invalid_bid_count: number;
+};
+
+export type ProjectResponseMatrixResponse = {
+  project_id: number;
+  response_matrix: ResponseMatrix;
 };
 
 export type ProjectCreateResponse = {

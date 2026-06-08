@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from agents.pricing_agent import PRICING_SYSTEM_PROMPT
 from agents.reviewer_agent import REVIEWER_SYSTEM_PROMPT
+from agents.scoring_agent import SCORING_SYSTEM_PROMPT
 from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT
 from prompts.parser_prompt import PARSER_SYSTEM_PROMPT
 
@@ -10,6 +12,8 @@ def test_all_agent_prompts_have_role_playing_experience_and_task_boundary() -> N
         "parser": PARSER_SYSTEM_PROMPT,
         "generator": GENERATOR_SYSTEM_PROMPT,
         "reviewer": REVIEWER_SYSTEM_PROMPT,
+        "pricing": PRICING_SYSTEM_PROMPT,
+        "scoring": SCORING_SYSTEM_PROMPT,
     }
 
     for agent_name, prompt in prompts.items():

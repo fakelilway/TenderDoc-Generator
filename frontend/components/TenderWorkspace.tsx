@@ -22,9 +22,13 @@ import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
 import { StatusRail } from "@/components/StatusRail";
+import { StrategyPanel } from "@/components/StrategyPanel";
 import { UploadPanel } from "@/components/UploadPanel";
 import {
+  buildProjectPricingStrategy,
   buildProjectOutline,
+  buildProjectResponseMatrix,
+  buildProjectScorePrediction,
   confirmParsedProject,
   confirmProject,
   createProject,
@@ -47,8 +51,12 @@ import type {
   FinalChecklist,
   FinalVersion,
   KnowledgeSearchResult,
+  PricingStrategy,
+  PricingStrategyReport,
   RagReference,
+  ResponseMatrix,
   ReviewReport,
+  ScorePrediction,
   TenderRequirements,
   WorkflowState
 } from "@/lib/types";
@@ -129,6 +137,10 @@ export function TenderWorkspace({
   const [ragReferences, setRagReferences] = useState<RagReference[]>([]);
   const [finalChecklist, setFinalChecklist] = useState<FinalChecklist | null>(null);
   const [finalVersions, setFinalVersions] = useState<FinalVersion[]>([]);
+  const [pricingStrategy, setPricingStrategy] = useState<PricingStrategy | null>(null);
+  const [pricingReport, setPricingReport] = useState<PricingStrategyReport | null>(null);
+  const [scorePrediction, setScorePrediction] = useState<ScorePrediction | null>(null);
+  const [responseMatrix, setResponseMatrix] = useState<ResponseMatrix | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [activeLine, setActiveLine] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -172,6 +184,9 @@ export function TenderWorkspace({
         }
         if (state.final_checklist) {
           setFinalChecklist(state.final_checklist);
+          if (state.final_checklist.response_matrix) {
+            setResponseMatrix(state.final_checklist.response_matrix);
+          }
         }
         if (state.final_versions) {
           setFinalVersions(state.final_versions);
@@ -333,6 +348,10 @@ export function TenderWorkspace({
       setRagReferences([]);
       setFinalChecklist(null);
       setFinalVersions([]);
+      setPricingStrategy(null);
+      setPricingReport(null);
+      setScorePrediction(null);
+      setResponseMatrix(null);
       setMarkdown("");
       setHumanPromptOpen(false);
       lastHumanPromptKey.current = "";
@@ -493,8 +512,60 @@ export function TenderWorkspace({
       const result = await getFinalChecklist(projectId);
       setFinalChecklist(result.checklist);
       setFinalVersions(result.versions);
+      if (result.checklist.response_matrix) {
+        setResponseMatrix(result.checklist.response_matrix);
+      }
     } catch (checklistError) {
       setError(errorMessage(checklistError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleBuildPricingStrategy() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const result = await buildProjectPricingStrategy(projectId);
+      setPricingStrategy(result.pricing_strategy);
+      setPricingReport(result.pricing_report);
+    } catch (strategyError) {
+      setError(errorMessage(strategyError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleBuildScorePrediction() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const result = await buildProjectScorePrediction(projectId);
+      setScorePrediction(result.score_prediction);
+    } catch (scoreError) {
+      setError(errorMessage(scoreError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleBuildResponseMatrix() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const result = await buildProjectResponseMatrix(projectId);
+      setResponseMatrix(result.response_matrix);
+    } catch (matrixError) {
+      setError(errorMessage(matrixError));
     } finally {
       setActionBusy(false);
     }
@@ -756,6 +827,18 @@ export function TenderWorkspace({
           <FinalChecklistPanel
             checklist={finalChecklist}
             versions={finalVersions}
+          />
+          <StrategyPanel
+            pricingStrategy={pricingStrategy}
+            pricingReport={pricingReport}
+            scorePrediction={scorePrediction}
+            responseMatrix={responseMatrix}
+            busy={actionBusy}
+            disabled={!projectId}
+            onBuildPricing={handleBuildPricingStrategy}
+            onBuildScore={handleBuildScorePrediction}
+            onBuildMatrix={handleBuildResponseMatrix}
+            onSelectLine={setActiveLine}
           />
         </div>
       </div>

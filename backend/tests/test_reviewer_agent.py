@@ -75,3 +75,27 @@ def test_find_markdown_location_returns_line_and_snippet() -> None:
 
     assert location.line_number == 3
     assert "一级建造师" in location.snippet
+
+
+def test_review_warns_when_pricing_manual_confirmation_is_missing() -> None:
+    requirements = TenderRequirements(
+        project_name="报价审查项目",
+        qualification_list=[],
+        technical_score_items=[],
+        invalid_bid_items=[
+            RequirementItem(title="清单报价", description="需提交工程量清单综合单价。")
+        ],
+    )
+
+    missing_report = review(requirements, "## 商务标\n\n工程量清单综合单价完整。")
+    preserved_report = review(
+        requirements,
+        "## 商务标\n\n人工确认点：【待补充】工程量清单综合单价。",
+    )
+
+    assert "pricing_manual_confirmation" in {
+        finding.rule for finding in missing_report.findings if finding.status == "warning"
+    }
+    assert "pricing_manual_confirmation" in {
+        finding.rule for finding in preserved_report.findings if finding.status == "pass"
+    }

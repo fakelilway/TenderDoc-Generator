@@ -43,6 +43,11 @@ from schemas.project import (
     ProjectReviewResponse,
     ProjectStatusResponse,
 )
+from schemas.strategy import (
+    ProjectPricingStrategyResponse,
+    ProjectResponseMatrixResponse,
+    ProjectScorePredictionResponse,
+)
 from schemas.workflow import (
     BidOutlineRequest,
     BidOutlineResponse,
@@ -468,6 +473,54 @@ def get_project_final_checklist(
         _raise_http_error(error)
 
     return FinalChecklistResponse(**result)
+
+
+@app.post(
+    "/api/project/{project_id}/pricing-strategy",
+    response_model=ProjectPricingStrategyResponse,
+)
+def build_project_pricing_strategy(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectPricingStrategyResponse:
+    try:
+        result = project_service.build_project_pricing_strategy(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectPricingStrategyResponse(**result)
+
+
+@app.post(
+    "/api/project/{project_id}/score-prediction",
+    response_model=ProjectScorePredictionResponse,
+)
+def build_project_score_prediction(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectScorePredictionResponse:
+    try:
+        result = project_service.build_project_score_prediction(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectScorePredictionResponse(**result)
+
+
+@app.post(
+    "/api/project/{project_id}/response-matrix",
+    response_model=ProjectResponseMatrixResponse,
+)
+def build_project_response_matrix(
+    project_id: int,
+    _current_user: UserProfile = Depends(auth_service.get_current_user),
+) -> ProjectResponseMatrixResponse:
+    try:
+        result = project_service.build_project_response_matrix(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ProjectResponseMatrixResponse(**result)
 
 
 @app.post(
