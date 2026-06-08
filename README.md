@@ -82,6 +82,22 @@
 4. DOCX 输出升级封面、目录、页眉页脚、分册策略。
 5. 增加项目列表、历史恢复、模板库管理和更完整的下载通知。
 
+### 2.3 本地工具脚本
+
+```bash
+# 分析真实投标 PDF 的字体、字号、颜色等格式特征
+python scripts/analyze_pdf_format.py /path/to/投标文件.pdf --out-json data/pdf_format_analysis.json
+
+# 用结构化招标需求 JSON + 已抽取模板生成脱敏标书 Markdown/DOCX
+python scripts/generate_bid.py \
+  --requirements data/sample_requirements.json \
+  --template backend/templates/bid_templates/road_first_envelope_template.json \
+  --output-dir data/output
+
+# 不使用真实项目数据的 smoke demo
+python scripts/generate_bid.py --demo --output-dir data/output/demo
+```
+
 ## 3. 系统架构设计（抽象层）
 
 ### 3.1 逻辑架构图

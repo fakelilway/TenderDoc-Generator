@@ -5,6 +5,7 @@ venv/
 
 # Editor settings
 .vscode/
+.workbuddy/
 
 # Environment files
 backend/.env
