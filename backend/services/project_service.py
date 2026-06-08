@@ -8,8 +8,11 @@ from uuid import uuid4
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 
+from agents.generator_agent import build_bid_outline, load_bid_template
 from agents.parser_agent import parse_tender
+from agents.reviewer_agent import review
 from core.config import settings
+from schemas.tender import TenderRequirements
 from utils.file_parser import extract_text
 from utils.minio_client import minio_client
 
@@ -56,6 +59,12 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     generation_quality_json,
                     review_report_json,
                     workflow_state_json,
+                    confirmed_parsed_json,
+                    bid_outline_json,
+                    selected_chunk_ids,
+                    edited_markdown,
+                    final_checklist_json,
+                    final_versions_json,
                     status,
                     created_at
                 FROM projects
@@ -207,8 +216,297 @@ def get_project_result(project_id: int) -> dict[str, Any]:
     return {
         "project_id": project["id"],
         "status": project["status"],
-        "parsed_json": project["parsed_json"],
+        "parsed_json": project.get("confirmed_parsed_json") or project["parsed_json"],
     }
+
+
+def confirm_parsed_result(project_id: int, parsed_json: dict[str, Any]) -> dict[str, Any]:
+    confirmed = TenderRequirements.model_validate(parsed_json).model_dump()
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET confirmed_parsed_json = %s,
+                    parsed_json = %s,
+                    status = %s
+                WHERE id = %s
+                RETURNING id, status, confirmed_parsed_json
+                """,
+                (Json(confirmed), Json(confirmed), "parsed_confirmed", project_id),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return dict(row)
+
+
+def build_project_outline(project_id: int) -> dict[str, Any]:
+    project = _fetch_project(project_id)
+    parsed_json = project.get("confirmed_parsed_json") or project.get("parsed_json")
+    if not parsed_json:
+        raise ValueError("Project has no parsed requirements")
+    requirements = TenderRequirements.model_validate(parsed_json)
+    outline = [
+        section.model_dump()
+        for section in build_bid_outline(requirements, load_bid_template())
+    ]
+    return save_project_outline(project_id, outline, status="outline_ready")
+
+
+def save_project_outline(
+    project_id: int,
+    outline: list[dict[str, Any]],
+    status: str = "outline_confirmed",
+) -> dict[str, Any]:
+    if not outline:
+        raise ValueError("Bid outline cannot be empty")
+    clean_outline = []
+    for item in outline:
+        title = str(item.get("title", "")).strip()
+        if not title:
+            raise ValueError("Each outline section requires a title")
+        clean_outline.append(
+            {
+                "title": title,
+                "required": bool(item.get("required", True)),
+                "source_item": str(item.get("source_item") or ""),
+                "focus_points": [
+                    str(point)
+                    for point in item.get("focus_points", [])
+                    if str(point).strip()
+                ],
+            }
+        )
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET bid_outline_json = %s,
+                    status = %s
+                WHERE id = %s
+                RETURNING id, status, bid_outline_json
+                """,
+                (Json(clean_outline), status, project_id),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return dict(row)
+
+
+def save_selected_knowledge_chunks(
+    project_id: int,
+    selected_chunk_ids: list[int],
+) -> dict[str, Any]:
+    unique_ids = sorted({int(chunk_id) for chunk_id in selected_chunk_ids})
+    references = get_knowledge_references(unique_ids)
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET selected_chunk_ids = %s
+                WHERE id = %s
+                RETURNING id, selected_chunk_ids
+                """,
+                (Json(unique_ids), project_id),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return {
+        "project_id": int(row["id"]),
+        "selected_chunk_ids": row["selected_chunk_ids"] or [],
+        "references": references,
+    }
+
+
+def get_knowledge_references(chunk_ids: list[int]) -> list[dict[str, Any]]:
+    if not chunk_ids:
+        return []
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    knowledge_chunks.id AS chunk_id,
+                    knowledge_chunks.document_id,
+                    knowledge_chunks.content,
+                    knowledge_chunks.metadata,
+                    documents.file_name,
+                    documents.metadata_json
+                FROM knowledge_chunks
+                LEFT JOIN documents ON documents.id = knowledge_chunks.document_id
+                WHERE knowledge_chunks.id = ANY(%s)
+                ORDER BY knowledge_chunks.id
+                """,
+                (chunk_ids,),
+            )
+            rows = cursor.fetchall()
+    return [
+        {
+            "chunk_id": int(row["chunk_id"]),
+            "document_id": row["document_id"],
+            "title": row["file_name"] or (row["metadata"] or {}).get("file_name", ""),
+            "content": row["content"],
+            "metadata": {
+                **(row["metadata"] or {}),
+                **(row["metadata_json"] or {}),
+            },
+        }
+        for row in rows
+    ]
+
+
+def save_draft_markdown(project_id: int, markdown: str) -> dict[str, Any]:
+    clean_markdown = markdown.strip()
+    if not clean_markdown:
+        raise ValueError("Draft markdown cannot be empty")
+    project = _fetch_project(project_id)
+    parsed_json = project.get("confirmed_parsed_json") or project.get("parsed_json")
+    if not parsed_json:
+        raise ValueError("Project has no parsed requirements")
+    report = review(TenderRequirements.model_validate(parsed_json), clean_markdown)
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET edited_markdown = %s,
+                    review_report_json = %s,
+                    status = %s
+                WHERE id = %s
+                RETURNING id, status, edited_markdown, review_report_json
+                """,
+                (
+                    clean_markdown,
+                    Json(report.model_dump()),
+                    "draft_saved",
+                    project_id,
+                ),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return dict(row)
+
+
+def build_final_checklist(project_id: int) -> dict[str, Any]:
+    project = _fetch_project(project_id)
+    parsed_json = project.get("confirmed_parsed_json") or project.get("parsed_json") or {}
+    review_report = project.get("review_report_json") or {}
+    markdown = project.get("edited_markdown") or (
+        project.get("workflow_state_json") or {}
+    ).get("draft_markdown", "")
+    checklist = {
+        "invalid_bid_responses": _checklist_items(
+            parsed_json.get("invalid_bid_items", []),
+            review_report,
+            markdown,
+        ),
+        "manual_confirmation_points": _manual_confirmation_points(markdown),
+        "pricing_manual_fields": _pricing_manual_fields(markdown),
+        "attachment_list": _attachment_list(parsed_json),
+    }
+    versions = project.get("final_versions_json") or []
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET final_checklist_json = %s
+                WHERE id = %s
+                RETURNING id, final_checklist_json, final_versions_json
+                """,
+                (Json(checklist), project_id),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return {
+        "project_id": int(row["id"]),
+        "checklist": row["final_checklist_json"] or checklist,
+        "versions": row["final_versions_json"] or versions,
+    }
+
+
+def append_final_version(
+    project_id: int,
+    markdown_path: str | None,
+    docx_path: str | None,
+) -> list[dict[str, Any]]:
+    project = _fetch_project(project_id)
+    versions = list(project.get("final_versions_json") or [])
+    version_no = len(versions) + 1
+    versions.append(
+        {
+            "version": version_no,
+            "markdown_path": markdown_path,
+            "docx_path": docx_path,
+        }
+    )
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE projects SET final_versions_json = %s WHERE id = %s",
+                (Json(versions), project_id),
+            )
+    return versions
+
+
+def _checklist_items(
+    invalid_items: list[dict[str, Any]],
+    review_report: dict[str, Any],
+    markdown: str,
+) -> list[dict[str, Any]]:
+    findings = review_report.get("findings", [])
+    return [
+        {
+            "title": item.get("title", "废标风险"),
+            "requirement": item.get("description", ""),
+            "status": _matching_status(item, findings),
+            "responded": bool(item.get("description", "")[:12] in markdown or findings),
+            "manual_confirmed": False,
+        }
+        for item in invalid_items
+    ]
+
+
+def _matching_status(item: dict[str, Any], findings: list[dict[str, Any]]) -> str:
+    title = item.get("title", "")
+    description = item.get("description", "")
+    for finding in findings:
+        haystack = f"{finding.get('rule', '')} {finding.get('evidence', '')}"
+        if title and title in haystack:
+            return finding.get("status", "warning")
+        if description[:12] and description[:12] in haystack:
+            return finding.get("status", "warning")
+    return "pending"
+
+
+def _manual_confirmation_points(markdown: str) -> list[str]:
+    return [
+        line.strip()
+        for line in markdown.splitlines()
+        if "人工确认点" in line
+    ]
+
+
+def _pricing_manual_fields(markdown: str) -> list[str]:
+    keywords = ("报价", "清单", "金额", "单价", "投标总价")
+    return [
+        line.strip()
+        for line in _manual_confirmation_points(markdown)
+        if any(keyword in line for keyword in keywords)
+    ]
+
+
+def _attachment_list(parsed_json: dict[str, Any]) -> list[str]:
+    titles = [item.get("title", "") for item in parsed_json.get("qualification_list", [])]
+    defaults = ["营业执照", "资质证书", "安全生产许可证", "项目经理证书", "业绩证明"]
+    return [title for title in titles if title] or defaults
 
 
 def get_project_review(project_id: int) -> dict[str, Any]:

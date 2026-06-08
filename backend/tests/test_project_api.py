@@ -470,3 +470,123 @@ def test_project_review_report_returns_workflow_state(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["review_report"]["fail_count"] == 0
+
+
+def test_confirm_parsed_result_endpoint(monkeypatch) -> None:
+    parsed_json = {
+        "project_name": "人工确认项目",
+        "qualification_list": [],
+        "technical_score_items": [],
+        "invalid_bid_items": [],
+    }
+    captured = {}
+
+    def fake_confirm(project_id, payload):
+        captured["project_id"] = project_id
+        captured["payload"] = payload
+        return {
+            "id": project_id,
+            "status": "parsed_confirmed",
+            "confirmed_parsed_json": payload,
+        }
+
+    monkeypatch.setattr(
+        "api.main.project_service.confirm_parsed_result",
+        fake_confirm,
+    )
+
+    response = client.patch("/api/project/7/parsed", json={"parsed_json": parsed_json})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "parsed_confirmed"
+    assert captured == {"project_id": 7, "payload": parsed_json}
+
+
+def test_build_and_save_outline_endpoints(monkeypatch) -> None:
+    outline = [
+        {
+            "title": "第一章、总体施工组织布置及规划",
+            "required": True,
+            "source_item": "",
+            "focus_points": ["施工部署"],
+        }
+    ]
+    monkeypatch.setattr(
+        "api.main.project_service.build_project_outline",
+        lambda project_id: {
+            "id": project_id,
+            "status": "outline_ready",
+            "bid_outline_json": outline,
+        },
+    )
+    saved = {}
+
+    def fake_save(project_id, payload):
+        saved["project_id"] = project_id
+        saved["outline"] = payload
+        return {
+            "id": project_id,
+            "status": "outline_confirmed",
+            "bid_outline_json": payload,
+        }
+
+    monkeypatch.setattr("api.main.project_service.save_project_outline", fake_save)
+
+    build_response = client.post("/api/project/7/outline")
+    save_response = client.patch("/api/project/7/outline", json={"outline": outline})
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "outline_ready"
+    assert save_response.status_code == 200
+    assert save_response.json()["status"] == "outline_confirmed"
+    assert saved == {"project_id": 7, "outline": outline}
+
+
+def test_save_knowledge_selection_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.project_service.save_selected_knowledge_chunks",
+        lambda project_id, selected_chunk_ids: {
+            "project_id": project_id,
+            "selected_chunk_ids": selected_chunk_ids,
+            "references": [{"chunk_id": selected_chunk_ids[0], "title": "模板"}],
+        },
+    )
+
+    response = client.patch(
+        "/api/project/7/knowledge-selection",
+        json={"selected_chunk_ids": [101]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["references"][0]["title"] == "模板"
+
+
+def test_save_draft_and_final_checklist_endpoints(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.project_service.save_draft_markdown",
+        lambda project_id, markdown: {
+            "id": project_id,
+            "status": "draft_saved",
+            "edited_markdown": markdown,
+            "review_report_json": {"fail_count": 0, "findings": []},
+        },
+    )
+    monkeypatch.setattr(
+        "api.main.project_service.build_final_checklist",
+        lambda project_id: {
+            "project_id": project_id,
+            "checklist": {"manual_confirmation_points": []},
+            "versions": [{"version": 1}],
+        },
+    )
+
+    draft_response = client.patch(
+        "/api/project/7/draft",
+        json={"markdown": "# 标书\n\n人工确认点：【待补充】报价"},
+    )
+    checklist_response = client.get("/api/project/7/final-checklist")
+
+    assert draft_response.status_code == 200
+    assert draft_response.json()["status"] == "draft_saved"
+    assert checklist_response.status_code == 200
+    assert checklist_response.json()["versions"][0]["version"] == 1

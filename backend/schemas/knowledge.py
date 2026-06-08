@@ -16,6 +16,10 @@ class KnowledgeDocumentSummary(BaseModel):
     file_name: str
     file_path: str | None = None
     file_type: str | None = None
+    document_type: str | None = None
+    specialty: str | None = None
+    project_year: int | None = None
+    tags: list[str] = []
     chunk_count: int
     created_at: str
 
@@ -26,6 +30,10 @@ class KnowledgeDocumentListResponse(BaseModel):
 
 class KnowledgeDocumentUpdateRequest(BaseModel):
     title: str
+    document_type: str | None = None
+    specialty: str | None = None
+    project_year: int | None = None
+    tags: list[str] = []
 
 
 class KnowledgeDeleteResponse(BaseModel):

@@ -42,6 +42,7 @@ def store_knowledge_chunks(
     file_type: str,
     chunks: list[KnowledgeChunk],
     embedder: EmbedTexts = embed_texts,
+    metadata: dict | None = None,
 ) -> dict[str, object]:
     if not chunks:
         raise ValueError("No chunks to store")
@@ -54,11 +55,12 @@ def store_knowledge_chunks(
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                INSERT INTO documents (project_id, file_name, file_path, file_type)
-                VALUES (NULL, %s, %s, %s)
+                INSERT INTO documents
+                    (project_id, file_name, file_path, file_type, metadata_json)
+                VALUES (NULL, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (file_name, file_path, file_type),
+                (file_name, file_path, file_type, Json(metadata or {})),
             )
             document_id = cursor.fetchone()["id"]
 

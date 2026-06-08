@@ -24,18 +24,24 @@ if [ ! -x "$VENV_PATH/bin/python" ]; then
   python3.11 -m venv "$VENV_PATH"
 fi
 source "$VENV_PATH/bin/activate"
+PYTHON_BIN="$VENV_PATH/bin/python"
+
+if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+  echo "pip not found in venv. Bootstrapping with ensurepip"
+  "$PYTHON_BIN" -m ensurepip --upgrade
+fi
 
 echo "Upgrading pip"
-pip install -U pip
+"$PYTHON_BIN" -m pip install -U pip
 
 echo "Pinning compatible packaging build tools"
-pip install --force-reinstall "wheel==0.45.0" "packaging==23.2" "setuptools==81.0.0"
+"$PYTHON_BIN" -m pip install --force-reinstall "wheel==0.45.0" "packaging==23.2" "setuptools==81.0.0"
 
 echo "Installing backend requirements"
-pip install -r "$REPO_ROOT/backend/requirements.txt"
+"$PYTHON_BIN" -m pip install -r "$REPO_ROOT/backend/requirements.txt"
 
 echo "Verifying environment"
-pip check
+"$PYTHON_BIN" -m pip check
 
 echo "Done. Activate with: source $VENV_PATH/bin/activate"
 echo "Run tests: cd backend && python -m pytest tests/ -q"

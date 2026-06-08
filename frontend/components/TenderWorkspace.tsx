@@ -12,23 +12,46 @@ import {
 } from "lucide-react";
 import { AdminUsersPanel } from "@/components/AdminUsersPanel";
 import { CorrectionModal } from "@/components/CorrectionModal";
+import { DraftEditor } from "@/components/DraftEditor";
+import { FinalChecklistPanel } from "@/components/FinalChecklistPanel";
+import { HumanActionPrompt } from "@/components/HumanActionPrompt";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
+import { OutlineEditor } from "@/components/OutlineEditor";
+import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
+import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
 import { StatusRail } from "@/components/StatusRail";
 import { UploadPanel } from "@/components/UploadPanel";
 import {
+  buildProjectOutline,
+  confirmParsedProject,
   confirmProject,
   createProject,
+  getFinalChecklist,
   getProjectDownload,
   getProjectReviewReport,
+  getProjectResult,
   getProjectStatus,
   logout as logoutRequest,
   parseProject,
-  runProjectWorkflow
+  runProjectWorkflow,
+  saveDraftMarkdown,
+  saveKnowledgeSelection,
+  saveProjectOutline,
+  searchKnowledge
 } from "@/lib/api";
 import { clearSession, getStoredSession } from "@/lib/auth";
-import type { ReviewReport, WorkflowState } from "@/lib/types";
+import type {
+  BidOutlineSection,
+  FinalChecklist,
+  FinalVersion,
+  KnowledgeSearchResult,
+  RagReference,
+  ReviewReport,
+  TenderRequirements,
+  WorkflowState
+} from "@/lib/types";
 
 const finalStatuses = new Set([
   "approved",
@@ -44,7 +67,8 @@ const runningStatuses = new Set([
   "processing",
   "generating",
   "reviewing",
-  "needs_revision"
+  "needs_revision",
+  "outline_review"
 ]);
 
 function readableStatus(status: string) {
@@ -54,6 +78,10 @@ function readableStatus(status: string) {
     uploaded: "已上传",
     parsing: "解析中",
     parsed: "已解析",
+    parsed_confirmed: "解析已确认",
+    outline_ready: "大纲待确认",
+    outline_confirmed: "大纲已确认",
+    outline_review: "待确认大纲",
     processing: "处理中",
     generating: "生成中",
     generated: "已生成",
@@ -89,20 +117,36 @@ export function TenderWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [reviewReport, setReviewReport] = useState<ReviewReport | null>(null);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
+  const [parsedJson, setParsedJson] = useState<TenderRequirements | null>(null);
+  const [parsedJsonText, setParsedJsonText] = useState("");
+  const [outline, setOutline] = useState<BidOutlineSection[]>([]);
+  const [ragQuery, setRagQuery] = useState("施工组织设计 技术标 模板");
+  const [ragDocumentType, setRagDocumentType] = useState("");
+  const [ragSpecialty, setRagSpecialty] = useState("");
+  const [ragTagText, setRagTagText] = useState("");
+  const [ragResults, setRagResults] = useState<KnowledgeSearchResult[]>([]);
+  const [selectedChunkIds, setSelectedChunkIds] = useState<number[]>([]);
+  const [ragReferences, setRagReferences] = useState<RagReference[]>([]);
+  const [finalChecklist, setFinalChecklist] = useState<FinalChecklist | null>(null);
+  const [finalVersions, setFinalVersions] = useState<FinalVersion[]>([]);
   const [markdown, setMarkdown] = useState("");
   const [activeLine, setActiveLine] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [humanPromptOpen, setHumanPromptOpen] = useState(false);
   const [username, setUsername] = useState("");
   const autoStartedWorkflowProject = useRef<number | null>(null);
+  const lastHumanPromptKey = useRef("");
 
   const canConfirm = Boolean(projectId && workflowState?.awaiting_human);
+  const canStartWorkflow = Boolean(
+    projectId && ["outline_confirmed", "outline_review"].includes(status)
+  );
   const canDownload = Boolean(
     projectId && ["approved", "finished", "generated"].includes(status)
   );
   const statusText = useMemo(() => readableStatus(status), [status]);
   const statusBusy = busy || actionBusy || runningStatuses.has(status);
-
   const applyWorkflowSnapshot = useCallback(
     (state?: WorkflowState | null, report?: ReviewReport | null) => {
       if (state) {
@@ -112,6 +156,25 @@ export function TenderWorkspace({
         }
         if (state.draft_markdown) {
           setMarkdown(state.draft_markdown);
+        }
+        if (state.parsed) {
+          setParsedJson(state.parsed);
+          setParsedJsonText(JSON.stringify(state.parsed, null, 2));
+        }
+        if (state.bid_outline) {
+          setOutline(state.bid_outline);
+        }
+        if (state.selected_chunk_ids) {
+          setSelectedChunkIds(state.selected_chunk_ids);
+        }
+        if (state.rag_references) {
+          setRagReferences(state.rag_references);
+        }
+        if (state.final_checklist) {
+          setFinalChecklist(state.final_checklist);
+        }
+        if (state.final_versions) {
+          setFinalVersions(state.final_versions);
         }
         if (state.review_report) {
           setReviewReport(state.review_report);
@@ -129,6 +192,13 @@ export function TenderWorkspace({
       try {
         const projectStatus = await getProjectStatus(id);
         setStatus(projectStatus.status);
+        if (projectStatus.parsed) {
+          const result = await getProjectResult(id);
+          if (result.parsed_json) {
+            setParsedJson(result.parsed_json);
+            setParsedJsonText(JSON.stringify(result.parsed_json, null, 2));
+          }
+        }
 
         const reviewSnapshot = await getProjectReviewReport(id);
         setStatus(reviewSnapshot.workflow_state?.status || reviewSnapshot.status);
@@ -175,6 +245,30 @@ export function TenderWorkspace({
     [refreshProject]
   );
 
+  const humanActionPrompt = useMemo(
+    () => buildHumanActionPrompt(status, {
+      canStartWorkflow,
+      canConfirm,
+      actionBusy,
+      onClose: () => setHumanPromptOpen(false),
+      onStartWorkflow: () => {
+        setHumanPromptOpen(false);
+        if (projectId) {
+          void startWorkflow(projectId);
+        }
+      },
+      onOpenCorrection: () => {
+        setHumanPromptOpen(false);
+        setModalOpen(true);
+      },
+      onApprove: () => {
+        setHumanPromptOpen(false);
+        void handleApprove();
+      }
+    }),
+    [actionBusy, canConfirm, canStartWorkflow, projectId, status, startWorkflow]
+  );
+
   useEffect(() => {
     if (initialProjectId) {
       void refreshProject(initialProjectId);
@@ -199,19 +293,21 @@ export function TenderWorkspace({
   }, [projectId, refreshProject, status]);
 
   useEffect(() => {
-    if (
-      !projectId ||
-      status !== "parsed" ||
-      busy ||
-      actionBusy ||
-      autoStartedWorkflowProject.current === projectId
-    ) {
+    if (!projectId) {
+      lastHumanPromptKey.current = "";
       return;
     }
-
-    autoStartedWorkflowProject.current = projectId;
-    void startWorkflow(projectId);
-  }, [actionBusy, busy, projectId, startWorkflow, status]);
+    if (!humanActionPrompt) {
+      lastHumanPromptKey.current = "";
+      return;
+    }
+    const promptKey = `${projectId}:${status}`;
+    if (lastHumanPromptKey.current === promptKey) {
+      return;
+    }
+    lastHumanPromptKey.current = promptKey;
+    setHumanPromptOpen(true);
+  }, [humanActionPrompt, projectId, status]);
 
   function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
@@ -227,9 +323,19 @@ export function TenderWorkspace({
 
     setBusy(true);
     setError(null);
-    setReviewReport(null);
-    setWorkflowState(null);
-    setMarkdown("");
+      setReviewReport(null);
+      setWorkflowState(null);
+      setParsedJson(null);
+      setParsedJsonText("");
+      setOutline([]);
+      setRagResults([]);
+      setSelectedChunkIds([]);
+      setRagReferences([]);
+      setFinalChecklist(null);
+      setFinalVersions([]);
+      setMarkdown("");
+      setHumanPromptOpen(false);
+      lastHumanPromptKey.current = "";
     setDownloadUrl(null);
     setActiveLine(null);
 
@@ -243,14 +349,154 @@ export function TenderWorkspace({
       setStatus("parsing");
       const parsed = await parseProject(created.project_id);
       setStatus(parsed.status);
-
-      autoStartedWorkflowProject.current = created.project_id;
-      await startWorkflow(created.project_id);
+      if (parsed.parsed_json) {
+        setParsedJson(parsed.parsed_json);
+        setParsedJsonText(JSON.stringify(parsed.parsed_json, null, 2));
+      }
     } catch (runError) {
       setStatus("failed");
       setError(errorMessage(runError));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleConfirmParsed() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const parsed = JSON.parse(parsedJsonText) as Record<string, unknown>;
+      const confirmed = await confirmParsedProject(projectId, parsed);
+      setStatus(confirmed.status);
+      setParsedJson(confirmed.confirmed_parsed_json);
+      setParsedJsonText(JSON.stringify(confirmed.confirmed_parsed_json, null, 2));
+      const built = await buildProjectOutline(projectId);
+      setStatus(built.status);
+      setOutline(built.bid_outline);
+    } catch (confirmError) {
+      setError(errorMessage(confirmError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleBuildOutline() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const built = await buildProjectOutline(projectId);
+      setStatus(built.status);
+      setOutline(built.bid_outline);
+    } catch (outlineError) {
+      setError(errorMessage(outlineError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleSaveOutline() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const saved = await saveProjectOutline(projectId, outline);
+      setStatus(saved.status);
+      setOutline(saved.bid_outline);
+    } catch (outlineError) {
+      setError(errorMessage(outlineError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleSearchKnowledge() {
+    setActionBusy(true);
+    setError(null);
+    try {
+      const tags = ragTagText
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      const response = await searchKnowledge(ragQuery, 8, {
+        documentType: ragDocumentType.trim() || undefined,
+        specialty: ragSpecialty.trim() || undefined,
+        tags
+      });
+      setRagResults(response.results);
+    } catch (searchError) {
+      setError(errorMessage(searchError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function handleToggleChunk(chunkId: number) {
+    setSelectedChunkIds((current) =>
+      current.includes(chunkId)
+        ? current.filter((id) => id !== chunkId)
+        : [...current, chunkId]
+    );
+  }
+
+  async function handleSaveKnowledgeSelection() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const saved = await saveKnowledgeSelection(projectId, selectedChunkIds);
+      setSelectedChunkIds(saved.selected_chunk_ids);
+      setRagReferences(saved.references);
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const saved = await saveDraftMarkdown(projectId, markdown);
+      setStatus(saved.status);
+      setMarkdown(saved.draft_markdown);
+      if (saved.review_report) {
+        setReviewReport(saved.review_report);
+      }
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleFinalChecklist() {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const result = await getFinalChecklist(projectId);
+      setFinalChecklist(result.checklist);
+      setFinalVersions(result.versions);
+    } catch (checklistError) {
+      setError(errorMessage(checklistError));
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -387,6 +633,15 @@ export function TenderWorkspace({
             </button>
             <button
               type="button"
+              disabled={!canStartWorkflow || actionBusy}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+              onClick={() => projectId && startWorkflow(projectId)}
+            >
+              <Loader2 className={actionBusy ? "h-4 w-4 animate-spin" : "hidden"} />
+              开始生成
+            </button>
+            <button
+              type="button"
               disabled={!canConfirm || actionBusy}
               className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
               onClick={() => setModalOpen(true)}
@@ -447,16 +702,62 @@ export function TenderWorkspace({
             traceEvents={workflowState?.trace_events}
           />
           <KnowledgePanel />
+          <RagSelectionPanel
+            query={ragQuery}
+            documentType={ragDocumentType}
+            specialty={ragSpecialty}
+            tagText={ragTagText}
+            results={ragResults}
+            selectedIds={selectedChunkIds}
+            references={ragReferences}
+            busy={actionBusy}
+            onQueryChange={setRagQuery}
+            onDocumentTypeChange={setRagDocumentType}
+            onSpecialtyChange={setRagSpecialty}
+            onTagTextChange={setRagTagText}
+            onSearch={handleSearchKnowledge}
+            onToggle={handleToggleChunk}
+            onSave={handleSaveKnowledgeSelection}
+          />
           <AdminUsersPanel />
         </div>
 
-        <MarkdownPreview markdown={markdown} activeLine={activeLine} />
+        <div className="space-y-4">
+          <ParsedReviewPanel
+            parsed={parsedJson}
+            value={parsedJsonText}
+            busy={actionBusy}
+            onChange={setParsedJsonText}
+            onSave={handleConfirmParsed}
+          />
+          <OutlineEditor
+            outline={outline}
+            busy={actionBusy}
+            onChange={setOutline}
+            onBuild={handleBuildOutline}
+            onSave={handleSaveOutline}
+          />
+          <DraftEditor
+            markdown={markdown}
+            busy={actionBusy}
+            onChange={setMarkdown}
+            onSave={handleSaveDraft}
+            onChecklist={handleFinalChecklist}
+          />
+          <MarkdownPreview markdown={markdown} activeLine={activeLine} />
+        </div>
 
-        <RiskPanel
-          report={reviewReport}
-          activeLine={activeLine}
-          onSelect={setActiveLine}
-        />
+        <div className="space-y-4">
+          <RiskPanel
+            report={reviewReport}
+            activeLine={activeLine}
+            onSelect={setActiveLine}
+          />
+          <FinalChecklistPanel
+            checklist={finalChecklist}
+            versions={finalVersions}
+          />
+        </div>
       </div>
 
       <CorrectionModal
@@ -465,6 +766,115 @@ export function TenderWorkspace({
         onClose={() => setModalOpen(false)}
         onSubmit={handleCorrectionSubmit}
       />
+      {humanActionPrompt ? (
+        <HumanActionPrompt
+          open={humanPromptOpen}
+          title={humanActionPrompt.title}
+          message={humanActionPrompt.message}
+          busy={actionBusy}
+          actions={humanActionPrompt.actions}
+          onClose={() => setHumanPromptOpen(false)}
+        />
+      ) : null}
     </main>
   );
+}
+
+function buildHumanActionPrompt(
+  status: string,
+  context: {
+    canStartWorkflow: boolean;
+    canConfirm: boolean;
+    actionBusy: boolean;
+    onClose: () => void;
+    onStartWorkflow: () => void;
+    onOpenCorrection: () => void;
+    onApprove: () => void;
+  }
+) {
+  if (status === "parsed") {
+    return {
+      title: "需要确认解析结果",
+      message: "招标文件已经解析完成。请检查项目名称、资质要求、评分项和废标条款，确认后再进入大纲生成。",
+      actions: [
+        {
+          label: "去确认",
+          tone: "primary" as const,
+          icon: "check" as const,
+          onClick: context.onClose
+        }
+      ]
+    };
+  }
+
+  if (status === "outline_ready") {
+    return {
+      title: "需要确认生成大纲",
+      message: "默认标书大纲已经生成。请检查章节顺序和每章重点，确认后系统才会进入 RAG 检索和正文生成。",
+      actions: [
+        {
+          label: "去确认",
+          tone: "primary" as const,
+          icon: "check" as const,
+          onClick: context.onClose
+        }
+      ]
+    };
+  }
+
+  if (status === "outline_review") {
+    return {
+      title: "等待人工确认大纲",
+      message: "工作流已暂停在生成前确认节点。请先保存确认版解析结果和大纲，再开始生成标书。",
+      actions: [
+        {
+          label: "开始生成",
+          tone: "primary" as const,
+          icon: "play" as const,
+          disabled: !context.canStartWorkflow || context.actionBusy,
+          onClick: context.onStartWorkflow
+        }
+      ]
+    };
+  }
+
+  if (status === "human_review") {
+    return {
+      title: "需要人工终审",
+      message: "审查和修正循环已完成，系统正在等待你批准继续导出，或提交人工修正意见。",
+      actions: [
+        {
+          label: "手动修改",
+          tone: "neutral" as const,
+          icon: "edit" as const,
+          disabled: !context.canConfirm,
+          onClick: context.onOpenCorrection
+        },
+        {
+          label: "批准并继续",
+          tone: "success" as const,
+          icon: "check" as const,
+          disabled: !context.canConfirm,
+          onClick: context.onApprove
+        }
+      ]
+    };
+  }
+
+  if (status === "needs_revision") {
+    return {
+      title: "需要人工修正",
+      message: "当前项目已退回修正。请打开修正窗口补充意见，或编辑正文后重新保存审查。",
+      actions: [
+        {
+          label: "打开修改",
+          tone: "primary" as const,
+          icon: "edit" as const,
+          onClick: context.onOpenCorrection
+        }
+      ]
+    };
+  }
+
+  return null;
 }

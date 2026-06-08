@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from core.config import settings
 from rag.indexer import KnowledgeChunk, split_text
+from psycopg2.extras import Json
+
 from rag.vector_store import _connect, store_knowledge_chunks
 from utils.file_parser import extract_text
 from utils.minio_client import minio_client
@@ -39,6 +41,10 @@ def index_uploaded_knowledge(
     file_bytes: bytes,
     filename: str,
     content_type: str | None = None,
+    document_type: str | None = None,
+    specialty: str | None = None,
+    project_year: int | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, object]:
     if not file_bytes:
         raise ValueError("Uploaded knowledge file is empty")
@@ -48,6 +54,7 @@ def index_uploaded_knowledge(
     minio_client.upload_file(settings.minio_bucket, file_bytes, object_name)
 
     text = extract_text(file_bytes, filename=safe_name, content_type=content_type)
+    metadata = _clean_metadata(document_type, specialty, project_year, tags)
     chunks = [
         KnowledgeChunk(
             content=content,
@@ -56,6 +63,7 @@ def index_uploaded_knowledge(
                 "file_name": safe_name,
                 "file_type": _file_type(safe_name, content_type),
                 "chunk_index": index,
+                **metadata,
             },
         )
         for index, content in enumerate(split_text(text))
@@ -65,6 +73,7 @@ def index_uploaded_knowledge(
         file_path=object_name,
         file_type=_file_type(safe_name, content_type),
         chunks=chunks,
+        metadata=metadata,
     )
     return {
         "document_id": stored["document_id"],
@@ -86,6 +95,7 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
                     documents.file_name,
                     documents.file_path,
                     documents.file_type,
+                    documents.metadata_json,
                     documents.created_at,
                     COUNT(knowledge_chunks.id) AS chunk_count
                 FROM documents
@@ -97,6 +107,7 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
                     documents.file_name,
                     documents.file_path,
                     documents.file_type,
+                    documents.metadata_json,
                     documents.created_at
                 ORDER BY documents.created_at DESC, documents.id DESC
                 LIMIT %s
@@ -111,28 +122,41 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
             "file_name": row[1],
             "file_path": row[2],
             "file_type": row[3],
-            "created_at": row[4].isoformat(),
-            "chunk_count": int(row[5]),
+            "document_type": (row[4] or {}).get("document_type"),
+            "specialty": (row[4] or {}).get("specialty"),
+            "project_year": (row[4] or {}).get("project_year"),
+            "tags": (row[4] or {}).get("tags", []),
+            "created_at": row[5].isoformat(),
+            "chunk_count": int(row[6]),
         }
         for row in rows
     ]
 
 
-def rename_knowledge_document(document_id: int, title: str) -> dict[str, object]:
+def rename_knowledge_document(
+    document_id: int,
+    title: str,
+    document_type: str | None = None,
+    specialty: str | None = None,
+    project_year: int | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, object]:
     safe_title = _safe_title(title)
     if not safe_title:
         raise ValueError("Knowledge document title is required")
 
+    metadata = _clean_metadata(document_type, specialty, project_year, tags)
     with _connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE documents
-                SET file_name = %s
+                SET file_name = %s,
+                    metadata_json = %s
                 WHERE id = %s AND project_id IS NULL
-                RETURNING id, file_name, file_path, file_type, created_at
+                RETURNING id, file_name, file_path, file_type, metadata_json, created_at
                 """,
-                (safe_title, document_id),
+                (safe_title, Json(metadata), document_id),
             )
             row = cursor.fetchone()
             if not row:
@@ -141,15 +165,12 @@ def rename_knowledge_document(document_id: int, title: str) -> dict[str, object]
             cursor.execute(
                 """
                 UPDATE knowledge_chunks
-                SET metadata = jsonb_set(
-                    COALESCE(metadata, '{}'::jsonb),
-                    '{file_name}',
-                    to_jsonb(%s::text),
-                    true
-                )
+                SET metadata = COALESCE(metadata, '{}'::jsonb)
+                    || jsonb_build_object('file_name', %s::text)
+                    || %s::jsonb
                 WHERE document_id = %s
                 """,
-                (safe_title, document_id),
+                (safe_title, Json(metadata), document_id),
             )
 
             cursor.execute(
@@ -163,7 +184,11 @@ def rename_knowledge_document(document_id: int, title: str) -> dict[str, object]
         "file_name": row[1],
         "file_path": row[2],
         "file_type": row[3],
-        "created_at": row[4].isoformat(),
+        "document_type": (row[4] or {}).get("document_type"),
+        "specialty": (row[4] or {}).get("specialty"),
+        "project_year": (row[4] or {}).get("project_year"),
+        "tags": (row[4] or {}).get("tags", []),
+        "created_at": row[5].isoformat(),
         "chunk_count": chunk_count,
     }
 
@@ -192,3 +217,24 @@ def delete_knowledge_document(document_id: int) -> None:
             # The database is the source of truth for retrieval; missing object cleanup
             # should not keep a deleted document searchable.
             pass
+
+
+def _clean_metadata(
+    document_type: str | None,
+    specialty: str | None,
+    project_year: int | None,
+    tags: list[str] | None,
+) -> dict[str, object]:
+    clean_tags = [
+        re.sub(r"\s+", " ", tag).strip()
+        for tag in (tags or [])
+        if str(tag).strip()
+    ]
+    metadata: dict[str, object] = {"tags": sorted(set(clean_tags))}
+    if document_type and document_type.strip():
+        metadata["document_type"] = document_type.strip()
+    if specialty and specialty.strip():
+        metadata["specialty"] = specialty.strip()
+    if project_year:
+        metadata["project_year"] = int(project_year)
+    return metadata

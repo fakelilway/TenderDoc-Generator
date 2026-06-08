@@ -3,6 +3,23 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+port_in_use() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+pick_port() {
+  local port="$1"
+  while port_in_use "$port"; do
+    port=$((port + 1))
+  done
+  echo "$port"
+}
+
+BACKEND_PORT="$(pick_port "${BACKEND_PORT:-8000}")"
+FRONTEND_PORT="$(pick_port "${FRONTEND_PORT:-3000}")"
+export BACKEND_PORT FRONTEND_PORT
+export BACKEND_API_BASE_URL="${BACKEND_API_BASE_URL:-http://localhost:$BACKEND_PORT}"
+
 "$REPO_ROOT/scripts/init_db.sh"
 
 cleanup() {
@@ -18,8 +35,8 @@ trap cleanup EXIT INT TERM
 "$REPO_ROOT/scripts/start_backend.sh" &
 BACKEND_PID=$!
 
-echo "Waiting for backend"
-until curl -fsS http://localhost:${BACKEND_PORT:-8000}/health >/dev/null 2>&1; do
+echo "Waiting for backend on port $BACKEND_PORT"
+until curl -fsS "http://localhost:$BACKEND_PORT/health" >/dev/null 2>&1; do
   sleep 1
 done
 
@@ -28,8 +45,8 @@ FRONTEND_PID=$!
 
 echo
 echo "TenderDoc local dev is running"
-echo "Frontend: http://localhost:${FRONTEND_PORT:-3000}"
-echo "Backend API docs: http://localhost:${BACKEND_PORT:-8000}/docs"
+echo "Frontend: http://localhost:$FRONTEND_PORT"
+echo "Backend API docs: http://localhost:$BACKEND_PORT/docs"
 echo "Press Ctrl+C to stop backend and frontend."
 
 while kill -0 "$BACKEND_PID" 2>/dev/null && kill -0 "$FRONTEND_PID" 2>/dev/null; do

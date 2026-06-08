@@ -89,15 +89,42 @@ def rerank_with_cross_encoder(
 
 
 def retrieve(query: str, top_k: int = 5, rerank: bool = True) -> list[RetrievalResult]:
+    return retrieve_filtered(query=query, top_k=top_k, rerank=rerank)
+
+
+def retrieve_filtered(
+    query: str,
+    top_k: int = 5,
+    rerank: bool = True,
+    document_type: str | None = None,
+    specialty: str | None = None,
+    tags: list[str] | None = None,
+    chunk_ids: list[int] | None = None,
+) -> list[RetrievalResult]:
     if top_k <= 0:
         raise ValueError("top_k must be positive")
 
     candidate_limit = max(top_k * 5, top_k)
     query_embedding = format_vector(embed_text(query))
+    filters = ["embedding IS NOT NULL"]
+    params: list[object] = []
+    if document_type:
+        filters.append("metadata->>'document_type' = %s")
+        params.append(document_type)
+    if specialty:
+        filters.append("metadata->>'specialty' = %s")
+        params.append(specialty)
+    if tags:
+        filters.append("metadata->'tags' ?| %s")
+        params.append(tags)
+    if chunk_ids:
+        filters.append("id = ANY(%s)")
+        params.append(chunk_ids)
+    where_clause = " AND ".join(filters)
     with _connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     id,
                     document_id,
@@ -105,11 +132,11 @@ def retrieve(query: str, top_k: int = 5, rerank: bool = True) -> list[RetrievalR
                     metadata,
                     embedding <-> %s::vector AS distance
                 FROM knowledge_chunks
-                WHERE embedding IS NOT NULL
+                WHERE {where_clause}
                 ORDER BY embedding <-> %s::vector
                 LIMIT %s
                 """,
-                (query_embedding, query_embedding, candidate_limit),
+                [query_embedding, *params, query_embedding, candidate_limit],
             )
             rows = cursor.fetchall()
 
