@@ -45,6 +45,9 @@ def test_review_marks_missing_required_content_as_fail() -> None:
     assert report.has_failures
     assert "project_manager_certificate" in failed_rules
     assert "safety_production_license" in failed_rules
+    assert "项目经理证书" in {
+        finding.field for finding in report.findings if finding.status == "fail"
+    }
     assert all(
         finding.location.paragraph_index is not None for finding in report.findings
     )

@@ -7,6 +7,20 @@ import {
 } from "lucide-react";
 import type { ReviewFinding, ReviewReport, ReviewStatus } from "@/lib/types";
 
+const ruleLabels: Record<string, string> = {
+  project_manager_certificate: "项目经理证书",
+  safety_production_license: "安全生产许可证",
+  bid_bond: "投标保证金",
+  pricing_manual_confirmation: "报价人工确认",
+  general_completeness: "完整性审查"
+};
+
+const severityLabels: Record<string, string> = {
+  high: "高风险",
+  medium: "中风险",
+  low: "低风险"
+};
+
 function statusTone(status: ReviewStatus) {
   if (status === "pass") {
     return {
@@ -30,7 +44,15 @@ function statusTone(status: ReviewStatus) {
 }
 
 function findingTitle(finding: ReviewFinding) {
-  return finding.rule.replaceAll("_", " ");
+  return (
+    finding.field?.trim() ||
+    ruleLabels[finding.rule] ||
+    finding.rule.replaceAll("_", " ")
+  );
+}
+
+function severityLabel(severity: string) {
+  return severityLabels[severity] || severity;
 }
 
 export function RiskPanel({
@@ -90,7 +112,9 @@ export function RiskPanel({
                       <p className="truncate text-sm font-semibold text-ink">
                         {findingTitle(finding)}
                       </p>
-                      <p className="mt-1 text-xs text-muted">{finding.severity}</p>
+                      <p className="mt-1 text-xs text-muted">
+                        {severityLabel(finding.severity)}
+                      </p>
                     </div>
                     <span
                       className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium ${tone.className}`}
@@ -105,7 +129,7 @@ export function RiskPanel({
                   {lineNumber ? (
                     <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand">
                       <Search className="h-3.5 w-3.5" />
-                      line {lineNumber}
+                      第 {lineNumber} 行
                     </p>
                   ) : null}
                 </button>

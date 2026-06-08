@@ -124,7 +124,8 @@ function stageProgress(
   }
 
   if (busy && current === index) {
-    return Math.min(92, 35 + Math.floor(elapsedSeconds / 3) * 3);
+    const stageMaxProgress = [45, 55, 95, 90, 95, 98][index] ?? 92;
+    return Math.min(stageMaxProgress, 35 + Math.floor(elapsedSeconds / 3) * 3);
   }
 
   const activeProgress: Record<string, number> = {

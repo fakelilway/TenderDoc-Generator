@@ -79,9 +79,7 @@ const runningStatuses = new Set([
   "parsing",
   "processing",
   "generating",
-  "reviewing",
-  "needs_revision",
-  "outline_review"
+  "reviewing"
 ]);
 
 function readableStatus(status: string) {

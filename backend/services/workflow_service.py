@@ -627,9 +627,14 @@ def _build_final_checklist(
 
 def _finding_status(title: str, review_report: dict) -> str:
     for finding in review_report.get("findings", []):
+        haystack = (
+            f"{finding.get('rule', '')} "
+            f"{finding.get('field', '')} "
+            f"{finding.get('evidence', '')}"
+        )
         if (
             title
-            and title in f"{finding.get('rule', '')} {finding.get('evidence', '')}"
+            and title in haystack
         ):
             return finding.get("status", "warning")
     return "pending"

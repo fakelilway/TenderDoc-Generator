@@ -139,7 +139,7 @@ def _matching_finding(
                 return finding
     text = f"{item.title} {item.description}"
     for finding in review_report.findings:
-        haystack = f"{finding.rule} {finding.evidence} {finding.suggestion}"
+        haystack = f"{finding.rule} {finding.field} {finding.evidence} {finding.suggestion}"
         if item.title and item.title in haystack:
             return finding
         if any(keyword in haystack for keyword in _keywords(text)[:3]):

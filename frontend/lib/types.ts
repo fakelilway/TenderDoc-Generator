@@ -26,6 +26,7 @@ export type ReviewLocation = {
 
 export type ReviewFinding = {
   rule: string;
+  field?: string;
   status: ReviewStatus;
   severity: "high" | "medium" | "low" | string;
   suggestion: string;
