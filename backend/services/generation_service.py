@@ -83,6 +83,7 @@ def export_markdown_for_project(
             toc=True,
             header_text=title,
             page_numbers=True,
+            style_profile="zhengqi",
         )
 
         markdown_object = f"projects/{project_id}/generated/bid.md"

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml.ns import qn
 
 from utils.docx_exporter import (
@@ -157,3 +158,66 @@ def test_markdown_to_docx_uses_chinese_production_typography(tmp_path: Path) -> 
     )
     assert body.paragraph_format.first_line_indent is not None
     assert body.paragraph_format.first_line_indent.pt == 24
+
+
+def test_markdown_to_docx_can_apply_zhengqi_bid_style_profile(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "zhengqi.docx"
+    markdown = """# 正奇格式投标文件
+
+## 第一章、总体施工组织布置及规划
+
+本工程采用分段流水施工，明确施工部署、资源配置、质量安全环保控制措施。
+
+| 序号 | 项目 | 内容 |
+| --- | --- | --- |
+| 1 | 质量 | 执行三检制和样板引路制度 |
+"""
+
+    markdown_to_docx(
+        markdown,
+        output_path,
+        title="正奇格式投标文件",
+        subtitle="投标文件",
+        cover=True,
+        toc=True,
+        header_text="正奇格式投标文件 施工组织设计",
+        page_numbers=True,
+        style_profile="zhengqi",
+    )
+
+    document = Document(output_path)
+    normal = document.styles["Normal"]
+    normal_rfonts = normal.element.rPr.rFonts
+    assert normal_rfonts.get(qn("w:eastAsia")) == "SimSun"
+    assert normal.font.size.pt == 14
+    assert normal.paragraph_format.line_spacing_rule == WD_LINE_SPACING.EXACTLY
+    assert normal.paragraph_format.line_spacing.pt == 32
+
+    heading1 = document.styles["Heading 1"]
+    assert heading1.element.rPr.rFonts.get(qn("w:eastAsia")) == "SimSun"
+    assert heading1.font.size.pt == 18
+    assert heading1.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    cover_title = next(
+        paragraph for paragraph in document.paragraphs if paragraph.text == "正奇格式投标文件"
+    )
+    assert cover_title.runs[0].font.size.pt == 36
+
+    body = next(
+        paragraph for paragraph in document.paragraphs if paragraph.text.startswith("本工程采用")
+    )
+    assert body.paragraph_format.first_line_indent.pt == 28
+
+    section = document.sections[0]
+    assert round(section.top_margin.cm, 1) == 2.0
+    assert round(section.left_margin.cm, 1) == 2.2
+    assert section.footer.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    footer_xml = section.footer.paragraphs[0]._p.xml
+    assert "PAGE" in footer_xml
+    assert "NUMPAGES" in footer_xml
+    assert "页/共" in section.footer.paragraphs[0].text
+
+    table_run = document.tables[0].cell(1, 1).paragraphs[0].runs[0]
+    assert table_run.font.size.pt == 14

@@ -4,20 +4,22 @@ import re
 from pathlib import Path
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor
 
 # Production typography for Chinese bid documents:
 # body uses 宋体, headings use 黑体 (bold), Latin/digits use Times New Roman.
 BODY_CJK_FONT = "SimSun"  # 宋体
 HEADING_CJK_FONT = "SimHei"  # 黑体
+FOOTER_CJK_FONT = "NSimSun"  # 新宋体
 LATIN_FONT = "Times New Roman"
 BODY_SIZE_PT = 12  # 小四
 HEADING_SIZES_PT = {"Heading 1": 16, "Heading 2": 14, "Heading 3": 12}  # 三号/四号/小四
 # 2-character first-line indent at the body font size.
 FIRST_LINE_INDENT_PT = BODY_SIZE_PT * 2
+ZHENGQI_PROFILE = "zhengqi"
 
 
 # Headings whose title contains any of these keywords are routed to the
@@ -49,6 +51,7 @@ def markdown_to_docx(
     header_text: str | None = None,
     page_numbers: bool = False,
     metadata: dict[str, str] | None = None,
+    style_profile: str | None = None,
 ) -> str:
     """Render markdown into a styled DOCX file.
 
@@ -60,10 +63,10 @@ def markdown_to_docx(
         raise ValueError("markdown_text is empty")
 
     document = Document()
-    _configure_styles(document)
+    _configure_styles(document, style_profile)
 
     if header_text or page_numbers:
-        _configure_header_footer(document, header_text, page_numbers)
+        _configure_header_footer(document, header_text, page_numbers, style_profile)
 
     if cover:
         _add_cover_page(
@@ -71,12 +74,13 @@ def markdown_to_docx(
             title or _extract_title(markdown_text) or "投标文件",
             subtitle,
             metadata,
+            style_profile,
         )
 
     if toc:
         _add_table_of_contents(document)
 
-    _render_markdown_body(document, markdown_text)
+    _render_markdown_body(document, markdown_text, style_profile)
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +88,11 @@ def markdown_to_docx(
     return str(path)
 
 
-def _render_markdown_body(document: Document, markdown_text: str) -> None:
+def _render_markdown_body(
+    document: Document,
+    markdown_text: str,
+    style_profile: str | None,
+) -> None:
     lines = markdown_text.splitlines()
     index = 0
     while index < len(lines):
@@ -98,7 +106,7 @@ def _render_markdown_body(document: Document, markdown_text: str) -> None:
             while index < len(lines) and lines[index].strip().startswith("|"):
                 table_lines.append(lines[index].strip())
                 index += 1
-            _add_table(document, table_lines)
+            _add_table(document, table_lines, style_profile)
             continue
 
         if line.startswith("#"):
@@ -113,8 +121,14 @@ def _render_markdown_body(document: Document, markdown_text: str) -> None:
         else:
             paragraph = document.add_paragraph(line)
             # Production body paragraphs start with a 2-character indent.
-            paragraph.paragraph_format.first_line_indent = Pt(FIRST_LINE_INDENT_PT)
+            paragraph.paragraph_format.first_line_indent = Pt(
+                _body_size_pt(style_profile) * 2
+            )
         index += 1
+
+
+def _body_size_pt(style_profile: str | None) -> float:
+    return 14 if style_profile == ZHENGQI_PROFILE else BODY_SIZE_PT
 
 
 def _set_fonts(style, cjk_font: str) -> None:
@@ -128,55 +142,119 @@ def _set_fonts(style, cjk_font: str) -> None:
     rfonts.set(qn("w:eastAsia"), cjk_font)
 
 
-def _configure_styles(document: Document) -> None:
+def _set_run_font(run, cjk_font: str, size_pt: float | None = None) -> None:
+    run.font.name = LATIN_FONT
+    if size_pt is not None:
+        run.font.size = Pt(size_pt)
+    rpr = run._element.get_or_add_rPr()
+    rfonts = rpr.get_or_add_rFonts()
+    rfonts.set(qn("w:ascii"), LATIN_FONT)
+    rfonts.set(qn("w:hAnsi"), LATIN_FONT)
+    rfonts.set(qn("w:cs"), LATIN_FONT)
+    rfonts.set(qn("w:eastAsia"), cjk_font)
+
+
+def _style_paragraph_runs(
+    paragraph,
+    cjk_font: str,
+    size_pt: float | None = None,
+) -> None:
+    for run in paragraph.runs:
+        _set_run_font(run, cjk_font, size_pt)
+
+
+def _configure_styles(document: Document, style_profile: str | None) -> None:
+    is_zhengqi = style_profile == ZHENGQI_PROFILE
     normal = document.styles["Normal"]
     _set_fonts(normal, BODY_CJK_FONT)
-    normal.font.size = Pt(BODY_SIZE_PT)
+    normal.font.size = Pt(_body_size_pt(style_profile))
     normal.font.bold = False
-    normal.paragraph_format.line_spacing = 1.5
+    if is_zhengqi:
+        normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        normal.paragraph_format.line_spacing = Pt(32)
+        normal.paragraph_format.space_before = Pt(0)
+        normal.paragraph_format.space_after = Pt(3)
+    else:
+        normal.paragraph_format.line_spacing = 1.5
 
-    for style_name, size in HEADING_SIZES_PT.items():
+    heading_sizes = (
+        {"Heading 1": 18, "Heading 2": 16, "Heading 3": 14}
+        if is_zhengqi
+        else HEADING_SIZES_PT
+    )
+    for style_name, size in heading_sizes.items():
         style = document.styles[style_name]
-        _set_fonts(style, HEADING_CJK_FONT)
+        _set_fonts(style, BODY_CJK_FONT if is_zhengqi else HEADING_CJK_FONT)
         style.font.bold = True
         style.font.size = Pt(size)
         style.font.color.rgb = RGBColor(0, 0, 0)  # avoid the default blue heading colour
-        style.paragraph_format.space_before = Pt(6)
-        style.paragraph_format.space_after = Pt(6)
+        style.paragraph_format.space_before = Pt(18 if is_zhengqi else 6)
+        style.paragraph_format.space_after = Pt(12 if is_zhengqi else 6)
+        if is_zhengqi and style_name == "Heading 1":
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        elif is_zhengqi:
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     for style_name in ("List Bullet", "List Number"):
         try:
             _set_fonts(document.styles[style_name], BODY_CJK_FONT)
-            document.styles[style_name].font.size = Pt(BODY_SIZE_PT)
+            document.styles[style_name].font.size = Pt(_body_size_pt(style_profile))
         except KeyError:
             continue
 
     for section in document.sections:
-        section.top_margin = Pt(72)
-        section.bottom_margin = Pt(72)
-        section.left_margin = Pt(72)
-        section.right_margin = Pt(72)
+        if is_zhengqi:
+            section.top_margin = Cm(2.0)
+            section.bottom_margin = Cm(1.8)
+            section.left_margin = Cm(2.2)
+            section.right_margin = Cm(1.8)
+        else:
+            section.top_margin = Pt(72)
+            section.bottom_margin = Pt(72)
+            section.left_margin = Pt(72)
+            section.right_margin = Pt(72)
 
 
 def _configure_header_footer(
     document: Document,
     header_text: str | None,
     page_numbers: bool,
+    style_profile: str | None,
 ) -> None:
+    is_zhengqi = style_profile == ZHENGQI_PROFILE
     for section in document.sections:
         if header_text:
             header_paragraph = section.header.paragraphs[0]
             header_paragraph.text = header_text
             header_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _style_paragraph_runs(header_paragraph, BODY_CJK_FONT, 12 if is_zhengqi else None)
 
         if page_numbers:
             footer_paragraph = section.footer.paragraphs[0]
-            footer_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            footer_paragraph.text = "第 "
+            footer_paragraph.alignment = (
+                WD_ALIGN_PARAGRAPH.RIGHT if is_zhengqi else WD_ALIGN_PARAGRAPH.CENTER
+            )
+            footer_paragraph.text = "第" if is_zhengqi else "第 "
+            _style_paragraph_runs(
+                footer_paragraph,
+                FOOTER_CJK_FONT if is_zhengqi else BODY_CJK_FONT,
+                10.5 if is_zhengqi else None,
+            )
             _append_field(footer_paragraph, "PAGE")
-            footer_paragraph.add_run(" 页 / 共 ")
+            separator = "页/共" if is_zhengqi else " 页 / 共 "
+            separator_run = footer_paragraph.add_run(separator)
+            _set_run_font(
+                separator_run,
+                FOOTER_CJK_FONT if is_zhengqi else BODY_CJK_FONT,
+                10.5 if is_zhengqi else None,
+            )
             _append_field(footer_paragraph, "NUMPAGES")
-            footer_paragraph.add_run(" 页")
+            end_run = footer_paragraph.add_run("页" if is_zhengqi else " 页")
+            _set_run_font(
+                end_run,
+                FOOTER_CJK_FONT if is_zhengqi else BODY_CJK_FONT,
+                10.5 if is_zhengqi else None,
+            )
 
 
 def _add_cover_page(
@@ -184,7 +262,9 @@ def _add_cover_page(
     title: str,
     subtitle: str | None,
     metadata: dict[str, str] | None,
+    style_profile: str | None,
 ) -> None:
+    is_zhengqi = style_profile == ZHENGQI_PROFILE
     for _ in range(4):
         document.add_paragraph()
 
@@ -192,13 +272,13 @@ def _add_cover_page(
     title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title_run = title_paragraph.add_run(title)
     title_run.bold = True
-    title_run.font.size = Pt(28)
+    _set_run_font(title_run, BODY_CJK_FONT, 36 if is_zhengqi else 28)
 
     if subtitle:
         subtitle_paragraph = document.add_paragraph()
         subtitle_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         subtitle_run = subtitle_paragraph.add_run(subtitle)
-        subtitle_run.font.size = Pt(16)
+        _set_run_font(subtitle_run, BODY_CJK_FONT, 16)
 
     if metadata:
         for _ in range(2):
@@ -207,7 +287,7 @@ def _add_cover_page(
             row = document.add_paragraph()
             row.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = row.add_run(f"{key}：{value}")
-            run.font.size = Pt(12)
+            _set_run_font(run, BODY_CJK_FONT, 14 if is_zhengqi else 12)
 
     document.add_page_break()
 
@@ -280,7 +360,12 @@ def _is_table_start(lines: list[str], index: int) -> bool:
     return first.startswith("|") and second.startswith("|") and "---" in second
 
 
-def _add_table(document: Document, table_lines: list[str]) -> None:
+def _add_table(
+    document: Document,
+    table_lines: list[str],
+    style_profile: str | None,
+) -> None:
+    is_zhengqi = style_profile == ZHENGQI_PROFILE
     rows = [_split_table_row(line) for line in table_lines]
     rows = [row for row in rows if row and not all(set(cell) <= {"-"} for cell in row)]
     if not rows:
@@ -294,6 +379,12 @@ def _add_table(document: Document, table_lines: list[str]) -> None:
         row = table.add_row()
         for index, value in enumerate(row_values):
             row.cells[index].text = value
+            for paragraph in row.cells[index].paragraphs:
+                _style_paragraph_runs(
+                    paragraph,
+                    BODY_CJK_FONT,
+                    14 if is_zhengqi else BODY_SIZE_PT,
+                )
 
     for cell in table.rows[0].cells:
         for paragraph in cell.paragraphs:
