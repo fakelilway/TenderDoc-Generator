@@ -60,6 +60,7 @@ def _review_with_rules(
             findings.append(
                 ReviewFinding(
                     rule=rule.id,
+                    field=rule.field,
                     status="fail",
                     severity=rule.severity,
                     suggestion=rule.suggestion,
@@ -71,6 +72,7 @@ def _review_with_rules(
             findings.append(
                 ReviewFinding(
                     rule=rule.id,
+                    field=rule.field,
                     status="pass",
                     severity=rule.severity,
                     suggestion="已在生成稿中找到相关响应。",
@@ -93,6 +95,7 @@ def _review_with_rules(
         findings.append(
             ReviewFinding(
                 rule=f"invalid_bid_item_{index + 1}",
+                field=item.title or f"废标条款 {index + 1}",
                 status=status,
                 severity="high",
                 suggestion=suggestion,
@@ -106,6 +109,7 @@ def _review_with_rules(
             findings.append(
                 ReviewFinding(
                     rule="pricing_manual_confirmation",
+                    field="报价人工确认",
                     status="pass",
                     severity="high",
                     suggestion="商务标已保留报价人工确认点。",
@@ -120,6 +124,7 @@ def _review_with_rules(
             findings.append(
                 ReviewFinding(
                     rule="pricing_manual_confirmation",
+                    field="报价人工确认",
                     status="warning",
                     severity="high",
                     suggestion="保留报价人工确认点，投标总价、综合单价和清单金额不得由系统自动填写。",
@@ -135,6 +140,7 @@ def _review_with_rules(
         findings.append(
             ReviewFinding(
                 rule="general_completeness",
+                field="完整性审查",
                 status="warning",
                 severity="medium",
                 suggestion="未解析出明确废标规则，请人工核对招标文件关键条款。",

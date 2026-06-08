@@ -16,6 +16,7 @@ class ReviewLocation(BaseModel):
 
 class ReviewFinding(BaseModel):
     rule: str
+    field: str = ""
     status: ReviewStatus
     severity: str = "medium"
     suggestion: str = ""
