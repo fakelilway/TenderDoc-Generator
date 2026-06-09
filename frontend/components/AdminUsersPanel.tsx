@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Copy,
   KeyRound,
@@ -54,7 +54,7 @@ export function AdminUsersPanel() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function refreshUsers() {
+  const refreshUsers = useCallback(async () => {
     if (!isAdmin) {
       return;
     }
@@ -68,11 +68,11 @@ export function AdminUsersPanel() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [isAdmin]);
 
   useEffect(() => {
     void refreshUsers();
-  }, [isAdmin]);
+  }, [refreshUsers]);
 
   if (!isAdmin) {
     return null;

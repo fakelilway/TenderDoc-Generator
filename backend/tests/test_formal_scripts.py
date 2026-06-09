@@ -24,7 +24,7 @@ def test_analyze_pdf_format_is_parameterized(tmp_path: Path) -> None:
     pdf_path = tmp_path / "sample.pdf"
     document = fitz.open()
     page = document.new_page()
-    page.insert_text((72, 72), "投标文件格式样本", fontsize=14, fontname="helv")
+    page.insert_text((72, 72), "Tender file format sample", fontsize=14, fontname="helv")
     document.save(pdf_path)
     document.close()
 
@@ -33,7 +33,7 @@ def test_analyze_pdf_format_is_parameterized(tmp_path: Path) -> None:
     assert report["source_file"] == str(pdf_path)
     assert report["total_pages"] == 1
     assert report["unique_styles"] >= 1
-    assert "投标文件格式样本" in report["styles"][0]["samples"][0]
+    assert "Tender file format sample" in report["styles"][0]["samples"][0]
 
 
 def test_generate_bid_script_uses_template_and_sanitized_defaults(tmp_path: Path) -> None:

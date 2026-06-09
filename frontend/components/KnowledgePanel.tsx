@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   Database,
@@ -69,7 +69,7 @@ export function KnowledgePanel() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
 
-  async function refreshDocuments() {
+  const refreshDocuments = useCallback(async () => {
     if (!canView) {
       return;
     }
@@ -82,11 +82,11 @@ export function KnowledgePanel() {
     } finally {
       setLoadingDocuments(false);
     }
-  }
+  }, [canView]);
 
   useEffect(() => {
     void refreshDocuments();
-  }, [canView]);
+  }, [refreshDocuments]);
 
   function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     setFile(event.target.files?.[0] ?? null);

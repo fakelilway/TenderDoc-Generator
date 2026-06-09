@@ -291,6 +291,29 @@ export function TenderWorkspace({
     [refreshProject]
   );
 
+  const handleApprove = useCallback(async () => {
+    if (!projectId) {
+      return;
+    }
+    setActionBusy(true);
+    setError(null);
+    try {
+      const confirmed = await confirmProject(projectId, {
+        approved: true,
+        corrections: null
+      });
+      setStatus(confirmed.status);
+      if (confirmed.review_report) {
+        setReviewReport(confirmed.review_report);
+      }
+      await refreshProject(projectId);
+    } catch (approveError) {
+      setError(errorMessage(approveError));
+    } finally {
+      setActionBusy(false);
+    }
+  }, [projectId, refreshProject]);
+
   const humanActionPrompt = useMemo(
     () => buildHumanActionPrompt(status, {
       canStartWorkflow,
@@ -312,7 +335,7 @@ export function TenderWorkspace({
         void handleApprove();
       }
     }),
-    [actionBusy, canConfirm, canStartWorkflow, projectId, status, startWorkflow]
+    [actionBusy, canConfirm, canStartWorkflow, projectId, status, startWorkflow, handleApprove]
   );
 
   useEffect(() => {
@@ -681,29 +704,6 @@ export function TenderWorkspace({
     setError(null);
     try {
       await refreshProject(projectId);
-    } finally {
-      setActionBusy(false);
-    }
-  }
-
-  async function handleApprove() {
-    if (!projectId) {
-      return;
-    }
-    setActionBusy(true);
-    setError(null);
-    try {
-      const confirmed = await confirmProject(projectId, {
-        approved: true,
-        corrections: null
-      });
-      setStatus(confirmed.status);
-      if (confirmed.review_report) {
-        setReviewReport(confirmed.review_report);
-      }
-      await refreshProject(projectId);
-    } catch (approveError) {
-      setError(errorMessage(approveError));
     } finally {
       setActionBusy(false);
     }
