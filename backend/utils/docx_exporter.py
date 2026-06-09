@@ -529,19 +529,23 @@ def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
     commercial: list[str] = []
     pricing: list[str] = []
     current = technical
+    seen_section = False
 
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("# ") and not stripped.startswith("## "):
             continue
-        if stripped.startswith("## "):
-            heading = stripped[3:]
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            seen_section = True
             if any(keyword in heading for keyword in PRICING_KEYWORDS):
                 current = pricing
             elif any(keyword in heading for keyword in COMMERCIAL_KEYWORDS):
                 current = commercial
             else:
                 current = technical
+        elif not seen_section:
+            current = technical
         current.append(line)
 
     volumes: dict[str, str] = {}

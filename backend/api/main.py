@@ -38,6 +38,7 @@ from schemas.knowledge import (
 from schemas.project import (
     ProjectCreateResponse,
     ProjectDeleteResponse,
+    ProjectDeliveryPreviewResponse,
     ProjectDownloadResponse,
     ProjectGenerateResponse,
     ProjectListResponse,
@@ -627,6 +628,22 @@ def download_project(
         _raise_http_error(error)
 
     return ProjectDownloadResponse(**download_info)
+
+
+@app.get(
+    "/api/project/{project_id}/delivery-preview",
+    response_model=ProjectDeliveryPreviewResponse,
+)
+def project_delivery_preview(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> ProjectDeliveryPreviewResponse:
+    try:
+        return ProjectDeliveryPreviewResponse(
+            **project_service.get_project_delivery_preview(project_id)
+        )
+    except Exception as error:
+        _raise_http_error(error)
 
 
 @app.post("/api/project/{project_id}/workflow/run", response_model=WorkflowRunResponse)

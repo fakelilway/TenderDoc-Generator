@@ -808,6 +808,40 @@ def _project_markdown(project: dict[str, Any]) -> str:
     return markdown
 
 
+def _delivery_markdown_source(project: dict[str, Any]) -> str:
+    markdown = project.get("edited_markdown") or (
+        project.get("workflow_state_json") or {}
+    ).get("draft_markdown", "")
+    if markdown:
+        return markdown
+    object_name = project.get("generated_markdown_path")
+    if not object_name:
+        raise ValueError("尚未生成可拆分的 Markdown 源文件")
+    return minio_client.download_bytes(settings.minio_bucket, object_name).decode(
+        "utf-8"
+    )
+
+
+def get_project_delivery_preview(project_id: int) -> dict[str, Any]:
+    project = _fetch_project(project_id)
+    volumes = split_delivery_markdown(_delivery_markdown_source(project))
+    response_volumes = {}
+    for key, label in _DELIVERY_VOLUME_LABELS.items():
+        markdown = volumes[key]
+        response_volumes[key] = {
+            "key": key,
+            "label": label,
+            "markdown": markdown,
+            "line_count": len(markdown.splitlines()),
+            "char_count": len(markdown),
+        }
+    return {
+        "project_id": project["id"],
+        "status": project["status"],
+        "volumes": response_volumes,
+    }
+
+
 def _project_review_report(project: dict[str, Any]) -> ReviewReport | None:
     return _review_report_from_json(project.get("review_report_json"))
 
@@ -970,22 +1004,13 @@ def _parse_delivery_artifact(artifact: str) -> tuple[str, str]:
     return volume, file_format
 
 
-def _project_markdown(project: dict[str, Any]) -> str:
-    object_name = project.get("generated_markdown_path")
-    if not object_name:
-        raise ValueError("尚未生成可拆分的 Markdown 源文件")
-    return minio_client.download_bytes(settings.minio_bucket, object_name).decode(
-        "utf-8"
-    )
-
-
 def _export_delivery_artifact(
     project: dict[str, Any],
     *,
     volume: str | None,
     suffix: str,
 ) -> str:
-    markdown = _project_markdown(project)
+    markdown = _delivery_markdown_source(project)
     project_id = project["id"]
     title = project.get("name") or "投标文件"
     if volume:

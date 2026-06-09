@@ -16,6 +16,7 @@ import type {
   ProjectConfirmResponse,
   ProjectCreateResponse,
   ProjectDeleteResponse,
+  ProjectDeliveryPreviewResponse,
   ProjectDownloadResponse,
   DownloadArtifact,
   ProjectListResponse,
@@ -344,6 +345,12 @@ export function getProjectDownload(
   const params = new URLSearchParams({ artifact });
   return requestJson<ProjectDownloadResponse>(
     `/api/project/${projectId}/download?${params.toString()}`
+  );
+}
+
+export function getProjectDeliveryPreview(projectId: number) {
+  return requestJson<ProjectDeliveryPreviewResponse>(
+    `/api/project/${projectId}/delivery-preview`
   );
 }
 

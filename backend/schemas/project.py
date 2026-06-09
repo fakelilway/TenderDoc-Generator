@@ -76,3 +76,17 @@ class ProjectDownloadResponse(BaseModel):
     artifact: str = "docx"
     artifact_label: str | None = None
     filename: str | None = None
+
+
+class DeliveryVolumePreview(BaseModel):
+    key: str
+    label: str
+    markdown: str
+    line_count: int = 0
+    char_count: int = 0
+
+
+class ProjectDeliveryPreviewResponse(BaseModel):
+    project_id: int
+    status: str
+    volumes: dict[str, DeliveryVolumePreview]

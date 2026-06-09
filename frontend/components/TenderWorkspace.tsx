@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
+  FileText,
   FileStack,
   FolderOpen,
   Loader2,
@@ -37,6 +38,7 @@ import {
   listTemplates,
   recommendTemplates,
   getFinalChecklist,
+  getProjectDeliveryPreview,
   getProjectDownload,
   getProjectReviewReport,
   getProjectResult,
@@ -53,6 +55,8 @@ import { clearSession, getStoredSession } from "@/lib/auth";
 import type {
   BidDocumentOutlineSection,
   BidOutlineSection,
+  DeliveryVolumeKey,
+  DeliveryVolumePreview,
   DownloadArtifact,
   FinalChecklist,
   FinalVersion,
@@ -132,7 +136,7 @@ type DeliveryMode = "combined" | "split";
 type DeliveryFormat = "docx" | "pdf";
 
 const deliveryVolumes: Array<{
-  key: "technical" | "commercial" | "pricing";
+  key: DeliveryVolumeKey;
   label: string;
 }> = [
   { key: "technical", label: "技术文件" },
@@ -143,7 +147,7 @@ const deliveryVolumes: Array<{
 function deliveryArtifact(
   mode: DeliveryMode,
   format: DeliveryFormat,
-  volume?: "technical" | "commercial" | "pricing"
+  volume?: DeliveryVolumeKey
 ): DownloadArtifact {
   if (mode === "combined") {
     return format;
@@ -188,6 +192,11 @@ export function TenderWorkspace({
   const [activeLine, setActiveLine] = useState<number | null>(null);
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("combined");
   const [deliveryFormat, setDeliveryFormat] = useState<DeliveryFormat>("docx");
+  const [activeDeliveryVolume, setActiveDeliveryVolume] =
+    useState<DeliveryVolumeKey>("technical");
+  const [deliveryPreview, setDeliveryPreview] = useState<
+    Record<DeliveryVolumeKey, DeliveryVolumePreview> | null
+  >(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [humanPromptOpen, setHumanPromptOpen] = useState(false);
   const [username, setUsername] = useState("");
@@ -259,6 +268,15 @@ export function TenderWorkspace({
     []
   );
 
+  const refreshDeliveryPreview = useCallback(async (id: number) => {
+    try {
+      const preview = await getProjectDeliveryPreview(id);
+      setDeliveryPreview(preview.volumes);
+    } catch {
+      setDeliveryPreview(null);
+    }
+  }, []);
+
   const refreshProject = useCallback(
     async (id: number, silent = false) => {
       try {
@@ -278,13 +296,16 @@ export function TenderWorkspace({
           reviewSnapshot.workflow_state,
           reviewSnapshot.review_report
         );
+        if (reviewSnapshot.workflow_state?.draft_markdown) {
+          await refreshDeliveryPreview(id);
+        }
       } catch (refreshError) {
         if (!silent) {
           setError(errorMessage(refreshError));
         }
       }
     },
-    [applyWorkflowSnapshot]
+    [applyWorkflowSnapshot, refreshDeliveryPreview]
   );
 
   const startWorkflow = useCallback(
@@ -306,6 +327,7 @@ export function TenderWorkspace({
           setReviewReport(workflow.review_report);
         }
         await refreshProject(id, true);
+        await refreshDeliveryPreview(id);
       } catch (workflowError) {
         autoStartedWorkflowProject.current = null;
         setStatus("failed");
@@ -314,7 +336,7 @@ export function TenderWorkspace({
         setActionBusy(false);
       }
     },
-    [refreshProject]
+    [refreshDeliveryPreview, refreshProject]
   );
 
   const handleApprove = useCallback(async () => {
@@ -333,12 +355,13 @@ export function TenderWorkspace({
         setReviewReport(confirmed.review_report);
       }
       await refreshProject(projectId);
+      await refreshDeliveryPreview(projectId);
     } catch (approveError) {
       setError(errorMessage(approveError));
     } finally {
       setActionBusy(false);
     }
-  }, [projectId, refreshProject]);
+  }, [projectId, refreshDeliveryPreview, refreshProject]);
 
   const humanActionPrompt = useMemo(
     () => buildHumanActionPrompt(status, {
@@ -369,6 +392,12 @@ export function TenderWorkspace({
       void refreshProject(initialProjectId);
     }
   }, [initialProjectId, refreshProject]);
+
+  useEffect(() => {
+    if (projectId && canDownload) {
+      void refreshDeliveryPreview(projectId);
+    }
+  }, [canDownload, projectId, refreshDeliveryPreview]);
 
   useEffect(() => {
     const session = getStoredSession();
@@ -646,6 +675,7 @@ export function TenderWorkspace({
       if (saved.review_report) {
         setReviewReport(saved.review_report);
       }
+      await refreshDeliveryPreview(projectId);
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -1087,6 +1117,11 @@ export function TenderWorkspace({
         </div>
 
         <div className="space-y-4">
+          <DeliveryVolumePanel
+            volumes={deliveryPreview}
+            activeVolume={activeDeliveryVolume}
+            onActiveVolumeChange={setActiveDeliveryVolume}
+          />
           <RiskPanel
             report={reviewReport}
             activeLine={activeLine}
@@ -1128,6 +1163,70 @@ export function TenderWorkspace({
         />
       ) : null}
     </main>
+  );
+}
+
+function DeliveryVolumePanel({
+  volumes,
+  activeVolume,
+  onActiveVolumeChange
+}: {
+  volumes: Record<DeliveryVolumeKey, DeliveryVolumePreview> | null;
+  activeVolume: DeliveryVolumeKey;
+  onActiveVolumeChange: (volume: DeliveryVolumeKey) => void;
+}) {
+  const active = volumes?.[activeVolume] ?? null;
+
+  return (
+    <section className="flex max-h-[640px] flex-col rounded-lg border border-line bg-panel shadow-panel">
+      <div className="flex h-12 items-center justify-between border-b border-line px-4">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-brand" />
+          <h2 className="text-sm font-semibold text-ink">分卷文件</h2>
+        </div>
+        {active ? (
+          <span className="text-xs text-muted">{active.char_count} 字</span>
+        ) : null}
+      </div>
+
+      <div className="border-b border-line p-3">
+        <div className="grid grid-cols-3 gap-2">
+          {deliveryVolumes.map((volume) => {
+            const item = volumes?.[volume.key] ?? null;
+            return (
+              <button
+                key={volume.key}
+                type="button"
+                onClick={() => onActiveVolumeChange(volume.key)}
+                className={[
+                  "rounded-md border px-2 py-2 text-left transition",
+                  activeVolume === volume.key
+                    ? "border-brand bg-blue-50 text-brand"
+                    : "border-line bg-white text-ink hover:border-brand"
+                ].join(" ")}
+              >
+                <span className="block text-xs font-semibold">{volume.label}</span>
+                <span className="mt-1 block text-[11px] text-muted">
+                  {item ? `${item.line_count} 行` : "待生成"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="min-h-[280px] flex-1 overflow-auto bg-field px-4 py-3">
+        {active ? (
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-ink">
+            {active.markdown}
+          </pre>
+        ) : (
+          <div className="grid h-full min-h-64 place-items-center rounded-md border border-dashed border-line bg-white text-sm text-muted">
+            等待生成后预览分卷内容
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

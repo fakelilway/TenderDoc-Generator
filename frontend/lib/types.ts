@@ -273,6 +273,22 @@ export type ProjectDownloadResponse = {
   filename?: string;
 };
 
+export type DeliveryVolumeKey = "technical" | "commercial" | "pricing";
+
+export type DeliveryVolumePreview = {
+  key: DeliveryVolumeKey;
+  label: string;
+  markdown: string;
+  line_count: number;
+  char_count: number;
+};
+
+export type ProjectDeliveryPreviewResponse = {
+  project_id: number;
+  status: string;
+  volumes: Record<DeliveryVolumeKey, DeliveryVolumePreview>;
+};
+
 export type DownloadArtifact =
   | "docx"
   | "pdf"
