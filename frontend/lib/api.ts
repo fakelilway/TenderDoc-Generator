@@ -17,6 +17,7 @@ import type {
   ProjectCreateResponse,
   ProjectDeleteResponse,
   ProjectDownloadResponse,
+  DownloadArtifact,
   ProjectListResponse,
   ProjectPricingStrategyResponse,
   ProjectResponseMatrixResponse,
@@ -338,7 +339,7 @@ export function confirmProject(projectId: number, payload: ConfirmPayload) {
 
 export function getProjectDownload(
   projectId: number,
-  artifact: "docx" | "markdown" | "review" = "docx"
+  artifact: DownloadArtifact = "docx"
 ) {
   const params = new URLSearchParams({ artifact });
   return requestJson<ProjectDownloadResponse>(

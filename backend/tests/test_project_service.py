@@ -392,10 +392,29 @@ class FakePresignMinio:
     def __init__(self):
         self.uploads = []
         self.presigned = []
+        self.downloads = {
+            "projects/7/generated/bid.md": b"""# \xe9\xa1\xb9\xe7\x9b\xae\xe6\x8a\x95\xe6\xa0\x87\xe6\x96\x87\xe4\xbb\xb6
+
+## \xe6\x96\xbd\xe5\xb7\xa5\xe7\xbb\x84\xe7\xbb\x87\xe8\xae\xbe\xe8\xae\xa1
+
+\xe6\x8a\x80\xe6\x9c\xaf\xe6\x96\xb9\xe6\xa1\x88\xe5\x86\x85\xe5\xae\xb9\xe3\x80\x82
+
+## \xe6\x8a\x95\xe6\xa0\x87\xe5\x87\xbd
+
+\xe5\x95\x86\xe5\x8a\xa1\xe6\x96\x87\xe4\xbb\xb6\xe5\x86\x85\xe5\xae\xb9\xe3\x80\x82
+
+## \xe6\x8a\x95\xe6\xa0\x87\xe6\x8a\xa5\xe4\xbb\xb7\xe8\xaf\xb4\xe6\x98\x8e
+
+\xe6\x8a\xa5\xe4\xbb\xb7\xe6\x96\x87\xe4\xbb\xb6\xe5\x86\x85\xe5\xae\xb9\xe3\x80\x82
+"""
+        }
 
     def upload_file(self, bucket, file_bytes, object_name):
         self.uploads.append((bucket, file_bytes, object_name))
         return object_name
+
+    def download_bytes(self, bucket, object_name):
+        return self.downloads[object_name]
 
     def get_presigned_url(
         self, bucket, object_name, expiry=3600, response_filename=None
@@ -466,6 +485,35 @@ def test_download_url_markdown_artifact(monkeypatch) -> None:
     assert fake_minio.presigned[0]["object_name"] == "projects/7/generated/bid.md"
 
 
+def test_download_url_combined_pdf_artifact(monkeypatch) -> None:
+    cursor = FakeCursor([_download_project_row()])
+    fake_minio = FakePresignMinio()
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+    monkeypatch.setattr(project_service, "minio_client", fake_minio)
+
+    result = project_service.get_project_download_url(7, artifact="pdf")
+
+    assert result["artifact"] == "pdf"
+    assert result["filename"] == "高层住宅项目_v2.pdf"
+    assert fake_minio.uploads[0][2] == "projects/7/generated/delivery/combined.pdf"
+    assert fake_minio.presigned[0]["object_name"].endswith("combined.pdf")
+
+
+def test_download_url_split_delivery_docx_artifact(monkeypatch) -> None:
+    cursor = FakeCursor([_download_project_row()])
+    fake_minio = FakePresignMinio()
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+    monkeypatch.setattr(project_service, "minio_client", fake_minio)
+
+    result = project_service.get_project_download_url(7, artifact="pricing_docx")
+
+    assert result["artifact"] == "pricing_docx"
+    assert result["artifact_label"] == "报价文件 DOCX"
+    assert result["filename"] == "高层住宅项目_报价文件_v2.docx"
+    assert fake_minio.uploads[0][2] == "projects/7/generated/delivery/pricing.docx"
+    assert fake_minio.presigned[0]["response_filename"].endswith("报价文件_v2.docx")
+
+
 def test_download_url_review_artifact_builds_and_uploads_report(monkeypatch) -> None:
     cursor = FakeCursor(
         [
@@ -519,7 +567,7 @@ def test_download_url_rejects_unknown_artifact(monkeypatch) -> None:
     monkeypatch.setattr(project_service, "minio_client", FakePresignMinio())
 
     with pytest.raises(ValueError):
-        project_service.get_project_download_url(7, artifact="pdf")
+        project_service.get_project_download_url(7, artifact="zip")
 
 
 class FakeDeleteMinio:

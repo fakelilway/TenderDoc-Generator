@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
@@ -26,7 +27,12 @@ from core.config import settings
 from schemas.review import ReviewReport
 from schemas.strategy import PricingStrategy
 from schemas.tender import TenderRequirements
-from utils.docx_exporter import build_export_filename
+from utils.docx_exporter import (
+    build_export_filename,
+    markdown_to_docx,
+    markdown_to_pdf,
+    split_delivery_markdown,
+)
 from utils.file_parser import extract_text
 from utils.minio_client import minio_client
 
@@ -882,10 +888,17 @@ def get_project_review(project_id: int) -> dict[str, Any]:
 
 
 _DOWNLOAD_ARTIFACTS = {
-    "docx": ("技术标 DOCX", "docx"),
+    "docx": ("合并投标 DOCX", "docx"),
+    "pdf": ("合并投标 PDF", "pdf"),
     "markdown": ("Markdown 源文件", "md"),
     "review": ("审查报告", "md"),
 }
+_DELIVERY_VOLUME_LABELS = {
+    "technical": "技术文件",
+    "commercial": "商务文件",
+    "pricing": "报价文件",
+}
+_DELIVERY_FORMATS = {"docx", "pdf"}
 
 
 def get_project_download_url(
@@ -895,10 +908,7 @@ def get_project_download_url(
 ) -> dict[str, Any]:
     project = _fetch_project(project_id)
     artifact = (artifact or "docx").lower()
-    if artifact not in _DOWNLOAD_ARTIFACTS:
-        raise ValueError(f"不支持的下载类型：{artifact}")
-
-    label, suffix = _DOWNLOAD_ARTIFACTS[artifact]
+    label, suffix = _DOWNLOAD_ARTIFACTS.get(artifact, ("", ""))
     project_name = project.get("name") or "投标文件"
     version = len(project.get("final_versions_json") or []) or 1
 
@@ -907,14 +917,32 @@ def get_project_download_url(
         if not object_name:
             raise ValueError("尚未生成可下载的标书文件")
         filename = build_export_filename(project_name, version, suffix=suffix)
+    elif artifact == "pdf":
+        object_name = _export_delivery_artifact(project, volume=None, suffix="pdf")
+        filename = build_export_filename(project_name, version, suffix=suffix)
     elif artifact == "markdown":
         object_name = project.get("generated_markdown_path")
         if not object_name:
             raise ValueError("尚未生成可下载的 Markdown 文件")
         filename = build_export_filename(project_name, version, suffix=suffix)
-    else:  # review
+    elif artifact == "review":
         object_name = _export_review_report(project)
         filename = build_export_filename(f"{project_name}_审查报告", version, suffix=suffix)
+    else:
+        volume, file_format = _parse_delivery_artifact(artifact)
+        label = f"{_DELIVERY_VOLUME_LABELS[volume]} {file_format.upper()}"
+        suffix = file_format
+        object_name = _export_delivery_artifact(
+            project,
+            volume=volume,
+            suffix=file_format,
+        )
+        filename = build_export_filename(
+            project_name,
+            version,
+            kind=_DELIVERY_VOLUME_LABELS[volume],
+            suffix=suffix,
+        )
 
     return {
         "project_id": project["id"],
@@ -930,6 +958,64 @@ def get_project_download_url(
         "artifact_label": label,
         "filename": filename,
     }
+
+
+def _parse_delivery_artifact(artifact: str) -> tuple[str, str]:
+    try:
+        volume, file_format = artifact.rsplit("_", 1)
+    except ValueError as error:
+        raise ValueError(f"不支持的下载类型：{artifact}") from error
+    if volume not in _DELIVERY_VOLUME_LABELS or file_format not in _DELIVERY_FORMATS:
+        raise ValueError(f"不支持的下载类型：{artifact}")
+    return volume, file_format
+
+
+def _project_markdown(project: dict[str, Any]) -> str:
+    object_name = project.get("generated_markdown_path")
+    if not object_name:
+        raise ValueError("尚未生成可拆分的 Markdown 源文件")
+    return minio_client.download_bytes(settings.minio_bucket, object_name).decode(
+        "utf-8"
+    )
+
+
+def _export_delivery_artifact(
+    project: dict[str, Any],
+    *,
+    volume: str | None,
+    suffix: str,
+) -> str:
+    markdown = _project_markdown(project)
+    project_id = project["id"]
+    title = project.get("name") or "投标文件"
+    if volume:
+        markdown = split_delivery_markdown(markdown)[volume]
+        label = _DELIVERY_VOLUME_LABELS[volume]
+        object_name = f"projects/{project_id}/generated/delivery/{volume}.{suffix}"
+        title = f"{title}（{label}）"
+    else:
+        object_name = f"projects/{project_id}/generated/delivery/combined.{suffix}"
+
+    with TemporaryDirectory() as tmp_dir:
+        output_path = Path(tmp_dir) / f"delivery.{suffix}"
+        if suffix == "docx":
+            markdown_to_docx(
+                markdown,
+                output_path,
+                title=title,
+                subtitle="投标文件",
+                cover=True,
+                toc=True,
+                header_text=title,
+                page_numbers=True,
+                style_profile="zhengqi",
+            )
+        elif suffix == "pdf":
+            markdown_to_pdf(markdown, output_path, title=title)
+        else:
+            raise ValueError(f"不支持的下载格式：{suffix}")
+        minio_client.upload_file(settings.minio_bucket, output_path, object_name)
+    return object_name
 
 
 def _export_review_report(project: dict[str, Any]) -> str:

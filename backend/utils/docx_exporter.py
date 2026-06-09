@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import textwrap
 from pathlib import Path
 
+import fitz
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
@@ -37,6 +39,16 @@ COMMERCIAL_KEYWORDS = (
     "信用",
     "承诺函",
     "声明函",
+)
+PRICING_KEYWORDS = (
+    "报价",
+    "投标报价",
+    "开标一览",
+    "工程量清单",
+    "综合单价",
+    "商务报价",
+    "价格",
+    "投标总价",
 )
 
 
@@ -86,6 +98,77 @@ def markdown_to_docx(
     path.parent.mkdir(parents=True, exist_ok=True)
     document.save(path)
     return str(path)
+
+
+def markdown_to_pdf(
+    markdown_text: str,
+    output_path: str | Path,
+    *,
+    title: str | None = None,
+) -> str:
+    """Render markdown into a simple Chinese-readable PDF.
+
+    DOCX remains the high-fidelity output. This PDF renderer is intentionally
+    plain so tender platforms that require PDF uploads can receive a directly
+    generated file without depending on LibreOffice.
+    """
+    if not markdown_text.strip():
+        raise ValueError("markdown_text is empty")
+
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    font = fitz.Font("china-s")
+    x = 62
+    y = 64
+    bottom = 790
+    line_height = 21
+
+    if title:
+        y = _pdf_write_line(page, title, x, y, font, 18, bold=False)
+        y += 18
+
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            y += 8
+            continue
+        if line.startswith("|"):
+            line = "  ".join(cell.strip() for cell in line.strip("|").split("|"))
+            if set(line.replace(" ", "")) <= {"-", ":"}:
+                continue
+        size = 14
+        if line.startswith("#"):
+            level = min(len(line) - len(line.lstrip("#")), 3)
+            line = line.lstrip("#").strip()
+            size = {1: 18, 2: 16, 3: 15}.get(level, 14)
+            y += 8
+        for wrapped in _wrap_cjk_text(line, width=36 if size >= 16 else 42):
+            if y > bottom:
+                page = document.new_page(width=595, height=842)
+                y = 64
+            y = _pdf_write_line(page, wrapped, x, y, font, size, bold=False)
+            y += line_height if size <= 14 else 24
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+    return str(path)
+
+
+def _pdf_write_line(page, text: str, x: float, y: float, font, size: float, bold: bool):
+    page.insert_text((x, y), text, fontname="china-s", fontsize=size, fontfile=None)
+    return y
+
+
+def _wrap_cjk_text(text: str, width: int) -> list[str]:
+    return textwrap.wrap(
+        text,
+        width=width,
+        break_long_words=True,
+        replace_whitespace=False,
+        drop_whitespace=True,
+    ) or [text]
 
 
 def _render_markdown_body(
@@ -434,6 +517,51 @@ def split_bid_markdown(markdown_text: str) -> dict[str, str]:
             continue
         prefix = f"# {doc_title}（{label}）\n\n" if doc_title else f"# {label}\n\n"
         volumes[label] = prefix + text
+    return volumes
+
+
+def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
+    """Split bid markdown into 技术文件 / 商务文件 / 报价文件 volumes."""
+    lines = markdown_text.splitlines()
+    doc_title = _extract_title(markdown_text)
+
+    technical: list[str] = []
+    commercial: list[str] = []
+    pricing: list[str] = []
+    current = technical
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            continue
+        if stripped.startswith("## "):
+            heading = stripped[3:]
+            if any(keyword in heading for keyword in PRICING_KEYWORDS):
+                current = pricing
+            elif any(keyword in heading for keyword in COMMERCIAL_KEYWORDS):
+                current = commercial
+            else:
+                current = technical
+        current.append(line)
+
+    volumes: dict[str, str] = {}
+    for label, body in (
+        ("technical", technical),
+        ("commercial", commercial),
+        ("pricing", pricing),
+    ):
+        text = "\n".join(body).strip()
+        title_label = {
+            "technical": "技术文件",
+            "commercial": "商务文件",
+            "pricing": "报价文件",
+        }[label]
+        prefix = (
+            f"# {doc_title}（{title_label}）\n\n"
+            if doc_title
+            else f"# {title_label}\n\n"
+        )
+        volumes[label] = prefix + (text or "（本卷暂无自动归类内容，请人工补充。）")
     return volumes
 
 

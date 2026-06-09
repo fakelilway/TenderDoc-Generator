@@ -53,6 +53,7 @@ import { clearSession, getStoredSession } from "@/lib/auth";
 import type {
   BidDocumentOutlineSection,
   BidOutlineSection,
+  DownloadArtifact,
   FinalChecklist,
   FinalVersion,
   KnowledgeSearchResult,
@@ -127,6 +128,29 @@ function triggerDownload(url: string, filename?: string) {
   link.remove();
 }
 
+type DeliveryMode = "combined" | "split";
+type DeliveryFormat = "docx" | "pdf";
+
+const deliveryVolumes: Array<{
+  key: "technical" | "commercial" | "pricing";
+  label: string;
+}> = [
+  { key: "technical", label: "技术文件" },
+  { key: "commercial", label: "商务文件" },
+  { key: "pricing", label: "报价文件" }
+];
+
+function deliveryArtifact(
+  mode: DeliveryMode,
+  format: DeliveryFormat,
+  volume?: "technical" | "commercial" | "pricing"
+): DownloadArtifact {
+  if (mode === "combined") {
+    return format;
+  }
+  return `${volume}_${format}` as DownloadArtifact;
+}
+
 export function TenderWorkspace({
   initialProjectId = null
 }: {
@@ -162,6 +186,8 @@ export function TenderWorkspace({
   const [responseMatrix, setResponseMatrix] = useState<ResponseMatrix | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [activeLine, setActiveLine] = useState<number | null>(null);
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("combined");
+  const [deliveryFormat, setDeliveryFormat] = useState<DeliveryFormat>("docx");
   const [modalOpen, setModalOpen] = useState(false);
   const [humanPromptOpen, setHumanPromptOpen] = useState(false);
   const [username, setUsername] = useState("");
@@ -735,7 +761,7 @@ export function TenderWorkspace({
   }
 
   async function handleDownload(
-    artifact: "docx" | "markdown" | "review" = "docx"
+    artifact: DownloadArtifact = "docx"
   ) {
     if (!projectId) {
       return;
@@ -879,25 +905,98 @@ export function TenderWorkspace({
       ) : null}
 
       {canDownload ? (
-        <div className="mx-4 mt-4 flex flex-col gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-ok lg:mx-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mx-4 mt-4 flex flex-col gap-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-ok lg:mx-6">
           <div className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
-              <p className="font-semibold">标书已完成，可下载</p>
+              <p className="font-semibold">标书已完成，可按投递网站要求下载</p>
               <p className="text-xs text-green-700">
-                可分别下载最终 DOCX、Markdown 源文件与审查报告；下载链接过期后再次点击即可重新获取。
+                可合并为一个文件投递，也可拆成技术文件、商务文件、报价文件分别投递。
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-md border border-green-300 bg-white p-1">
+                {(["combined", "split"] as DeliveryMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setDeliveryMode(mode)}
+                    className={[
+                      "h-8 rounded px-3 text-xs font-semibold transition",
+                      deliveryMode === mode
+                        ? "bg-ok text-white"
+                        : "text-ok hover:bg-green-50"
+                    ].join(" ")}
+                  >
+                    {mode === "combined" ? "合并投递" : "分开投递"}
+                  </button>
+                ))}
+              </div>
+              <div className="inline-flex rounded-md border border-green-300 bg-white p-1">
+                {(["docx", "pdf"] as DeliveryFormat[]).map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    onClick={() => setDeliveryFormat(format)}
+                    className={[
+                      "h-8 rounded px-3 text-xs font-semibold uppercase transition",
+                      deliveryFormat === format
+                        ? "bg-ok text-white"
+                        : "text-ok hover:bg-green-50"
+                    ].join(" ")}
+                  >
+                    {format}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {deliveryMode === "combined" ? (
+                <button
+                  type="button"
+                  disabled={actionBusy}
+                  onClick={() =>
+                    handleDownload(deliveryArtifact("combined", deliveryFormat))
+                  }
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                >
+                  <Download className="h-4 w-4" />
+                  合并{deliveryFormat.toUpperCase()}
+                </button>
+              ) : (
+                deliveryVolumes.map((volume) => (
+                  <button
+                    key={volume.key}
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      handleDownload(
+                        deliveryArtifact("split", deliveryFormat, volume.key)
+                      )
+                    }
+                    className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                  >
+                    <Download className="h-4 w-4" />
+                    {volume.label}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-green-200 pt-3">
             <button
               type="button"
               disabled={actionBusy}
               onClick={() => handleDownload("docx")}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-green-300 bg-white px-3 text-sm font-medium text-ok hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download className="h-4 w-4" />
-              DOCX
+              原始DOCX
             </button>
             <button
               type="button"

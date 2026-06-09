@@ -273,6 +273,18 @@ export type ProjectDownloadResponse = {
   filename?: string;
 };
 
+export type DownloadArtifact =
+  | "docx"
+  | "pdf"
+  | "markdown"
+  | "review"
+  | "technical_docx"
+  | "commercial_docx"
+  | "pricing_docx"
+  | "technical_pdf"
+  | "commercial_pdf"
+  | "pricing_pdf";
+
 export type ProjectSummary = {
   project_id: number;
   name: string;
