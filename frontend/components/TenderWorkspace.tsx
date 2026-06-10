@@ -1105,11 +1105,6 @@ export function TenderWorkspace({
             onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
           />
-          <StatusRail
-            status={status}
-            busy={statusBusy}
-            traceEvents={workflowState?.trace_events}
-          />
           <RagSelectionPanel
             query={ragQuery}
             documentType={ragDocumentType}
@@ -1126,6 +1121,11 @@ export function TenderWorkspace({
             onSearch={handleSearchKnowledge}
             onToggle={handleToggleChunk}
             onSave={handleSaveKnowledgeSelection}
+          />
+          <StatusRail
+            status={status}
+            busy={statusBusy}
+            traceEvents={workflowState?.trace_events}
           />
         </div>
 
