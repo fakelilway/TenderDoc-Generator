@@ -74,7 +74,7 @@ def test_admin_permissions_are_effective_even_if_row_flags_are_false() -> None:
     assert profile.can_edit_knowledge is True
 
 
-def test_edit_permission_implies_view_permission(monkeypatch) -> None:
+def test_user_permissions_cannot_grant_knowledge_access(monkeypatch) -> None:
     captured = {}
 
     class FakeCursor:
@@ -88,15 +88,15 @@ def test_edit_permission_implies_view_permission(monkeypatch) -> None:
             captured["params"] = params
 
         def fetchone(self):
-            return {
-                "id": 2,
-                "username": "demo",
-                "display_name": "演示用户",
-                "role": "user",
-                "is_active": True,
-                "can_view_knowledge": True,
-                "can_edit_knowledge": True,
-            }
+                return {
+                    "id": 2,
+                    "username": "demo",
+                    "display_name": "演示用户",
+                    "role": "user",
+                    "is_active": True,
+                    "can_view_knowledge": False,
+                    "can_edit_knowledge": False,
+                }
 
     class FakeConnection:
         def __enter__(self):
@@ -120,6 +120,7 @@ def test_edit_permission_implies_view_permission(monkeypatch) -> None:
         ),
     )
 
-    assert captured["params"][2] is True
-    assert captured["params"][3] is True
-    assert profile.can_view_knowledge is True
+    assert captured["params"][2] is False
+    assert captured["params"][3] is False
+    assert profile.can_view_knowledge is False
+    assert profile.can_edit_knowledge is False

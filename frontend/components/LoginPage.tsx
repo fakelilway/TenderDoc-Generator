@@ -153,7 +153,7 @@ export function LoginPage() {
               登录后继续处理招标文件
             </h1>
             <p className="mt-4 max-w-lg text-sm leading-7 text-slate-300">
-              管理员负责账户和知识库权限，普通账户可用验证码注册后进入工作台。
+              管理员负责账户、模板库和知识库维护，普通员工登录后可独立生成标书。
             </p>
           </div>
 
@@ -164,7 +164,7 @@ export function LoginPage() {
             </div>
             <div className="rounded-lg border border-white/15 bg-white/5 p-3">
               <p className="font-medium text-white">生成</p>
-              <p className="mt-1 text-xs leading-5 text-slate-300">套用企业技术标章节</p>
+              <p className="mt-1 text-xs leading-5 text-slate-300">生成商务、技术、报价文件</p>
             </div>
             <div className="rounded-lg border border-white/15 bg-white/5 p-3">
               <p className="font-medium text-white">审查</p>

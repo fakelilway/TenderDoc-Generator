@@ -51,8 +51,9 @@ function formatDate(value: string) {
 export function KnowledgePanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const session = getStoredSession();
-  const canView = Boolean(session?.canViewKnowledge);
-  const canEdit = Boolean(session?.canEditKnowledge);
+  const isAdmin = session?.role === "admin";
+  const canView = isAdmin;
+  const canEdit = isAdmin;
   const [documents, setDocuments] = useState<KnowledgeDocumentSummary[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [documentType, setDocumentType] = useState("");
@@ -217,7 +218,7 @@ export function KnowledgePanel() {
           <LockKeyhole className="mx-auto mb-2 h-5 w-5 text-muted" />
           <p className="text-sm font-medium text-ink">暂无知识库权限</p>
           <p className="mt-1 text-xs leading-5 text-muted">
-            需要管理员授权查看或编辑权限。
+            只有管理员账户可以访问和维护知识库。
           </p>
         </div>
       </section>
@@ -339,7 +340,7 @@ export function KnowledgePanel() {
           </>
         ) : (
           <div className="rounded-md border border-line bg-field px-3 py-3 text-xs leading-5 text-muted">
-            当前账号可查看和检索知识库，上传、删除和标题编辑需要管理员授权。
+            只有管理员账户可以上传、删除、编辑和检索知识库。
           </div>
         )}
 

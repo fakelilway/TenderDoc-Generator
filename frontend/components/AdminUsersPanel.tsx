@@ -25,16 +25,12 @@ type CreateForm = {
   username: string;
   password: string;
   displayName: string;
-  canViewKnowledge: boolean;
-  canEditKnowledge: boolean;
 };
 
 const emptyForm: CreateForm = {
   username: "",
   password: "",
-  displayName: "",
-  canViewKnowledge: false,
-  canEditKnowledge: false
+  displayName: ""
 };
 
 export function AdminUsersPanel() {
@@ -93,8 +89,8 @@ export function AdminUsersPanel() {
         username: form.username.trim(),
         password: form.password,
         display_name: form.displayName.trim() || null,
-        can_view_knowledge: form.canViewKnowledge || form.canEditKnowledge,
-        can_edit_knowledge: form.canEditKnowledge
+        can_view_knowledge: false,
+        can_edit_knowledge: false
       });
       setForm(emptyForm);
       setNotice("账号已创建");
@@ -123,8 +119,6 @@ export function AdminUsersPanel() {
   }
 
   async function saveUser(user: UserAdminProfile) {
-    const canEdit = user.role === "admin" || user.can_edit_knowledge;
-    const canView = user.role === "admin" || user.can_view_knowledge || canEdit;
     setSavingId(user.id);
     setError(null);
     setNotice(null);
@@ -132,8 +126,8 @@ export function AdminUsersPanel() {
       const response = await updateUserPermissions(user.id, {
         display_name: user.display_name ?? null,
         is_active: user.role === "admin" ? true : user.is_active,
-        can_view_knowledge: canView,
-        can_edit_knowledge: canEdit
+        can_view_knowledge: false,
+        can_edit_knowledge: false
       });
       updateLocalUser(user.id, response.user);
       setNotice(`${response.user.username} 权限已保存`);
@@ -275,36 +269,8 @@ export function AdminUsersPanel() {
             autoComplete="new-password"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-          <label className="inline-flex items-center gap-2">
-            <input
-              checked={form.canViewKnowledge || form.canEditKnowledge}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  canViewKnowledge: event.target.checked
-                }))
-              }
-              type="checkbox"
-              className="h-4 w-4 rounded border-line text-brand"
-            />
-            查看知识库
-          </label>
-          <label className="inline-flex items-center gap-2">
-            <input
-              checked={form.canEditKnowledge}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  canViewKnowledge: event.target.checked || current.canViewKnowledge,
-                  canEditKnowledge: event.target.checked
-                }))
-              }
-              type="checkbox"
-              className="h-4 w-4 rounded border-line text-brand"
-            />
-            编辑知识库
-          </label>
+        <div className="rounded-md border border-line bg-field px-3 py-2 text-xs leading-5 text-muted">
+          新建账号默认为普通员工，只能生成标书；知识库维护由管理员账户处理。
         </div>
         <button
           type="submit"
@@ -377,40 +343,9 @@ export function AdminUsersPanel() {
                     />
                     启用账号
                   </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      checked={
-                        isRowAdmin ||
-                        user.can_view_knowledge ||
-                        user.can_edit_knowledge
-                      }
-                      disabled={isRowAdmin}
-                      onChange={(event) =>
-                        updateLocalUser(user.id, {
-                          can_view_knowledge: event.target.checked
-                        })
-                      }
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-line text-brand"
-                    />
-                    可查看知识库
-                  </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      checked={isRowAdmin || user.can_edit_knowledge}
-                      disabled={isRowAdmin}
-                      onChange={(event) =>
-                        updateLocalUser(user.id, {
-                          can_view_knowledge:
-                            event.target.checked || user.can_view_knowledge,
-                          can_edit_knowledge: event.target.checked
-                        })
-                      }
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-line text-brand"
-                    />
-                    可编辑知识库
-                  </label>
+                  <p className="rounded-md border border-line bg-field px-2 py-2 text-xs leading-5 text-muted">
+                    知识库仅管理员可访问；普通员工只保留标书生成权限。
+                  </p>
                 </div>
                 <button
                   type="button"

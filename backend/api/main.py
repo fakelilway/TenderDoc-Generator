@@ -497,6 +497,7 @@ def save_project_knowledge_selection(
     project_id: int,
     request: KnowledgeSelectionRequest,
     _project: int = Depends(authorized_project),
+    _admin_user: UserProfile = Depends(auth_service.require_admin),
 ) -> KnowledgeSelectionResponse:
     try:
         result = project_service.save_selected_knowledge_chunks(

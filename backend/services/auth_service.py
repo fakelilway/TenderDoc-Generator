@@ -207,16 +207,16 @@ def require_admin(
 def require_knowledge_view(
     current_user: Annotated[UserProfile, Depends(get_current_user)],
 ) -> UserProfile:
-    if not current_user.can_view_knowledge:
-        raise HTTPException(status_code=403, detail="Knowledge view permission required")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission required")
     return current_user
 
 
 def require_knowledge_edit(
     current_user: Annotated[UserProfile, Depends(get_current_user)],
 ) -> UserProfile:
-    if not current_user.can_edit_knowledge:
-        raise HTTPException(status_code=403, detail="Knowledge edit permission required")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission required")
     return current_user
 
 
@@ -358,8 +358,8 @@ def create_user(request: UserCreateRequest) -> UserAdminProfile:
                         hash_password(request.password),
                         request.display_name,
                         "user",
-                        request.can_view_knowledge or request.can_edit_knowledge,
-                        request.can_edit_knowledge,
+                        False,
+                        False,
                     ),
                 )
                 row = cursor.fetchone()
@@ -389,8 +389,6 @@ def update_user_permissions(
     user_id: int,
     request: UserPermissionsUpdateRequest,
 ) -> UserAdminProfile:
-    can_edit_knowledge = request.can_edit_knowledge
-    can_view_knowledge = request.can_view_knowledge or can_edit_knowledge
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
@@ -413,8 +411,8 @@ def update_user_permissions(
                 (
                     request.display_name,
                     request.is_active,
-                    can_view_knowledge,
-                    can_edit_knowledge,
+                    False,
+                    False,
                     user_id,
                 ),
             )
