@@ -52,6 +52,7 @@ export type WorkflowState = {
   rag_references?: RagReference[];
   retrieved_chunks?: Record<string, string[]>;
   draft_markdown?: string;
+  draft_volumes?: Partial<Record<DeliveryVolumeKey, string>>;
   final_checklist?: FinalChecklist | null;
   final_versions?: FinalVersion[];
   review_report?: ReviewReport | null;

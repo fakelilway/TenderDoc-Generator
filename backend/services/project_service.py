@@ -824,7 +824,7 @@ def _delivery_markdown_source(project: dict[str, Any]) -> str:
 
 def get_project_delivery_preview(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
-    volumes = split_delivery_markdown(_delivery_markdown_source(project))
+    volumes = _delivery_volumes(project)
     response_volumes = {}
     for key, label in _DELIVERY_VOLUME_LABELS.items():
         markdown = volumes[key]
@@ -840,6 +840,20 @@ def get_project_delivery_preview(project_id: int) -> dict[str, Any]:
         "status": project["status"],
         "volumes": response_volumes,
     }
+
+
+def _delivery_volumes(project: dict[str, Any]) -> dict[str, str]:
+    if project.get("edited_markdown"):
+        return split_delivery_markdown(project["edited_markdown"])
+    workflow_state = project.get("workflow_state_json") or {}
+    draft_volumes = workflow_state.get("draft_volumes") or {}
+    if draft_volumes:
+        return {
+            key: draft_volumes.get(key, "")
+            or f"# {_DELIVERY_VOLUME_LABELS[key]}\n\n（本卷暂无内容，请人工补充。）"
+            for key in _DELIVERY_VOLUME_LABELS
+        }
+    return split_delivery_markdown(_delivery_markdown_source(project))
 
 
 def _project_review_report(project: dict[str, Any]) -> ReviewReport | None:
@@ -1014,7 +1028,7 @@ def _export_delivery_artifact(
     project_id = project["id"]
     title = project.get("name") or "投标文件"
     if volume:
-        markdown = split_delivery_markdown(markdown)[volume]
+        markdown = _delivery_volumes(project)[volume]
         label = _DELIVERY_VOLUME_LABELS[volume]
         object_name = f"projects/{project_id}/generated/delivery/{volume}.{suffix}"
         title = f"{title}（{label}）"

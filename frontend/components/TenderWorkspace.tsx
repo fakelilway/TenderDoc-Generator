@@ -155,6 +155,28 @@ function deliveryArtifact(
   return `${volume}_${format}` as DownloadArtifact;
 }
 
+function volumePreviewFromDrafts(
+  drafts?: Partial<Record<DeliveryVolumeKey, string>>
+) {
+  if (!drafts) {
+    return null;
+  }
+  return deliveryVolumes.reduce(
+    (acc, volume) => {
+      const markdown = drafts[volume.key] || "";
+      acc[volume.key] = {
+        key: volume.key,
+        label: volume.label,
+        markdown,
+        line_count: markdown ? markdown.split("\n").length : 0,
+        char_count: markdown.length
+      };
+      return acc;
+    },
+    {} as Record<DeliveryVolumeKey, DeliveryVolumePreview>
+  );
+}
+
 export function TenderWorkspace({
   initialProjectId = null
 }: {
@@ -228,6 +250,9 @@ export function TenderWorkspace({
         }
         if (state.draft_markdown) {
           setMarkdown(state.draft_markdown);
+        }
+        if (state.draft_volumes) {
+          setDeliveryPreview(volumePreviewFromDrafts(state.draft_volumes));
         }
         if (state.parsed) {
           setParsedJson(state.parsed);

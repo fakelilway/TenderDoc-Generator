@@ -532,6 +532,31 @@ def test_delivery_preview_splits_technical_commercial_and_pricing(monkeypatch) -
     assert result["volumes"]["pricing"]["label"] == "报价文件"
 
 
+def test_delivery_preview_prefers_generated_draft_volumes(monkeypatch) -> None:
+    cursor = FakeCursor(
+        [
+            _download_project_row(
+                workflow_state_json={
+                    "draft_markdown": "# 完整文件\n\n这是一份完整合并稿。",
+                    "draft_volumes": {
+                        "technical": "# 技术文件\n\n只属于技术卷。",
+                        "commercial": "# 商务文件\n\n只属于商务卷。",
+                        "pricing": "# 报价文件\n\n只属于报价卷。",
+                    },
+                }
+            )
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+    monkeypatch.setattr(project_service, "minio_client", FakePresignMinio())
+
+    result = project_service.get_project_delivery_preview(7)
+
+    assert "只属于技术卷" in result["volumes"]["technical"]["markdown"]
+    assert "只属于商务卷" not in result["volumes"]["technical"]["markdown"]
+    assert "只属于报价卷" in result["volumes"]["pricing"]["markdown"]
+
+
 def test_download_url_review_artifact_builds_and_uploads_report(monkeypatch) -> None:
     cursor = FakeCursor(
         [

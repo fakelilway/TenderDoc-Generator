@@ -9,7 +9,7 @@ from psycopg2.extras import Json, RealDictCursor
 from agents.generator_agent import (
     build_bid_outline,
     build_bid_document_outline,
-    generate_bid_document,
+    generate_bid_package,
     load_bid_template,
 )
 from agents.parser_agent import parse_tender
@@ -205,17 +205,24 @@ def run_bid_workflow(
         f"RAG 检索完成，匹配到 {retrieved_count} 个知识片段，开始生成 Markdown 初稿。",
         project_status="generating",
     )
-    state.draft_markdown = generate_bid_document(
+    bid_package = generate_bid_package(
         requirements,
         retrieved_by_section,
         bid_template,
         pricing_strategy=pricing_strategy,
     )
+    state.draft_volumes = bid_package.volume_map()
+    state.draft_markdown = bid_package.combined_markdown
     _append_trace(
         state,
         "generate",
         "done",
-        f"生成 Agent 已输出 {len(state.draft_markdown)} 字 Markdown 初稿。",
+        (
+            "生成 Agent 已输出商务/技术/报价三卷 Markdown："
+            f"商务 {len(state.draft_volumes.get('commercial', ''))} 字，"
+            f"技术 {len(state.draft_volumes.get('technical', ''))} 字，"
+            f"报价 {len(state.draft_volumes.get('pricing', ''))} 字。"
+        ),
         project_status="reviewing",
         model_name=settings.openrouter_model,
         fallback=not settings.enable_llm_generation,
@@ -254,6 +261,7 @@ def run_bid_workflow(
         state.draft_markdown = correct_markdown(
             state.draft_markdown, report.model_dump()
         )
+        state.draft_volumes = _volumes_from_combined_markdown(state.draft_markdown)
         report = review(requirements, state.draft_markdown)
         state.review_report = report.model_dump()
         _append_trace(
@@ -328,6 +336,7 @@ def confirm_project(
             state.draft_markdown,
             state.corrections,
         )
+        state.draft_volumes = _volumes_from_combined_markdown(state.draft_markdown)
 
     _append_trace(
         state,
@@ -339,6 +348,7 @@ def confirm_project(
     project = _fetch_project(project_id)
     if project.get("edited_markdown"):
         state.draft_markdown = project["edited_markdown"]
+        state.draft_volumes = _volumes_from_combined_markdown(state.draft_markdown)
     requirements = TenderRequirements.model_validate(
         project.get("confirmed_parsed_json") or project["parsed_json"]
     )
@@ -378,6 +388,12 @@ def confirm_project(
     save_workflow_state(state)
     _persist_state(project_id, state)
     return state
+
+
+def _volumes_from_combined_markdown(markdown: str) -> dict[str, str]:
+    from utils.docx_exporter import split_delivery_markdown
+
+    return split_delivery_markdown(markdown)
 
 
 def correct_markdown(markdown: str, review_report: dict) -> str:

@@ -252,20 +252,24 @@ def test_generate_bid_document_prefers_single_document_llm(monkeypatch):
     _enable_llm_generation(monkeypatch)
     monkeypatch.setattr(
         generator_agent,
-        "_generate_document_with_llm",
-        lambda *args, **kwargs: "# 模板化技术文件\n\n## 施工组织设计目录\n",
+        "generate_bid_section",
+        lambda section_title, requirements, chunks: f"## {section_title}\n\n技术正文。",
     )
 
-    markdown = generator_agent.generate_bid_document(_requirements(), {})
+    package = generator_agent.generate_bid_package(_requirements(), {})
+    markdown = package.combined_markdown
 
     assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
     assert "投标人：安徽正奇建设有限公司" in markdown
     assert "## 二、商务标" in markdown
-    assert "## 一、技术标" in markdown
-    assert markdown.index("【技术标】") < markdown.index("【商务标】")
+    assert "【技术文件】" in package.technical_markdown
+    assert "【商务文件】" in package.commercial_markdown
+    assert "【报价文件】" in package.pricing_markdown
+    assert "技术正文" in package.technical_markdown
+    assert "技术正文" not in package.commercial_markdown
 
 
-def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
+def test_generate_bid_package_separates_business_technical_and_pricing(monkeypatch):
     _enable_llm_generation(monkeypatch)
     requirements = TenderRequirements(
         project_name="萧县2025年农村公路提质改造联网路工程",
@@ -275,17 +279,20 @@ def test_generate_bid_document_rewrites_llm_placeholder_title(monkeypatch):
     )
     monkeypatch.setattr(
         generator_agent,
-        "_generate_document_with_llm",
-        lambda *args, **kwargs: ("# 见投标人须知前附表 投标文件（技术文件）\n\n" "## 施工组织设计目录\n"),
+        "generate_bid_section",
+        lambda section_title, requirements, chunks: f"## {section_title}\n\n施工组织技术正文。",
     )
 
-    markdown = generator_agent.generate_bid_document(requirements, {})
+    package = generator_agent.generate_bid_package(requirements, {})
 
+    markdown = package.combined_markdown
     assert markdown.startswith("# 萧县2025年农村公路提质改造联网路工程 投标文件")
     assert "见投标人须知前附表 投标文件" not in markdown
     assert "投标人：安徽正奇建设有限公司" in markdown
     assert "## 二、商务标" in markdown
-    assert markdown.index("【技术标】") < markdown.index("【商务标】")
+    assert "施工组织技术正文" in package.technical_markdown
+    assert "施工组织技术正文" not in package.commercial_markdown
+    assert "报价文件目录" in package.pricing_markdown
 
 
 def test_sanitize_bid_markdown_removes_meta_and_rag_noise() -> None:

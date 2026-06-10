@@ -1,5 +1,5 @@
 from rag.retriever import RetrievalResult
-from schemas.bid import BidSectionOutline
+from schemas.bid import BidPackage, BidSectionOutline
 from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import workflow_service
@@ -169,15 +169,21 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     )
     monkeypatch.setattr(
         workflow_service,
-        "generate_bid_document",
-        lambda requirements, chunks, bid_template=None, pricing_strategy=None: "# 标书\n\n## 施工组织设计\n\n仅说明施工部署。",
+        "generate_bid_package",
+        lambda requirements, chunks, bid_template=None, pricing_strategy=None: BidPackage(
+            commercial_markdown="# 商务文件\n\n项目经理具备一级建造师。\n\n投标保证金已响应。",
+            technical_markdown="# 技术文件\n\n## 施工组织设计\n\n项目经理具备一级建造师。",
+            pricing_markdown="# 报价文件\n\n投标保证金已响应。",
+            combined_markdown="# 标书\n\n## 施工组织设计\n\n项目经理具备一级建造师。\n\n投标保证金已响应。",
+        ),
     )
 
     state = workflow_service.run_bid_workflow(7)
 
     assert state.status == "human_review"
     assert state.awaiting_human is True
-    assert 1 <= state.iteration_count <= workflow_service.MAX_CORRECTION_ITERATIONS
+    assert state.draft_volumes["commercial"].startswith("# 商务文件")
+    assert 0 <= state.iteration_count <= workflow_service.MAX_CORRECTION_ITERATIONS
     assert state.review_report["fail_count"] == 0
     event_stages = [event.stage for event in state.trace_events]
     assert event_stages[0] == "generate"

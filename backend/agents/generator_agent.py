@@ -9,7 +9,7 @@ from agents.parser_agent import _has_real_key, _is_placeholder_project_name
 from core.config import get_settings
 from prompts.generator_prompt import build_document_prompt, build_section_prompt
 from rag.retriever import RetrievalResult
-from schemas.bid import BidDocumentOutlineSection, BidSectionOutline
+from schemas.bid import BidDocumentOutlineSection, BidPackage, BidSectionOutline
 from schemas.bid_template import BidTemplate
 from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
@@ -270,69 +270,180 @@ def generate_bid_document(
     bid_template: BidTemplate | None = None,
     pricing_strategy: PricingStrategy | None = None,
 ) -> str:
+    return generate_bid_package(
+        requirements,
+        retrieved_chunks_by_section,
+        bid_template,
+        pricing_strategy,
+    ).combined_markdown
+
+
+def generate_bid_package(
+    requirements: TenderRequirements,
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    bid_template: BidTemplate | None = None,
+    pricing_strategy: PricingStrategy | None = None,
+) -> BidPackage:
     bid_template = bid_template or load_bid_template()
     outline = build_bid_outline(requirements, bid_template)
     settings = get_settings()
     use_local_section_fallback = False
-    if settings.enable_llm_generation:
-        try:
-            markdown = _generate_document_with_llm(
-                requirements,
-                outline,
-                retrieved_chunks_by_section,
-                settings.company_name,
-                bid_template,
-                pricing_strategy,
-            )
-            return sanitize_bid_markdown(
-                _ensure_document_header(markdown, requirements, settings.company_name)
-            )
-        except Exception:
-            use_local_section_fallback = True
-    else:
+    if not settings.enable_llm_generation:
         use_local_section_fallback = True
+    else:
+        # The current LLM path is section-oriented and safest for technical
+        # writing. 商务/报价卷 use deterministic templates so they do not invent
+        # business facts or prices.
+        use_local_section_fallback = False
 
+    commercial = _generate_commercial_volume(
+        requirements,
+        bid_template,
+        pricing_strategy,
+        settings.company_name,
+    )
+    technical = _generate_technical_volume(
+        requirements,
+        outline,
+        retrieved_chunks_by_section,
+        bid_template,
+        use_local_section_fallback,
+        settings.company_name,
+    )
+    pricing = _generate_pricing_volume(
+        requirements,
+        pricing_strategy,
+        settings.company_name,
+        missing_template=not _template_has_price_section(bid_template),
+    )
+    combined = combine_bid_package_volumes(
+        requirements,
+        settings.company_name,
+        {
+            "commercial": commercial,
+            "technical": technical,
+            "pricing": pricing,
+        },
+    )
+    return BidPackage(
+        commercial_markdown=commercial,
+        technical_markdown=technical,
+        pricing_markdown=pricing,
+        combined_markdown=combined,
+    )
+
+
+def combine_bid_package_volumes(
+    requirements: TenderRequirements,
+    company_name: str,
+    volumes: dict[str, str],
+) -> str:
+    parts = _document_preface(requirements, company_name)
+    parts.extend(
+        [
+            "## 投标文件目录",
+            "",
+            "- 商务文件",
+            "- 技术文件",
+            "- 报价文件",
+            "",
+        ]
+    )
+    for key in ("commercial", "technical", "pricing"):
+        markdown = (volumes.get(key) or "").strip()
+        if markdown:
+            parts.extend([markdown, ""])
+    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
+
+
+def _generate_commercial_volume(
+    requirements: TenderRequirements,
+    bid_template: BidTemplate | None,
+    pricing_strategy: PricingStrategy | None,
+    company_name: str,
+) -> str:
+    parts = [
+        f"# {_project_title(requirements)} 商务文件",
+        "",
+        f"投标人：{company_name}",
+        "",
+        "【商务文件】",
+        "",
+    ]
+    emitted = False
     if bid_template and bid_template.main_sections:
-        return _generate_template_ordered_document_fallback(
+        for section in bid_template.main_sections:
+            if (
+                _document_volume_for_section(section.title, section.section_type)
+                == "商务/资格标"
+            ):
+                parts.extend(
+                    _business_section_from_template(
+                        requirements,
+                        section,
+                        pricing_strategy,
+                    )
+                )
+                emitted = True
+    if not emitted:
+        fallback = _business_bid_fallback(requirements, pricing_strategy, bid_template)
+        parts.extend(fallback)
+    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
+
+
+def _generate_technical_volume(
+    requirements: TenderRequirements,
+    outline: list[BidSectionOutline],
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    bid_template: BidTemplate | None,
+    use_local_section_fallback: bool,
+    company_name: str,
+) -> str:
+    parts = _document_preface(requirements, company_name)
+    parts[0] = f"# {_project_title(requirements)} 技术文件"
+    parts[2] = f"投标人：{company_name}"
+    parts.extend(["【技术文件】", ""])
+    parts.extend(
+        _technical_volume_from_outline(
             requirements,
+            outline,
             retrieved_chunks_by_section,
-            bid_template,
-            pricing_strategy,
             use_local_section_fallback,
         )
-
-    parts = _document_preface(requirements, settings.company_name)
-    parts.extend(["", "【技术标】", "", "## 一、技术标", "", "### 技术标目录", ""])
-    for section in outline:
-        parts.append(f"- {section.title}")
-    if bid_template and bid_template.appendix_sections:
-        parts.append("")
-        parts.append("附表目录：")
-        for section in bid_template.appendix_sections:
-            parts.append(f"- {section.title}")
-    parts.append("")
-    for section in outline:
-        chunks = retrieved_chunks_by_section.get(section.title, [])
-        chunk_text = [_chunk_content(chunk) for chunk in chunks]
-        if use_local_section_fallback:
-            section_markdown = _generate_section_fallback(
-                section.title,
-                requirements,
-                chunk_text,
-            )
-        else:
-            section_markdown = generate_bid_section(
-                section.title,
-                requirements,
-                chunk_text,
-            )
-        parts.append(section_markdown)
-        parts.append("")
+    )
     if bid_template and bid_template.appendix_sections:
         parts.extend(_appendix_fallback(bid_template))
         parts.append("")
-    parts.extend(_business_bid_fallback(requirements, pricing_strategy, bid_template))
     return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
+
+
+def _generate_pricing_volume(
+    requirements: TenderRequirements,
+    pricing_strategy: PricingStrategy | None,
+    company_name: str,
+    *,
+    missing_template: bool,
+) -> str:
+    parts = [
+        f"# {_project_title(requirements)} 报价文件",
+        "",
+        f"投标人：{company_name}",
+        "",
+        "【报价文件】",
+        "",
+        *_price_bid_fallback(pricing_strategy, missing_template=missing_template),
+    ]
+    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
+
+
+def _template_has_price_section(bid_template: BidTemplate | None) -> bool:
+    if not bid_template:
+        return False
+    return any(
+        _document_volume_for_section(section.title, section.section_type)
+        == "报价/经济标"
+        for section in bid_template.main_sections
+    )
 
 
 def _project_title(requirements: TenderRequirements) -> str:
