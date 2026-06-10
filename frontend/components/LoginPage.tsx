@@ -144,7 +144,7 @@ export function LoginPage() {
             </span>
             <div>
               <p className="text-sm font-semibold">TenderDoc Generator</p>
-              <p className="text-xs text-slate-300">技术标生成工作台</p>
+              <p className="text-xs text-slate-300">标书生成工作台</p>
             </div>
           </div>
 
