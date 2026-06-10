@@ -314,6 +314,8 @@ def parse_project(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
     if not project["tender_file_path"]:
         raise ValueError("Project has no tender file path")
+    if project.get("parsed_json"):
+        return project
 
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:

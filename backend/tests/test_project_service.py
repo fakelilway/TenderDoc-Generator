@@ -170,6 +170,39 @@ def test_parse_project_downloads_parses_and_stores_json(monkeypatch) -> None:
     assert not cursors
 
 
+def test_parse_project_returns_cached_result_when_already_parsed(monkeypatch) -> None:
+    cursor = FakeCursor(
+        [
+            {
+                "id": 42,
+                "name": "项目",
+                "tender_file_path": "projects/42/tender/file.txt",
+                "parsed_json": {
+                    "project_name": "已解析项目",
+                    "qualification_list": [],
+                    "technical_score_items": [],
+                    "invalid_bid_items": [],
+                },
+                "status": "parsed",
+                "created_at": None,
+            }
+        ]
+    )
+
+    class FailMinio:
+        def download_bytes(self, *_args):
+            raise AssertionError("cached parsed projects should not be downloaded")
+
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+    monkeypatch.setattr(project_service, "minio_client", FailMinio())
+
+    project = project_service.parse_project(42)
+
+    assert project["status"] == "parsed"
+    assert project["parsed_json"]["project_name"] == "已解析项目"
+    assert len(cursor.statements) == 1
+
+
 def test_create_project_records_owner_user_id(monkeypatch) -> None:
     cursor = FakeCursor(
         [
