@@ -333,6 +333,31 @@ def test_regular_user_can_view_knowledge_documents(monkeypatch) -> None:
     assert response.json() == {"documents": []}
 
 
+def test_preview_knowledge_document_returns_view_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.knowledge_service.get_knowledge_document_preview",
+        lambda document_id: {
+            "document_id": document_id,
+            "file_name": "营业执照.png",
+            "file_type": "png",
+            "preview_type": "image",
+            "content": "",
+            "preview_url": "https://minio.local/preview",
+            "download_url": "https://minio.local/download",
+            "expires_in": 900,
+            "indexing_status": "structured_evidence",
+            "extraction_message": "",
+        },
+    )
+
+    response = client.get("/api/knowledge/documents/9/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview_type"] == "image"
+    assert body["preview_url"] == "https://minio.local/preview"
+
+
 def test_regular_user_cannot_edit_knowledge_document() -> None:
     app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
         id=2,

@@ -6,6 +6,7 @@ import type {
   FinalChecklistResponse,
   KnowledgeDeleteResponse,
   KnowledgeDocumentListResponse,
+  KnowledgeDocumentPreview,
   KnowledgeDocumentSummary,
   KnowledgeSelectionResponse,
   KnowledgeSearchResponse,
@@ -424,6 +425,12 @@ export function deleteKnowledgeDocument(documentId: number) {
 export function listKnowledgeDocuments(limit = 50) {
   return requestJson<KnowledgeDocumentListResponse>(
     `/api/knowledge/documents?limit=${limit}`
+  );
+}
+
+export function getKnowledgeDocumentPreview(documentId: number) {
+  return requestJson<KnowledgeDocumentPreview>(
+    `/api/knowledge/documents/${documentId}/preview`
   );
 }
 

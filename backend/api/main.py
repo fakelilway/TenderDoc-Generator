@@ -29,6 +29,7 @@ from schemas.auth import (
 from schemas.knowledge import (
     KnowledgeDeleteResponse,
     KnowledgeDocumentListResponse,
+    KnowledgeDocumentPreviewResponse,
     KnowledgeDocumentSummary,
     KnowledgeDocumentUpdateRequest,
     KnowledgeSearchResponse,
@@ -293,6 +294,21 @@ def rename_knowledge_document(
         _raise_http_error(error)
 
     return KnowledgeDocumentSummary(**document)
+
+
+@app.get(
+    "/api/knowledge/documents/{document_id}/preview",
+    response_model=KnowledgeDocumentPreviewResponse,
+)
+def preview_knowledge_document(
+    document_id: int,
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
+) -> KnowledgeDocumentPreviewResponse:
+    try:
+        preview = knowledge_service.get_knowledge_document_preview(document_id)
+    except Exception as error:
+        _raise_http_error(error)
+    return KnowledgeDocumentPreviewResponse(**preview)
 
 
 @app.delete(

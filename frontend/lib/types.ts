@@ -426,6 +426,19 @@ export type KnowledgeDocumentSummary = {
   created_at: string;
 };
 
+export type KnowledgeDocumentPreview = {
+  document_id: number;
+  file_name: string;
+  file_type?: string | null;
+  preview_type: "image" | "text" | "pdf" | "file" | string;
+  content: string;
+  preview_url?: string | null;
+  download_url?: string | null;
+  expires_in: number;
+  indexing_status?: string | null;
+  extraction_message?: string | null;
+};
+
 export type KnowledgeDocumentListResponse = {
   documents: KnowledgeDocumentSummary[];
 };

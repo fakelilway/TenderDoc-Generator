@@ -4,6 +4,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from
 import {
   Check,
   Database,
+  Eye,
   FileText,
   Layers3,
   Loader2,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   deleteKnowledgeDocument,
+  getKnowledgeDocumentPreview,
   listKnowledgeDocuments,
   renameKnowledgeDocument,
   searchKnowledge,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/api";
 import { getStoredSession } from "@/lib/auth";
 import type {
+  KnowledgeDocumentPreview,
   KnowledgeDocumentSummary,
   KnowledgeSearchResult
 } from "@/lib/types";
@@ -68,6 +71,8 @@ export function KnowledgePanel() {
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [preview, setPreview] = useState<KnowledgeDocumentPreview | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
 
@@ -199,6 +204,19 @@ export function KnowledgePanel() {
       setError(deleteError instanceof Error ? deleteError.message : "知识库删除失败");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function previewDocument(document: KnowledgeDocumentSummary) {
+    setPreviewLoadingId(document.document_id);
+    setError(null);
+    try {
+      const response = await getKnowledgeDocumentPreview(document.document_id);
+      setPreview(response);
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : "资料预览失败");
+    } finally {
+      setPreviewLoadingId(null);
     }
   }
 
@@ -462,6 +480,18 @@ export function KnowledgePanel() {
                         <div className="flex shrink-0 gap-1">
                           <button
                             type="button"
+                            title="查看"
+                            className="grid h-7 w-7 place-items-center rounded-md border border-line text-muted hover:bg-field"
+                            onClick={() => previewDocument(document)}
+                          >
+                            {previewLoadingId === document.document_id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Eye className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
                             title="编辑标题"
                             className="grid h-7 w-7 place-items-center rounded-md border border-line text-muted hover:bg-field"
                             onClick={() => startEditing(document)}
@@ -479,6 +509,20 @@ export function KnowledgePanel() {
                           </button>
                         </div>
                       ) : null}
+                      {!canEdit ? (
+                        <button
+                          type="button"
+                          title="查看"
+                          className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-line text-muted hover:bg-field"
+                          onClick={() => previewDocument(document)}
+                        >
+                          {previewLoadingId === document.document_id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Eye className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -486,6 +530,70 @@ export function KnowledgePanel() {
             )}
           </div>
         </div>
+
+        {preview ? (
+          <div className="rounded-md border border-line bg-white p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-ink">
+                  {preview.file_name}
+                </p>
+                <p className="mt-0.5 text-xs text-muted">
+                  {preview.preview_type}
+                  {preview.indexing_status ? ` · ${preview.indexing_status}` : ""}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {preview.download_url ? (
+                  <a
+                    href={preview.download_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-md border border-line px-2 py-1 text-xs font-medium text-ink hover:bg-field"
+                  >
+                    下载
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  className="rounded-md border border-line px-2 py-1 text-xs font-medium text-muted hover:bg-field"
+                  onClick={() => setPreview(null)}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+            {preview.preview_type === "image" && preview.preview_url ? (
+              <img
+                src={preview.preview_url}
+                alt={preview.file_name}
+                className="max-h-80 w-full rounded-md border border-line object-contain"
+              />
+            ) : preview.content ? (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-field p-3 text-xs leading-5 text-ink">
+                {preview.content}
+              </pre>
+            ) : preview.preview_url ? (
+              <a
+                href={preview.preview_url}
+                target="_blank"
+                rel="noreferrer"
+                className="block rounded-md border border-dashed border-line bg-field px-3 py-4 text-center text-xs font-medium text-brand hover:border-brand"
+              >
+                打开原件预览
+              </a>
+            ) : (
+              <div className="rounded-md border border-dashed border-line bg-field px-3 py-4 text-center text-xs text-muted">
+                当前资料没有可预览内容
+              </div>
+            )}
+            {preview.extraction_message ? (
+              <p className="mt-2 text-xs leading-5 text-danger">
+                {preview.extraction_message}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="space-y-2">
           <p className="text-xs font-semibold text-muted">命中片段</p>

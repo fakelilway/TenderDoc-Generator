@@ -13,6 +13,10 @@ from utils.file_parser import IMAGE_EXTENSIONS, extract_text
 from utils.minio_client import minio_client
 
 
+PREVIEW_EXPIRY_SECONDS = 900
+PREVIEW_TEXT_LIMIT = 20000
+
+
 def _safe_filename(filename: str) -> str:
     basename = Path(filename or "knowledge.txt").name
     cleaned = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", basename, flags=re.UNICODE)
@@ -176,6 +180,104 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
         }
         for row in rows
     ]
+
+
+def get_knowledge_document_preview(document_id: int) -> dict[str, object]:
+    row = _fetch_knowledge_document_row(document_id)
+    file_name = str(row["file_name"])
+    file_type = str(row.get("file_type") or "").lower()
+    file_path = str(row.get("file_path") or "")
+    metadata = row.get("metadata_json") or {}
+    content = _joined_chunk_text(document_id)
+    preview_type = _preview_type(file_type, file_name, bool(content))
+    preview_url = None
+    download_url = None
+
+    if file_path:
+        preview_url = minio_client.get_presigned_url(
+            settings.minio_bucket,
+            file_path,
+            expiry=PREVIEW_EXPIRY_SECONDS,
+        )
+        download_url = minio_client.get_presigned_url(
+            settings.minio_bucket,
+            file_path,
+            expiry=PREVIEW_EXPIRY_SECONDS,
+            response_filename=file_name,
+        )
+
+    return {
+        "document_id": int(row["document_id"]),
+        "file_name": file_name,
+        "file_type": file_type,
+        "preview_type": preview_type,
+        "content": content,
+        "preview_url": preview_url,
+        "download_url": download_url,
+        "expires_in": PREVIEW_EXPIRY_SECONDS,
+        "indexing_status": metadata.get("indexing_status"),
+        "extraction_message": metadata.get("extraction_message"),
+    }
+
+
+def _fetch_knowledge_document_row(document_id: int) -> dict[str, object]:
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id AS document_id,
+                    file_name,
+                    file_path,
+                    file_type,
+                    metadata_json
+                FROM documents
+                WHERE id = %s AND project_id IS NULL
+                """,
+                (document_id,),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"Knowledge document {document_id} was not found")
+    return {
+        "document_id": row[0],
+        "file_name": row[1],
+        "file_path": row[2],
+        "file_type": row[3],
+        "metadata_json": row[4] or {},
+    }
+
+
+def _joined_chunk_text(document_id: int) -> str:
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT content
+                FROM knowledge_chunks
+                WHERE document_id = %s
+                ORDER BY id
+                """,
+                (document_id,),
+            )
+            rows = cursor.fetchall()
+    text = "\n\n".join(str(row[0]).strip() for row in rows if str(row[0]).strip())
+    return text[:PREVIEW_TEXT_LIMIT]
+
+
+def _preview_type(file_type: str, file_name: str, has_text: bool) -> str:
+    suffix = Path(file_name).suffix.lower().lstrip(".")
+    normalized = (file_type or suffix).lower()
+    mime_major = normalized.split("/", 1)[0] if "/" in normalized else ""
+    subtype = normalized.rsplit("/", 1)[-1]
+    candidates = {normalized, subtype, suffix}
+    if mime_major == "image" or candidates & {"jpg", "jpeg", "png", "gif", "webp"}:
+        return "image"
+    if has_text or mime_major == "text" or candidates & {"txt", "md", "markdown"}:
+        return "text"
+    if "pdf" in candidates:
+        return "pdf"
+    return "file"
 
 
 def rename_knowledge_document(

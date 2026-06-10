@@ -33,6 +33,19 @@ class KnowledgeDocumentListResponse(BaseModel):
     documents: list[KnowledgeDocumentSummary]
 
 
+class KnowledgeDocumentPreviewResponse(BaseModel):
+    document_id: int
+    file_name: str
+    file_type: str | None = None
+    preview_type: str
+    content: str = ""
+    preview_url: str | None = None
+    download_url: str | None = None
+    expires_in: int = 900
+    indexing_status: str | None = None
+    extraction_message: str | None = None
+
+
 class KnowledgeDocumentUpdateRequest(BaseModel):
     title: str
     document_type: str | None = None
