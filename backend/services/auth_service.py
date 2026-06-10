@@ -207,8 +207,6 @@ def require_admin(
 def require_knowledge_view(
     current_user: Annotated[UserProfile, Depends(get_current_user)],
 ) -> UserProfile:
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin permission required")
     return current_user
 
 

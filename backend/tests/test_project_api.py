@@ -313,7 +313,11 @@ def test_list_knowledge_documents_returns_indexed_files(monkeypatch) -> None:
     assert response.json()["documents"][0]["chunk_count"] == 12
 
 
-def test_knowledge_requires_view_permission() -> None:
+def test_regular_user_can_view_knowledge_documents(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "api.main.knowledge_service.list_knowledge_documents",
+        lambda limit=50: [],
+    )
     app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
         id=2,
         username="viewer",
@@ -324,6 +328,25 @@ def test_knowledge_requires_view_permission() -> None:
     )
 
     response = client.get("/api/knowledge/documents")
+
+    assert response.status_code == 200
+    assert response.json() == {"documents": []}
+
+
+def test_regular_user_cannot_edit_knowledge_document() -> None:
+    app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
+        id=2,
+        username="viewer",
+        display_name="普通用户",
+        role="user",
+        can_view_knowledge=False,
+        can_edit_knowledge=False,
+    )
+
+    response = client.patch(
+        "/api/knowledge/documents/9",
+        json={"title": "企业技术标模板 v2"},
+    )
 
     assert response.status_code == 403
 

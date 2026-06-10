@@ -344,7 +344,7 @@ export function AdminUsersPanel() {
                     启用账号
                   </label>
                   <p className="rounded-md border border-line bg-field px-2 py-2 text-xs leading-5 text-muted">
-                    知识库仅管理员可访问；普通员工只保留标书生成权限。
+                    普通员工可查看和检索知识库；添加、删除、编辑资料仅管理员可操作。
                   </p>
                 </div>
                 <button

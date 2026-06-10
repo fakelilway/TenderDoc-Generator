@@ -183,15 +183,15 @@ export function ProjectsView() {
               )}
               刷新
             </button>
+            <a
+              href="/knowledge"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <Database className="h-4 w-4" />
+              知识库
+            </a>
             {isAdmin ? (
               <>
-                <a
-                  href="/knowledge"
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-                >
-                  <Database className="h-4 w-4" />
-                  知识库
-                </a>
                 <a
                   href="/templates"
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"

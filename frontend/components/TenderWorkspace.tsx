@@ -882,15 +882,15 @@ export function TenderWorkspace({
               <FolderOpen className="h-4 w-4" />
               历史项目
             </a>
+            <a
+              href="/knowledge"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <Database className="h-4 w-4" />
+              知识库
+            </a>
             {isAdmin ? (
               <>
-                <a
-                  href="/knowledge"
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-                >
-                  <Database className="h-4 w-4" />
-                  知识库
-                </a>
                 <a
                   href="/templates"
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
@@ -1103,25 +1103,23 @@ export function TenderWorkspace({
             busy={statusBusy}
             traceEvents={workflowState?.trace_events}
           />
-          {isAdmin ? (
-            <RagSelectionPanel
-              query={ragQuery}
-              documentType={ragDocumentType}
-              specialty={ragSpecialty}
-              tagText={ragTagText}
-              results={ragResults}
-              selectedIds={selectedChunkIds}
-              references={ragReferences}
-              busy={actionBusy}
-              onQueryChange={setRagQuery}
-              onDocumentTypeChange={setRagDocumentType}
-              onSpecialtyChange={setRagSpecialty}
-              onTagTextChange={setRagTagText}
-              onSearch={handleSearchKnowledge}
-              onToggle={handleToggleChunk}
-              onSave={handleSaveKnowledgeSelection}
-            />
-          ) : null}
+          <RagSelectionPanel
+            query={ragQuery}
+            documentType={ragDocumentType}
+            specialty={ragSpecialty}
+            tagText={ragTagText}
+            results={ragResults}
+            selectedIds={selectedChunkIds}
+            references={ragReferences}
+            busy={actionBusy}
+            onQueryChange={setRagQuery}
+            onDocumentTypeChange={setRagDocumentType}
+            onSpecialtyChange={setRagSpecialty}
+            onTagTextChange={setRagTagText}
+            onSearch={handleSearchKnowledge}
+            onToggle={handleToggleChunk}
+            onSave={handleSaveKnowledgeSelection}
+          />
           <AdminUsersPanel />
         </div>
 
