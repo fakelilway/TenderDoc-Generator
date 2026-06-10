@@ -10,6 +10,7 @@ import {
   Users
 } from "lucide-react";
 import { AdminUsersPanel } from "@/components/AdminUsersPanel";
+import { NavLinkButton } from "@/components/NavLinkButton";
 import { logout as logoutRequest } from "@/lib/api";
 import { clearSession, getStoredSession } from "@/lib/auth";
 
@@ -33,13 +34,9 @@ export function AdminUsersView() {
       <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-6">
           <div className="flex items-center gap-3">
-            <a
-              href="/"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <ArrowLeft className="h-4 w-4" />
+            <NavLinkButton href="/" icon={ArrowLeft}>
               返回主页
-            </a>
+            </NavLinkButton>
             <h1 className="flex items-center gap-2 text-lg font-semibold text-ink">
               <Users className="h-5 w-5" />
               账号管理
@@ -51,36 +48,20 @@ export function AdminUsersView() {
                 {username}
               </span>
             ) : null}
-            <a
-              href="/projects"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <FolderOpen className="h-4 w-4" />
+            <NavLinkButton href="/projects" icon={FolderOpen}>
               历史项目
-            </a>
-            <a
-              href="/knowledge"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <Database className="h-4 w-4" />
+            </NavLinkButton>
+            <NavLinkButton href="/knowledge" icon={Database}>
               知识库
-            </a>
+            </NavLinkButton>
             {isAdmin ? (
-              <a
-                href="/templates"
-                className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-              >
-                <FileStack className="h-4 w-4" />
+              <NavLinkButton href="/templates" icon={FileStack}>
                 模板库
-              </a>
+              </NavLinkButton>
             ) : null}
-            <a
-              href="/"
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              <Plus className="h-4 w-4" />
+            <NavLinkButton href="/" icon={Plus} variant="primary">
               新建项目
-            </a>
+            </NavLinkButton>
             <button
               type="button"
               onClick={handleLogout}

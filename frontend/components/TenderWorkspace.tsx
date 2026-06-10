@@ -20,6 +20,7 @@ import { DraftEditor } from "@/components/DraftEditor";
 import { FinalChecklistPanel } from "@/components/FinalChecklistPanel";
 import { HumanActionPrompt } from "@/components/HumanActionPrompt";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
+import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
@@ -879,36 +880,20 @@ export function TenderWorkspace({
                 {username}
               </span>
             ) : null}
-            <a
-              href="/projects"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <FolderOpen className="h-4 w-4" />
+            <NavLinkButton href="/projects" icon={FolderOpen}>
               历史项目
-            </a>
-            <a
-              href="/knowledge"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <Database className="h-4 w-4" />
+            </NavLinkButton>
+            <NavLinkButton href="/knowledge" icon={Database}>
               知识库
-            </a>
+            </NavLinkButton>
             {isAdmin ? (
               <>
-                <a
-                  href="/templates"
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-                >
-                  <FileStack className="h-4 w-4" />
+                <NavLinkButton href="/templates" icon={FileStack}>
                   模板库
-                </a>
-                <a
-                  href="/admin/users"
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-                >
-                  <Users className="h-4 w-4" />
+                </NavLinkButton>
+                <NavLinkButton href="/admin/users" icon={Users}>
                   账号管理
-                </a>
+                </NavLinkButton>
               </>
             ) : null}
             <button
