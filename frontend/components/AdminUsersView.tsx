@@ -9,11 +9,11 @@ import {
   Plus,
   Users
 } from "lucide-react";
-import { KnowledgePanel } from "@/components/KnowledgePanel";
+import { AdminUsersPanel } from "@/components/AdminUsersPanel";
 import { logout as logoutRequest } from "@/lib/api";
 import { clearSession, getStoredSession } from "@/lib/auth";
 
-export function KnowledgeView() {
+export function AdminUsersView() {
   const session = getStoredSession();
   const isAdmin = session?.role === "admin";
   const username = session?.displayName || session?.username || "";
@@ -41,8 +41,8 @@ export function KnowledgeView() {
               返回主页
             </a>
             <h1 className="flex items-center gap-2 text-lg font-semibold text-ink">
-              <Database className="h-5 w-5" />
-              知识库
+              <Users className="h-5 w-5" />
+              账号管理
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -58,23 +58,21 @@ export function KnowledgeView() {
               <FolderOpen className="h-4 w-4" />
               历史项目
             </a>
+            <a
+              href="/knowledge"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <Database className="h-4 w-4" />
+              知识库
+            </a>
             {isAdmin ? (
-              <>
-                <a
-                  href="/templates"
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-                >
-                  <FileStack className="h-4 w-4" />
-                  模板库
-                </a>
-                <a
-                  href="/admin/users"
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-                >
-                  <Users className="h-4 w-4" />
-                  账号管理
-                </a>
-              </>
+              <a
+                href="/templates"
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+              >
+                <FileStack className="h-4 w-4" />
+                模板库
+              </a>
             ) : null}
             <a
               href="/"
@@ -96,7 +94,7 @@ export function KnowledgeView() {
       </header>
 
       <div className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
-        <KnowledgePanel />
+        <AdminUsersPanel />
       </div>
     </main>
   );

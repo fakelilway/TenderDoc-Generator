@@ -12,9 +12,9 @@ import {
   LogOut,
   PencilLine,
   RefreshCw,
-  TriangleAlert
+  TriangleAlert,
+  Users
 } from "lucide-react";
-import { AdminUsersPanel } from "@/components/AdminUsersPanel";
 import { CorrectionModal } from "@/components/CorrectionModal";
 import { DraftEditor } from "@/components/DraftEditor";
 import { FinalChecklistPanel } from "@/components/FinalChecklistPanel";
@@ -898,6 +898,13 @@ export function TenderWorkspace({
                   <FileStack className="h-4 w-4" />
                   模板库
                 </a>
+                <a
+                  href="/admin/users"
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+                >
+                  <Users className="h-4 w-4" />
+                  账号管理
+                </a>
               </>
             ) : null}
             <button
@@ -1120,7 +1127,6 @@ export function TenderWorkspace({
             onToggle={handleToggleChunk}
             onSave={handleSaveKnowledgeSelection}
           />
-          <AdminUsersPanel />
         </div>
 
         <div className="space-y-4">

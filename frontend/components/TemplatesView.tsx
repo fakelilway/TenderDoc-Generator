@@ -3,19 +3,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Database,
   FileStack,
+  FolderOpen,
   Loader2,
+  LogOut,
   Pencil,
+  Plus,
   Trash2,
-  UploadCloud
+  UploadCloud,
+  Users
 } from "lucide-react";
 import {
   deleteTemplate,
   listTemplates,
+  logout as logoutRequest,
   updateTemplate,
   uploadTemplate
 } from "@/lib/api";
-import { getStoredSession } from "@/lib/auth";
+import { clearSession, getStoredSession } from "@/lib/auth";
 import type { TemplateSummary } from "@/lib/types";
 
 function errorMessage(error: unknown) {
@@ -43,6 +49,16 @@ export function TemplatesView() {
     const session = getStoredSession();
     setIsAdmin(session?.role === "admin");
   }, []);
+
+  async function handleLogout() {
+    try {
+      await logoutRequest();
+    } catch {
+      // Local logout should still proceed if the token has already expired.
+    }
+    clearSession();
+    window.location.replace("/login");
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,7 +136,7 @@ export function TemplatesView() {
   return (
     <main className="min-h-screen bg-field">
       <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 lg:px-6">
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-6">
           <div className="flex items-center gap-3">
             <a
               href="/"
@@ -134,10 +150,50 @@ export function TemplatesView() {
               投标模板库
             </h1>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="/projects"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <FolderOpen className="h-4 w-4" />
+              历史项目
+            </a>
+            <a
+              href="/knowledge"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <Database className="h-4 w-4" />
+              知识库
+            </a>
+            {isAdmin ? (
+              <a
+                href="/admin/users"
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+              >
+                <Users className="h-4 w-4" />
+                账号管理
+              </a>
+            ) : null}
+            <a
+              href="/"
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              <Plus className="h-4 w-4" />
+              新建项目
+            </a>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+            >
+              <LogOut className="h-4 w-4" />
+              退出
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-4xl px-4 py-6 lg:px-6">
+      <div className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
         {error ? (
           <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger">
             {error}

@@ -11,7 +11,8 @@ import {
   LogOut,
   Plus,
   RefreshCw,
-  Trash2
+  Trash2,
+  Users
 } from "lucide-react";
 import { deleteProject, listProjects, logout as logoutRequest } from "@/lib/api";
 import { clearSession, getStoredSession } from "@/lib/auth";
@@ -198,6 +199,13 @@ export function ProjectsView() {
                 >
                   <FileStack className="h-4 w-4" />
                   模板库
+                </a>
+                <a
+                  href="/admin/users"
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+                >
+                  <Users className="h-4 w-4" />
+                  账号管理
                 </a>
               </>
             ) : null}
