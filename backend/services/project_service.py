@@ -944,8 +944,8 @@ _DOWNLOAD_ARTIFACTS = {
     "review": ("审查报告", "md"),
 }
 _DELIVERY_VOLUME_LABELS = {
-    "technical": "技术文件",
     "commercial": "商务文件",
+    "technical": "技术文件",
     "pricing": "报价文件",
 }
 _DELIVERY_FORMATS = {"docx", "pdf"}

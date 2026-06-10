@@ -140,8 +140,8 @@ const deliveryVolumes: Array<{
   key: DeliveryVolumeKey;
   label: string;
 }> = [
-  { key: "technical", label: "技术文件" },
   { key: "commercial", label: "商务文件" },
+  { key: "technical", label: "技术文件" },
   { key: "pricing", label: "报价文件" }
 ];
 
@@ -216,7 +216,7 @@ export function TenderWorkspace({
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("combined");
   const [deliveryFormat, setDeliveryFormat] = useState<DeliveryFormat>("docx");
   const [activeDeliveryVolume, setActiveDeliveryVolume] =
-    useState<DeliveryVolumeKey>("technical");
+    useState<DeliveryVolumeKey>("commercial");
   const [deliveryPreview, setDeliveryPreview] = useState<
     Record<DeliveryVolumeKey, DeliveryVolumePreview> | null
   >(null);
@@ -986,7 +986,7 @@ export function TenderWorkspace({
             <div>
               <p className="font-semibold">标书已完成，可按投递网站要求下载</p>
               <p className="text-xs text-green-700">
-                可合并为一个文件投递，也可拆成技术文件、商务文件、报价文件分别投递。
+                合并文件顺序固定为商务文件、技术文件、报价文件；也可按分卷分别投递。
               </p>
             </div>
           </div>

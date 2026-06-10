@@ -547,7 +547,7 @@ def test_download_url_split_delivery_docx_artifact(monkeypatch) -> None:
     assert fake_minio.presigned[0]["response_filename"].endswith("报价文件_v2.docx")
 
 
-def test_delivery_preview_splits_technical_commercial_and_pricing(monkeypatch) -> None:
+def test_delivery_preview_splits_commercial_technical_and_pricing(monkeypatch) -> None:
     cursor = FakeCursor([_download_project_row()])
     fake_minio = FakePresignMinio()
     monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
@@ -555,6 +555,7 @@ def test_delivery_preview_splits_technical_commercial_and_pricing(monkeypatch) -
 
     result = project_service.get_project_delivery_preview(7)
 
+    assert list(result["volumes"]) == ["commercial", "technical", "pricing"]
     technical = result["volumes"]["technical"]["markdown"]
     commercial = result["volumes"]["commercial"]["markdown"]
     pricing = result["volumes"]["pricing"]["markdown"]

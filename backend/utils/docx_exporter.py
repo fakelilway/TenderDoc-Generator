@@ -521,7 +521,7 @@ def split_bid_markdown(markdown_text: str) -> dict[str, str]:
 
 
 def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
-    """Split bid markdown into 技术文件 / 商务文件 / 报价文件 volumes."""
+    """Split bid markdown into 商务文件 / 技术文件 / 报价文件 volumes."""
     lines = markdown_text.splitlines()
     doc_title = _extract_title(markdown_text)
 
@@ -550,8 +550,8 @@ def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
 
     volumes: dict[str, str] = {}
     for label, body in (
-        ("technical", technical),
         ("commercial", commercial),
+        ("technical", technical),
         ("pricing", pricing),
     ):
         text = "\n".join(body).strip()

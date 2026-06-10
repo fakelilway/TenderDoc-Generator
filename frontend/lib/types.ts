@@ -274,7 +274,7 @@ export type ProjectDownloadResponse = {
   filename?: string;
 };
 
-export type DeliveryVolumeKey = "technical" | "commercial" | "pricing";
+export type DeliveryVolumeKey = "commercial" | "technical" | "pricing";
 
 export type DeliveryVolumePreview = {
   key: DeliveryVolumeKey;
