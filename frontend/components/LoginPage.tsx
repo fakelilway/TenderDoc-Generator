@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Eye,
   EyeOff,
-  FileCheck2,
   KeyRound,
   Loader2,
   LockKeyhole,
@@ -13,6 +12,7 @@ import {
   User,
   UserPlus
 } from "lucide-react";
+import { AppLogo } from "@/components/AppLogo";
 import { login, registerUser } from "@/lib/api";
 import { getStoredSession, storeSession } from "@/lib/auth";
 import type { LoginResponse } from "@/lib/types";
@@ -139,9 +139,7 @@ export function LoginPage() {
       <div className="grid min-h-screen lg:grid-cols-[minmax(360px,0.92fr)_1.08fr]">
         <section className="flex min-h-[42vh] flex-col justify-between border-b border-line bg-[#172033] px-6 py-6 text-white lg:min-h-screen lg:border-b-0 lg:border-r lg:px-10">
           <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-md bg-white text-brand">
-              <FileCheck2 className="h-5 w-5" />
-            </span>
+            <AppLogo className="h-10 w-10" />
             <div>
               <p className="text-sm font-semibold">TenderDoc Generator</p>
               <p className="text-xs text-slate-300">标书生成工作台</p>

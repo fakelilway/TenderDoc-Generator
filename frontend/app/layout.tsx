@@ -3,7 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "TenderDoc Generator",
-  description: "Tender document generation workspace"
+  description: "Tender document generation workspace",
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png"
+  }
 };
 
 export default function RootLayout({

@@ -71,6 +71,7 @@ import type {
   TenderRequirements,
   WorkflowState
 } from "@/lib/types";
+import { AppLogo } from "@/components/AppLogo";
 
 const finalStatuses = new Set([
   "approved",
@@ -850,7 +851,10 @@ export function TenderWorkspace({
       <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
         <div className="flex min-h-16 flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-ink">TenderDoc Generator</h1>
+            <div className="flex items-center gap-3">
+              <AppLogo className="h-10 w-10 border border-line" />
+              <h1 className="text-lg font-semibold text-ink">TenderDoc Generator</h1>
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>Project {projectId ?? "-"}</span>
               <span className="rounded-md border border-line bg-field px-2 py-1 font-medium text-ink">
