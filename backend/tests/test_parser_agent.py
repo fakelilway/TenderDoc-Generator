@@ -12,7 +12,7 @@ from agents.parser_agent import (
 )
 from prompts.parser_prompt import build_parser_prompt
 from schemas.tender import TenderRequirements
-from utils.file_parser import extract_text
+from utils.file_parser import SUPPORTED_EXTENSIONS, extract_text
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -64,6 +64,12 @@ def test_extract_text_from_txt_path_and_bytes() -> None:
 
     assert "星河湾二期" in path_text
     assert bytes_text == "项目名称：字节测试"
+
+
+def test_supported_upload_extensions_include_office_and_images() -> None:
+    assert {".pdf", ".doc", ".docx", ".txt", ".md", ".jpg", ".jpeg", ".png"}.issubset(
+        SUPPORTED_EXTENSIONS
+    )
 
 
 def test_prepare_tender_text_keeps_relevant_sections() -> None:
@@ -135,7 +141,9 @@ def test_merge_requirements_rejects_placeholder_project_name() -> None:
     assert merged.project_name == "萧县2025年农村公路提质改造联网路工程"
 
 
-def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(monkeypatch) -> None:
+def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(
+    monkeypatch,
+) -> None:
     text = """
     萧县2025年农村公路提质改造联网路工程
     （项目编号：EP-XXGC2025024）
@@ -152,9 +160,7 @@ def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(monkeypatch)
                 choices=[SimpleNamespace(message=SimpleNamespace(content="not json"))]
             )
 
-    fake_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions())
-    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
 
     monkeypatch.setattr(
         "agents.parser_agent._get_llm_client_config",

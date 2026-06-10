@@ -64,3 +64,21 @@ def test_store_knowledge_chunks_inserts_document_and_chunks(monkeypatch) -> None
     assert len(cursor.statements) == 3
     assert "INSERT INTO documents" in cursor.statements[0][0]
     assert "INSERT INTO knowledge_chunks" in cursor.statements[1][0]
+
+
+def test_store_knowledge_chunks_allows_evidence_only_document(monkeypatch) -> None:
+    cursor = FakeCursor()
+    monkeypatch.setattr(vector_store, "_connect", lambda: FakeConnection(cursor))
+
+    result = vector_store.store_knowledge_chunks(
+        file_name="身份证.jpg",
+        file_path="knowledge/id.jpg",
+        file_type="jpg",
+        chunks=[],
+        embedder=lambda texts: [],
+        metadata={"indexing_status": "structured_evidence"},
+    )
+
+    assert result == {"document_id": 11, "chunk_ids": []}
+    assert len(cursor.statements) == 1
+    assert "INSERT INTO documents" in cursor.statements[0][0]

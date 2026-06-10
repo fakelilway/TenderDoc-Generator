@@ -44,11 +44,8 @@ def store_knowledge_chunks(
     embedder: EmbedTexts = embed_texts,
     metadata: dict | None = None,
 ) -> dict[str, object]:
-    if not chunks:
-        raise ValueError("No chunks to store")
-
-    embeddings = embedder([chunk.content for chunk in chunks])
-    if len(embeddings) != len(chunks):
+    embeddings = embedder([chunk.content for chunk in chunks]) if chunks else []
+    if chunks and len(embeddings) != len(chunks):
         raise ValueError("Embedding count does not match chunk count")
 
     with _connect() as conn:

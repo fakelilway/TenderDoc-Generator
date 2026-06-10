@@ -222,6 +222,7 @@ async def upload_knowledge(
     specialty: str | None = Form(None),
     project_year: int | None = Form(None),
     tags: str | None = Form(None),
+    ingestion_mode: str | None = Form(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
 ) -> KnowledgeUploadResponse:
     try:
@@ -235,6 +236,8 @@ async def upload_knowledge(
         parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
         if parsed_tags:
             metadata_kwargs["tags"] = parsed_tags
+        if ingestion_mode is not None:
+            metadata_kwargs["ingestion_mode"] = ingestion_mode
         indexed = knowledge_service.index_uploaded_knowledge(
             file_bytes=await file.read(),
             filename=file.filename or "knowledge.txt",

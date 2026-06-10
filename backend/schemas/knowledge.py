@@ -9,6 +9,8 @@ class KnowledgeUploadResponse(BaseModel):
     document_id: int
     chunk_ids: list[int]
     file_path: str
+    indexing_status: str = "indexed"
+    extraction_message: str = ""
 
 
 class KnowledgeDocumentSummary(BaseModel):
@@ -20,6 +22,9 @@ class KnowledgeDocumentSummary(BaseModel):
     specialty: str | None = None
     project_year: int | None = None
     tags: list[str] = []
+    ingestion_mode: str | None = None
+    indexing_status: str | None = None
+    extraction_message: str | None = None
     chunk_count: int
     created_at: str
 

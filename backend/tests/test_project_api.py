@@ -238,6 +238,8 @@ def test_upload_knowledge_indexes_file(monkeypatch) -> None:
             "document_id": 9,
             "chunk_ids": [101, 102],
             "file_path": "knowledge/sample.txt",
+            "indexing_status": "indexed",
+            "extraction_message": "",
         }
 
     monkeypatch.setattr(
@@ -255,6 +257,8 @@ def test_upload_knowledge_indexes_file(monkeypatch) -> None:
         "document_id": 9,
         "chunk_ids": [101, 102],
         "file_path": "knowledge/sample.txt",
+        "indexing_status": "indexed",
+        "extraction_message": "",
     }
     assert captured == {
         "file_bytes": b"knowledge text",

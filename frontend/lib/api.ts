@@ -361,6 +361,7 @@ export function uploadKnowledge(
     specialty?: string;
     projectYear?: number | null;
     tags?: string[];
+    ingestionMode?: string;
   }
 ) {
   const body = new FormData();
@@ -376,6 +377,9 @@ export function uploadKnowledge(
   }
   if (metadata?.tags?.length) {
     body.append("tags", metadata.tags.join(","));
+  }
+  if (metadata?.ingestionMode) {
+    body.append("ingestion_mode", metadata.ingestionMode);
   }
   return requestJson<KnowledgeUploadResponse>("/api/knowledge/upload", {
     method: "POST",

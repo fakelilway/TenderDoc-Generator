@@ -406,6 +406,8 @@ export type KnowledgeUploadResponse = {
   document_id: number;
   chunk_ids: number[];
   file_path: string;
+  indexing_status: string;
+  extraction_message?: string;
 };
 
 export type KnowledgeDocumentSummary = {
@@ -417,6 +419,9 @@ export type KnowledgeDocumentSummary = {
   specialty?: string | null;
   project_year?: number | null;
   tags?: string[];
+  ingestion_mode?: string | null;
+  indexing_status?: string | null;
+  extraction_message?: string | null;
   chunk_count: number;
   created_at: string;
 };

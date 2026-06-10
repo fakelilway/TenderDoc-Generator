@@ -25,14 +25,15 @@ def test_split_text_uses_overlap() -> None:
 
 def test_iter_knowledge_files_filters_supported_extensions(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
-    (tmp_path / "ignore.md").write_text("skip", encoding="utf-8")
+    (tmp_path / "notes.md").write_text("markdown", encoding="utf-8")
+    (tmp_path / "ignore.xlsx").write_text("skip", encoding="utf-8")
     nested = tmp_path / "nested"
     nested.mkdir()
     _write_docx(nested / "b.docx", "docx text")
 
     files = iter_knowledge_files(tmp_path)
 
-    assert [path.name for path in files] == ["a.txt", "b.docx"]
+    assert [path.name for path in files] == ["a.txt", "b.docx", "notes.md"]
 
 
 def test_index_document_extracts_metadata_and_chunks(tmp_path: Path) -> None:

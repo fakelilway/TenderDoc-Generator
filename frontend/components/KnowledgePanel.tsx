@@ -59,6 +59,7 @@ export function KnowledgePanel() {
   const [specialty, setSpecialty] = useState("");
   const [projectYear, setProjectYear] = useState("");
   const [tagText, setTagText] = useState("");
+  const [ingestionMode, setIngestionMode] = useState("auto");
   const [query, setQuery] = useState("施工组织设计 工期 质量 安全");
   const [results, setResults] = useState<KnowledgeSearchResult[]>([]);
   const [busy, setBusy] = useState(false);
@@ -110,14 +111,20 @@ export function KnowledgePanel() {
         tags: tagText
           .split(",")
           .map((tag) => tag.trim())
-          .filter(Boolean)
+          .filter(Boolean),
+        ingestionMode: ingestionMode === "auto" ? undefined : ingestionMode
       });
-      setLastUpload(`${file.name}：${response.chunk_ids.length} 个片段`);
+      const statusText =
+        response.indexing_status === "evidence_only"
+          ? "仅存证据"
+          : `${response.chunk_ids.length} 个片段`;
+      setLastUpload(`${file.name}：${statusText}`);
       setFile(null);
       setDocumentType("");
       setSpecialty("");
       setProjectYear("");
       setTagText("");
+      setIngestionMode("auto");
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -235,7 +242,7 @@ export function KnowledgePanel() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.docx,.txt"
+              accept=".pdf,.doc,.docx,.txt,.md,.jpg,.jpeg,.png"
               className="hidden"
               onChange={chooseFile}
             />
@@ -273,7 +280,9 @@ export function KnowledgePanel() {
                 <span className="text-sm font-medium text-ink">
                   上传历史标书 / 企业资料
                 </span>
-                <span className="mt-1 text-xs text-muted">PDF / DOCX / TXT</span>
+                <span className="mt-1 text-xs text-muted">
+                  PDF / DOC / DOCX / TXT / MD / JPG / PNG
+                </span>
               </button>
             )}
 
@@ -302,6 +311,16 @@ export function KnowledgePanel() {
                 className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
                 placeholder="标签，逗号分隔"
               />
+              <select
+                value={ingestionMode}
+                onChange={(event) => setIngestionMode(event.target.value)}
+                className="col-span-2 h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+              >
+                <option value="auto">自动判断摄入方式</option>
+                <option value="rag_text">RAG 文本资料</option>
+                <option value="structured_evidence">证件/证据资料</option>
+                <option value="evidence_only">仅存原件不索引</option>
+              </select>
             </div>
 
             <button
@@ -315,7 +334,7 @@ export function KnowledgePanel() {
               ) : (
                 <UploadCloud className="h-4 w-4" />
               )}
-              入库并向量化
+              上传入库
             </button>
           </>
         ) : (
@@ -420,8 +439,16 @@ export function KnowledgePanel() {
                           {document.file_name}
                         </p>
                         <p className="mt-1 text-xs text-muted">
-                          {document.chunk_count} 片段 · {formatDate(document.created_at)}
+                          {document.indexing_status === "evidence_only"
+                            ? "仅存证据"
+                            : `${document.chunk_count} 片段`}{" "}
+                          · {formatDate(document.created_at)}
                         </p>
+                        {document.extraction_message ? (
+                          <p className="mt-1 line-clamp-2 text-xs text-danger">
+                            {document.extraction_message}
+                          </p>
+                        ) : null}
                         {document.document_type || document.specialty || document.tags?.length ? (
                           <p className="mt-1 truncate text-xs text-muted">
                             {[document.document_type, document.specialty, ...(document.tags ?? [])]

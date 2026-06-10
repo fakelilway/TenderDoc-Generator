@@ -9,7 +9,7 @@ from rag.indexer import KnowledgeChunk, split_text
 from psycopg2.extras import Json
 
 from rag.vector_store import _connect, store_knowledge_chunks
-from utils.file_parser import extract_text
+from utils.file_parser import IMAGE_EXTENSIONS, extract_text
 from utils.minio_client import minio_client
 
 
@@ -37,6 +37,25 @@ def _file_type(filename: str, content_type: str | None = None) -> str:
     return "unknown"
 
 
+def _default_ingestion_mode(filename: str, document_type: str | None = None) -> str:
+    suffix = Path(filename).suffix.lower()
+    normalized_type = (document_type or "").lower()
+    sensitive_keywords = (
+        "身份证",
+        "社保",
+        "开户",
+        "银行卡",
+        "id_card",
+        "social_security",
+        "bank",
+    )
+    if any(keyword in normalized_type for keyword in sensitive_keywords):
+        return "structured_evidence"
+    if suffix in IMAGE_EXTENSIONS:
+        return "structured_evidence"
+    return "rag_text"
+
+
 def index_uploaded_knowledge(
     file_bytes: bytes,
     filename: str,
@@ -45,6 +64,7 @@ def index_uploaded_knowledge(
     specialty: str | None = None,
     project_year: int | None = None,
     tags: list[str] | None = None,
+    ingestion_mode: str | None = None,
 ) -> dict[str, object]:
     if not file_bytes:
         raise ValueError("Uploaded knowledge file is empty")
@@ -53,8 +73,28 @@ def index_uploaded_knowledge(
     object_name = _knowledge_object_name(safe_name)
     minio_client.upload_file(settings.minio_bucket, file_bytes, object_name)
 
-    text = extract_text(file_bytes, filename=safe_name, content_type=content_type)
+    mode = ingestion_mode or _default_ingestion_mode(safe_name, document_type)
     metadata = _clean_metadata(document_type, specialty, project_year, tags)
+    text = ""
+    extraction_message = ""
+    if mode == "rag_text":
+        try:
+            text = extract_text(
+                file_bytes, filename=safe_name, content_type=content_type
+            )
+        except ValueError as error:
+            mode = "evidence_only"
+            extraction_message = str(error)
+    chunks = split_text(text)
+    indexing_status = "indexed" if chunks else "evidence_only"
+    if mode == "structured_evidence":
+        indexing_status = "structured_evidence"
+    metadata = {
+        **metadata,
+        "ingestion_mode": mode,
+        "indexing_status": indexing_status,
+        "extraction_message": extraction_message,
+    }
     chunks = [
         KnowledgeChunk(
             content=content,
@@ -79,6 +119,8 @@ def index_uploaded_knowledge(
         "document_id": stored["document_id"],
         "chunk_ids": stored["chunk_ids"],
         "file_path": object_name,
+        "indexing_status": indexing_status,
+        "extraction_message": extraction_message,
     }
 
 
@@ -126,6 +168,9 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
             "specialty": (row[4] or {}).get("specialty"),
             "project_year": (row[4] or {}).get("project_year"),
             "tags": (row[4] or {}).get("tags", []),
+            "ingestion_mode": (row[4] or {}).get("ingestion_mode"),
+            "indexing_status": (row[4] or {}).get("indexing_status"),
+            "extraction_message": (row[4] or {}).get("extraction_message"),
             "created_at": row[5].isoformat(),
             "chunk_count": int(row[6]),
         }
@@ -188,6 +233,9 @@ def rename_knowledge_document(
         "specialty": (row[4] or {}).get("specialty"),
         "project_year": (row[4] or {}).get("project_year"),
         "tags": (row[4] or {}).get("tags", []),
+        "ingestion_mode": (row[4] or {}).get("ingestion_mode"),
+        "indexing_status": (row[4] or {}).get("indexing_status"),
+        "extraction_message": (row[4] or {}).get("extraction_message"),
         "created_at": row[5].isoformat(),
         "chunk_count": chunk_count,
     }
@@ -226,9 +274,7 @@ def _clean_metadata(
     tags: list[str] | None,
 ) -> dict[str, object]:
     clean_tags = [
-        re.sub(r"\s+", " ", tag).strip()
-        for tag in (tags or [])
-        if str(tag).strip()
+        re.sub(r"\s+", " ", tag).strip() for tag in (tags or []) if str(tag).strip()
     ]
     metadata: dict[str, object] = {"tags": sorted(set(clean_tags))}
     if document_type and document_type.strip():
