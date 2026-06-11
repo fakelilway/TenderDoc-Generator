@@ -39,12 +39,12 @@ export function ViewShell({
         <div
           className={`mx-auto flex ${widthClass} flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-6`}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             <NavLinkButton href="/" icon={ArrowLeft}>
               返回主页
             </NavLinkButton>
-            <h1 className="flex items-center gap-2 text-lg font-semibold text-ink">
-              <Icon className="h-5 w-5" />
+            <h1 className="flex shrink-0 items-center gap-2 whitespace-nowrap text-lg font-semibold text-ink">
+              <Icon className="h-5 w-5 shrink-0" />
               {title}
             </h1>
           </div>
