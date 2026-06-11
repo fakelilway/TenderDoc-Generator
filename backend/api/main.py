@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+import uuid
+from contextlib import asynccontextmanager
+
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -11,6 +15,8 @@ from fastapi import (
     UploadFile,
 )
 
+from core.config import settings, validate_security_settings
+from core.db import close_pool
 from rag import retriever
 from schemas.auth import (
     AuthMeResponse,
@@ -41,10 +47,8 @@ from schemas.project import (
     ProjectDeleteResponse,
     ProjectDeliveryPreviewResponse,
     ProjectDownloadResponse,
-    ProjectGenerateResponse,
     ProjectListResponse,
     ProjectResultResponse,
-    ProjectReviewResponse,
     ProjectStatusResponse,
     ProjectSummary,
     ProjectTemplateRequest,
@@ -80,7 +84,6 @@ from schemas.workflow import (
 )
 from services import (
     auth_service,
-    generation_service,
     knowledge_service,
     project_service,
     template_service,
@@ -90,17 +93,37 @@ from services.project_service import ProjectAccessError, ProjectNotFoundError
 from services.template_service import TemplateNotFoundError
 
 
-app = FastAPI(title="TenderDoc Generator API")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    validate_security_settings(settings)
+    yield
+    close_pool()
+
+
+app = FastAPI(title="TenderDoc Generator API", lifespan=_lifespan)
 
 
 def _raise_http_error(error: Exception) -> None:
+    if isinstance(error, HTTPException):
+        raise error
     if isinstance(error, (ProjectNotFoundError, TemplateNotFoundError)):
         raise HTTPException(status_code=404, detail=str(error)) from error
     if isinstance(error, ProjectAccessError):
         raise HTTPException(status_code=403, detail=str(error)) from error
     if isinstance(error, ValueError):
         raise HTTPException(status_code=400, detail=str(error)) from error
-    raise HTTPException(status_code=500, detail=str(error)) from error
+
+    request_id = uuid.uuid4().hex
+    logger.exception("Unhandled API error (request_id=%s)", request_id)
+    if settings.debug:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    raise HTTPException(
+        status_code=500,
+        detail=f"服务器内部错误，请稍后重试（请求编号：{request_id}）",
+    ) from error
 
 
 def authorized_project(
@@ -688,28 +711,6 @@ def build_project_response_matrix(
     return ProjectResponseMatrixResponse(**result)
 
 
-@app.post(
-    "/api/project/{project_id}/generate",
-    response_model=ProjectGenerateResponse,
-    response_model_exclude_none=True,
-)
-def generate_project(
-    project_id: int,
-    background_tasks: BackgroundTasks,
-    _project: int = Depends(authorized_project),
-) -> ProjectGenerateResponse:
-    try:
-        task_info = generation_service.start_generation(project_id, background_tasks)
-    except Exception as error:
-        _raise_http_error(error)
-
-    return ProjectGenerateResponse(
-        project_id=project_id,
-        status=task_info["status"],
-        task_id=task_info["task_id"],
-    )
-
-
 @app.get("/api/project/{project_id}/download", response_model=ProjectDownloadResponse)
 def download_project(
     project_id: int,
@@ -795,17 +796,6 @@ def project_result(
 ) -> ProjectResultResponse:
     try:
         return ProjectResultResponse(**project_service.get_project_result(project_id))
-    except Exception as error:
-        _raise_http_error(error)
-
-
-@app.get("/api/project/{project_id}/review", response_model=ProjectReviewResponse)
-def project_review(
-    project_id: int,
-    _project: int = Depends(authorized_project),
-) -> ProjectReviewResponse:
-    try:
-        return ProjectReviewResponse(**project_service.get_project_review(project_id))
     except Exception as error:
         _raise_http_error(error)
 

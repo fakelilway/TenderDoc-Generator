@@ -52,22 +52,6 @@ class ProjectResultResponse(BaseModel):
     parsed_json: dict[str, Any] | None = None
 
 
-class ProjectReviewResponse(BaseModel):
-    project_id: int
-    status: str
-    invalid_bid_items: list[dict[str, Any]] = []
-    review_report: dict[str, Any] | None = None
-
-
-class ProjectGenerateResponse(BaseModel):
-    project_id: int
-    status: str
-    task_id: str | None = None
-    generated_markdown_path: str | None = None
-    generated_docx_path: str | None = None
-    quality_report: dict[str, Any] | None = None
-
-
 class ProjectDownloadResponse(BaseModel):
     project_id: int
     status: str

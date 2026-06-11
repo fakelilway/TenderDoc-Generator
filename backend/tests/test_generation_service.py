@@ -1,5 +1,5 @@
 from services import generation_service
-from schemas.tender import RequirementItem, TenderRequirements
+from utils.docx_exporter import combine_delivery_volumes
 
 
 def test_evaluate_generation_quality_counts_placeholders() -> None:
@@ -19,128 +19,114 @@ def test_evaluate_generation_quality_counts_placeholders() -> None:
     assert report["usable_rate"] == 0.5
 
 
-def test_section_query_uses_rag_for_material_reference_only() -> None:
-    requirements = TenderRequirements(
-        project_name="测试项目",
-        technical_score_items=[
-            RequirementItem(title="施工组织设计", description="施工组织设计 30 分")
-        ],
-    )
+class _FakeCursor:
+    def __init__(self, statements):
+        self.statements = statements
 
-    query = generation_service._section_query("施工组织设计", requirements)
+    def __enter__(self):
+        return self
 
-    assert "素材参考" in query
-    assert "正式标书措辞" in query
-    assert "技术文件格式" not in query
-    assert "安徽正奇" not in query
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, statement, params=None):
+        self.statements.append((statement, params))
 
 
-def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> None:
+class _FakeConnection:
+    def __init__(self, statements):
+        self.statements = statements
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def cursor(self, *args, **kwargs):
+        return _FakeCursor(self.statements)
+
+
+class _FakeMinio:
+    def __init__(self):
+        self.uploads = []
+
+    def upload_file(self, bucket, file_path, object_name):
+        content = None
+        if str(file_path).endswith(".md"):
+            content = file_path.read_text(encoding="utf-8")
+        self.uploads.append((bucket, object_name, content))
+        return object_name
+
+
+def test_export_markdown_for_project_stores_markdown_docx_and_quality(
+    monkeypatch,
+) -> None:
     statements = []
-
-    class FakeCursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def execute(self, statement, params=None):
-            statements.append((statement, params))
-
-        def fetchone(self):
-            return {
-                "id": 7,
-                "name": "项目",
-                "parsed_json": {
-                    "project_name": "项目",
-                    "qualification_list": [],
-                    "technical_score_items": [
-                        {
-                            "title": "施工组织设计",
-                            "description": "施工组织设计 30 分",
-                            "source": {"source_text": "", "page_number": None},
-                        }
-                    ],
-                    "invalid_bid_items": [],
-                },
-            }
-
-    class FakeConnection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def cursor(self, *args, **kwargs):
-            return FakeCursor()
-
-    class FakeMinio:
-        def __init__(self):
-            self.uploads = []
-
-        def upload_file(self, bucket, file_path, object_name):
-            self.uploads.append((bucket, str(file_path), object_name))
-            return object_name
-
-    fake_minio = FakeMinio()
-    monkeypatch.setattr(generation_service, "_connect", lambda: FakeConnection())
+    fake_minio = _FakeMinio()
+    monkeypatch.setattr(
+        generation_service, "_connect", lambda: _FakeConnection(statements)
+    )
     monkeypatch.setattr(generation_service, "minio_client", fake_minio)
-    monkeypatch.setattr(
-        "services.template_service.bid_template_for_project",
-        lambda project_id: None,
-    )
-    monkeypatch.setattr(
-        "services.knowledge_service.list_knowledge_image_references",
-        lambda query, limit=12: [
-            {
-                "document_id": 36,
-                "file_name": "人员_王兴祥_一级建造师证.jpg",
-                "caption": "一级建造师证",
-                "tags": ["一级建造师证"],
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        "services.knowledge_service.get_knowledge_document_file_bytes",
-        lambda document_id: b"",
-    )
-    monkeypatch.setattr(
-        generation_service.retriever,
-        "retrieve",
-        lambda query, top_k=3: ["高层住宅施工组织设计知识片段"],
+
+    markdown = "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。\n"
+    quality_report = generation_service.evaluate_generation_quality(markdown)
+
+    markdown_object, docx_object = generation_service.export_markdown_for_project(
+        7,
+        markdown,
+        quality_report,
     )
 
-    captured = {}
-
-    def fake_generate_bid_document(
-        requirements,
-        chunks,
-        bid_template=None,
-        pricing_strategy=None,
-        knowledge_images=None,
-        bid_plan=None,
-    ):
-        captured["knowledge_images"] = knowledge_images
-        captured["bid_plan"] = bid_plan
-        return "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。"
-
-    monkeypatch.setattr(
-        generation_service,
-        "generate_bid_document",
-        fake_generate_bid_document,
-    )
-
-    result = generation_service.generate_and_export(7)
-
-    assert result.generated_markdown_path == "projects/7/generated/bid.md"
-    assert result.generated_docx_path == "projects/7/generated/bid.docx"
-    assert result.quality_report["usable_rate"] == 1.0
-    assert captured["knowledge_images"][0]["document_id"] == 36
-    assert captured["bid_plan"].sections
-    assert [upload[2] for upload in fake_minio.uploads] == [
+    assert markdown_object == "projects/7/generated/bid.md"
+    assert docx_object == "projects/7/generated/bid.docx"
+    assert [upload[1] for upload in fake_minio.uploads] == [
         "projects/7/generated/bid.md",
         "projects/7/generated/bid.docx",
     ]
     assert any("generated_docx_path" in statement for statement, _params in statements)
+    assert any(
+        params and "generated" in params for _statement, params in statements
+    )
+
+
+def test_export_markdown_for_project_strips_meta_notes(monkeypatch) -> None:
+    statements = []
+    fake_minio = _FakeMinio()
+    captured = {}
+
+    def fake_markdown_to_docx(markdown, docx_path, **kwargs):
+        captured["docx_markdown"] = markdown
+        captured["title"] = kwargs.get("title")
+
+    monkeypatch.setattr(
+        generation_service, "_connect", lambda: _FakeConnection(statements)
+    )
+    monkeypatch.setattr(generation_service, "minio_client", fake_minio)
+    monkeypatch.setattr(generation_service, "markdown_to_docx", fake_markdown_to_docx)
+
+    markdown = combine_delivery_volumes(
+        "测试项目投标文件",
+        {
+            "commercial": "# 商务文件\n\n法定代表人授权书等商务内容，满足资格审查要求。",
+            "technical": "# 技术文件\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。",
+            "pricing": "# 报价文件\n\n投标报价汇总表内容。",
+        },
+        notes="第 1 轮审查发现 2 处问题，已自动修正。",
+    )
+    markdown += "\n## 审查修正说明\n\n遗留的旧版审查说明段落。\n"
+
+    generation_service.export_markdown_for_project(7, markdown, {"usable_rate": 1.0})
+
+    uploaded_markdown = next(
+        content
+        for _bucket, object_name, content in fake_minio.uploads
+        if object_name.endswith(".md")
+    )
+    for exported in (uploaded_markdown, captured["docx_markdown"]):
+        assert "tdg:volume" not in exported
+        assert "审查发现" not in exported
+        assert "审查修正说明" not in exported
+        assert "施工组织设计" in exported
+        assert "投标报价汇总表内容" in exported
+    assert captured["title"] == "测试项目投标文件"

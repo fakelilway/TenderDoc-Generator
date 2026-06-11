@@ -8,6 +8,11 @@ from minio import Minio
 from core.config import settings
 
 
+# Buckets already verified/created in this process; avoids a bucket_exists
+# round-trip before every object operation.
+_verified_buckets: set[str] = set()
+
+
 class MinioClient:
     def __init__(self) -> None:
         parsed_url = urlparse(settings.minio_api_url)
@@ -21,8 +26,11 @@ class MinioClient:
         )
 
     def _ensure_bucket(self, bucket: str) -> None:
+        if bucket in _verified_buckets:
+            return
         if not self.client.bucket_exists(bucket):
             self.client.make_bucket(bucket)
+        _verified_buckets.add(bucket)
 
     def upload_file(self, bucket: str, file_path, object_name: str) -> str:
         self._ensure_bucket(bucket)
@@ -58,7 +66,7 @@ class MinioClient:
         expiry: int = 3600,
         response_filename: str | None = None,
     ) -> str:
-        self._ensure_bucket(bucket)
+        # Presigned URLs only sign a request; no bucket round-trip needed.
         response_headers = None
         if response_filename:
             encoded = quote(response_filename)

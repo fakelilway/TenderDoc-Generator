@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
-from utils.file_parser import SUPPORTED_EXTENSIONS, extract_text
+from utils.file_parser import extract_text
 
 
 DEFAULT_CHUNK_SIZE = 1200
@@ -15,22 +14,6 @@ DEFAULT_CHUNK_OVERLAP = 200
 class KnowledgeChunk:
     content: str
     metadata: dict[str, str | int] = field(default_factory=dict)
-
-
-def iter_knowledge_files(knowledge_dir: str | Path) -> list[Path]:
-    """Return supported knowledge-base files in stable path order."""
-    root = Path(knowledge_dir)
-    if not root.exists():
-        raise FileNotFoundError(f"Knowledge base directory does not exist: {root}")
-    if not root.is_dir():
-        raise NotADirectoryError(f"Knowledge base path is not a directory: {root}")
-
-    files = [
-        path
-        for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
-    return sorted(files)
 
 
 def split_text(
@@ -94,32 +77,3 @@ def index_document(
         )
         for index, content in enumerate(chunks)
     ]
-
-
-def index_knowledge_base(
-    knowledge_dir: str | Path,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-) -> list[KnowledgeChunk]:
-    root = Path(knowledge_dir)
-    chunks: list[KnowledgeChunk] = []
-    for path in iter_knowledge_files(root):
-        chunks.extend(
-            index_document(
-                path,
-                source_root=root,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-            )
-        )
-    return chunks
-
-
-def print_chunk_summary(chunks: Iterable[KnowledgeChunk]) -> None:
-    chunks = list(chunks)
-    print(f"Indexed chunks: {len(chunks)}")
-    for chunk in chunks[:5]:
-        print(
-            f"- {chunk.metadata['source_path']} "
-            f"#{chunk.metadata['chunk_index']}: {len(chunk.content)} chars"
-        )

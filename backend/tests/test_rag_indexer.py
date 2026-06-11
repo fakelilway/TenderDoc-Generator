@@ -1,39 +1,14 @@
 from pathlib import Path
 
 import pytest
-from docx import Document
 
-from rag.indexer import (
-    index_document,
-    index_knowledge_base,
-    iter_knowledge_files,
-    split_text,
-)
-
-
-def _write_docx(path: Path, text: str) -> None:
-    document = Document()
-    document.add_paragraph(text)
-    document.save(path)
+from rag.indexer import index_document, split_text
 
 
 def test_split_text_uses_overlap() -> None:
     chunks = split_text("abcdefghijklmnopqrstuvwxyz", chunk_size=10, chunk_overlap=3)
 
     assert chunks == ["abcdefghij", "hijklmnopq", "opqrstuvwx", "vwxyz"]
-
-
-def test_iter_knowledge_files_filters_supported_extensions(tmp_path: Path) -> None:
-    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
-    (tmp_path / "notes.md").write_text("markdown", encoding="utf-8")
-    (tmp_path / "ignore.xlsx").write_text("skip", encoding="utf-8")
-    nested = tmp_path / "nested"
-    nested.mkdir()
-    _write_docx(nested / "b.docx", "docx text")
-
-    files = iter_knowledge_files(tmp_path)
-
-    assert [path.name for path in files] == ["a.txt", "b.docx", "notes.md"]
 
 
 def test_index_document_extracts_metadata_and_chunks(tmp_path: Path) -> None:
@@ -52,22 +27,6 @@ def test_index_document_extracts_metadata_and_chunks(tmp_path: Path) -> None:
         "file_type": "txt",
         "chunk_index": 0,
     }
-
-
-def test_index_knowledge_base_extracts_txt_docx_and_pdf(tmp_path: Path) -> None:
-    (tmp_path / "资质.txt").write_text("企业资质：建筑工程施工总承包", encoding="utf-8")
-    _write_docx(tmp_path / "业绩.docx", "类似工程业绩：高层住宅")
-    fixture_pdf = Path(__file__).parent / "fixtures" / "tenders" / "1招标文件正文.pdf"
-    pdf_copy = tmp_path / "招标.pdf"
-    pdf_copy.write_bytes(fixture_pdf.read_bytes())
-
-    chunks = index_knowledge_base(tmp_path, chunk_size=5000, chunk_overlap=200)
-    sources = {chunk.metadata["source_path"] for chunk in chunks}
-
-    assert {"资质.txt", "业绩.docx", "招标.pdf"} <= sources
-    assert any("建筑工程施工总承包" in chunk.content for chunk in chunks)
-    assert any("类似工程业绩" in chunk.content for chunk in chunks)
-    assert any("投标人" in chunk.content or "招标" in chunk.content for chunk in chunks)
 
 
 def test_split_text_rejects_invalid_overlap() -> None:

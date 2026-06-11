@@ -100,7 +100,9 @@ export function OutlineEditor({
       ) : null}
       <div className="mt-3 space-y-2">
         {outline.map((section, index) => (
-          <div key={`${section.title}-${index}`} className="rounded-md border border-line bg-field p-3">
+          // The title is editable, so it must not be part of the key:
+          // typing would remount the input and drop focus on every keystroke.
+          <div key={index} className="rounded-md border border-line bg-field p-3">
             <div className="flex gap-2">
               <input
                 value={section.title}

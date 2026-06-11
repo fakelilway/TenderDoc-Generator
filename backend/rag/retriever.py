@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -9,6 +10,23 @@ from sentence_transformers import CrossEncoder
 from core.config import settings
 from rag.embeddings import embed_text
 from rag.vector_store import _connect, format_vector
+
+
+_cross_encoder_lock = threading.Lock()
+_cross_encoder_cache: dict[str, CrossEncoder] = {}
+
+
+def _get_cross_encoder(model_name: str) -> CrossEncoder:
+    """Return a process-wide cached CrossEncoder, loading it at most once per name."""
+    model = _cross_encoder_cache.get(model_name)
+    if model is not None:
+        return model
+    with _cross_encoder_lock:
+        model = _cross_encoder_cache.get(model_name)
+        if model is None:
+            model = CrossEncoder(model_name)
+            _cross_encoder_cache[model_name] = model
+        return model
 
 
 @dataclass(frozen=True)
@@ -77,7 +95,7 @@ def rerank_with_cross_encoder(
     if not results:
         return []
 
-    model = CrossEncoder(model_name or settings.rerank_model)
+    model = _get_cross_encoder(model_name or settings.rerank_model)
     pairs = [(query, result.content) for result in results]
     scores = model.predict(pairs)
     return [

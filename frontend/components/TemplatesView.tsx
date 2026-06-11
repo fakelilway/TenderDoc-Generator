@@ -2,14 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   Database,
   FileStack,
   FolderOpen,
   Loader2,
-  LogOut,
   Pencil,
-  Plus,
   Trash2,
   UploadCloud,
   Users
@@ -17,12 +14,12 @@ import {
 import {
   deleteTemplate,
   listTemplates,
-  logout as logoutRequest,
   updateTemplate,
   uploadTemplate
 } from "@/lib/api";
-import { clearSession, getStoredSession } from "@/lib/auth";
+import { getStoredSession } from "@/lib/auth";
 import { NavLinkButton } from "@/components/NavLinkButton";
+import { ViewShell } from "@/components/ViewShell";
 import type { TemplateSummary } from "@/lib/types";
 
 function errorMessage(error: unknown) {
@@ -50,16 +47,6 @@ export function TemplatesView() {
     const session = getStoredSession();
     setIsAdmin(session?.role === "admin");
   }, []);
-
-  async function handleLogout() {
-    try {
-      await logoutRequest();
-    } catch {
-      // Local logout should still proceed if the token has already expired.
-    }
-    clearSession();
-    window.location.replace("/login");
-  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,46 +122,26 @@ export function TemplatesView() {
   }
 
   return (
-    <main className="min-h-screen bg-field">
-      <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-6">
-          <div className="flex items-center gap-3">
-            <NavLinkButton href="/" icon={ArrowLeft}>
-              返回主页
+    <ViewShell
+      title="投标模板库"
+      icon={FileStack}
+      actions={
+        <>
+          <NavLinkButton href="/projects" icon={FolderOpen}>
+            历史项目
+          </NavLinkButton>
+          <NavLinkButton href="/knowledge" icon={Database}>
+            知识库
+          </NavLinkButton>
+          {isAdmin ? (
+            <NavLinkButton href="/admin/users" icon={Users}>
+              账号管理
             </NavLinkButton>
-            <h1 className="flex items-center gap-2 text-lg font-semibold text-ink">
-              <FileStack className="h-5 w-5" />
-              投标模板库
-            </h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <NavLinkButton href="/projects" icon={FolderOpen}>
-              历史项目
-            </NavLinkButton>
-            <NavLinkButton href="/knowledge" icon={Database}>
-              知识库
-            </NavLinkButton>
-            {isAdmin ? (
-              <NavLinkButton href="/admin/users" icon={Users}>
-                账号管理
-              </NavLinkButton>
-            ) : null}
-            <NavLinkButton href="/" icon={Plus} variant="primary">
-              新建项目
-            </NavLinkButton>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <LogOut className="h-4 w-4" />
-              退出
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-5xl px-4 py-6 lg:px-6">
+          ) : null}
+        </>
+      }
+    >
+      <>
         {error ? (
           <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger">
             {error}
@@ -319,7 +286,7 @@ export function TemplatesView() {
             </div>
           ))}
         </div>
-      </div>
-    </main>
+      </>
+    </ViewShell>
   );
 }

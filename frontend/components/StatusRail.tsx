@@ -96,7 +96,7 @@ function statusIndex(status: string) {
   if (["reviewing"].includes(value)) {
     return 3;
   }
-  if (["human_review", "needs_revision"].includes(value)) {
+  if (["human_review", "needs_revision", "draft_saved"].includes(value)) {
     return 4;
   }
   if (["approved", "finished"].includes(value)) {

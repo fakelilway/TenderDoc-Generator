@@ -11,7 +11,10 @@ from schemas.tender import TenderRequirements
 
 QUALIFICATION_KEYWORDS = (
     "资格",
-    "证",
+    "证书",
+    "证件",
+    "证明",
+    "执照",
     "法人",
     "授权",
     "项目经理",
@@ -35,6 +38,13 @@ TECHNICAL_KEYWORDS = (
 )
 PRICING_KEYWORDS = ("报价", "清单", "投标总价", "经济标", "计价")
 TABLE_KEYWORDS = ("表", "附表", "计划", "清单", "汇总", "机构", "配置")
+
+PRICING_VOLUME_KEYWORDS = ("报价", "经济")
+QUALIFICATION_VOLUME_KEYWORDS = ("商务", "资格")
+TECHNICAL_VOLUME_KEYWORDS = ("技术",)
+PRICING_SECTION_TYPES = {"pricing", "price", "price_missing_template"}
+QUALIFICATION_SECTION_TYPES = {"business", "business_volume", "qualification"}
+TECHNICAL_SECTION_TYPES = {"technical", "technical_volume", "construction_design"}
 
 
 def build_bid_plan(
@@ -79,8 +89,12 @@ def _build_section_plan(
     template_profile: TemplateProfile | None,
 ) -> BidPlanSection:
     title_text = seed.title
-    chunk_ids = _chunk_ids_for_section(title_text, evidence_pack)
-    image_ids = _image_ids_for_section(title_text, evidence_pack, template_profile)
+    chunk_ids = _chunk_ids_for_section(
+        title_text, seed.volume, seed.section_type, evidence_pack
+    )
+    image_ids = _image_ids_for_section(
+        title_text, seed.volume, seed.section_type, evidence_pack, template_profile
+    )
     requirement_refs = _requirement_refs_for_section(title_text, requirements)
     table_required = seed.table_required or _section_needs_table(
         title_text, template_profile
@@ -175,16 +189,44 @@ def _fallback_sections() -> list[BidPlanSection]:
     ]
 
 
-def _chunk_ids_for_section(title: str, evidence_pack: EvidencePack) -> list[int]:
+def _evidence_route(title: str, volume: str, section_type: str) -> str:
+    if _contains_any(volume, PRICING_VOLUME_KEYWORDS) or (
+        section_type in PRICING_SECTION_TYPES
+    ):
+        return "pricing"
+    if _contains_any(volume, QUALIFICATION_VOLUME_KEYWORDS) or (
+        section_type in QUALIFICATION_SECTION_TYPES
+    ):
+        return "qualification"
+    if _contains_any(volume, TECHNICAL_VOLUME_KEYWORDS) or (
+        section_type in TECHNICAL_SECTION_TYPES
+    ):
+        return "technical"
     if _contains_any(title, PRICING_KEYWORDS):
+        return "pricing"
+    if _contains_any(title, TECHNICAL_KEYWORDS):
+        return "technical"
+    if _contains_any(title, QUALIFICATION_KEYWORDS):
+        return "qualification"
+    return "other"
+
+
+def _chunk_ids_for_section(
+    title: str,
+    volume: str,
+    section_type: str,
+    evidence_pack: EvidencePack,
+) -> list[int]:
+    route = _evidence_route(title, volume, section_type)
+    if route == "pricing":
         items = evidence_pack.pricing_attachments + evidence_pack.table_attachments
-    elif _contains_any(title, QUALIFICATION_KEYWORDS):
+    elif route == "qualification":
         items = [
             *evidence_pack.company_certificates,
             *evidence_pack.person_certificates,
             *evidence_pack.performance_projects,
         ]
-    elif _contains_any(title, TECHNICAL_KEYWORDS):
+    elif route == "technical":
         items = evidence_pack.technical_schemes + evidence_pack.table_attachments
     else:
         items = evidence_pack.other_references + evidence_pack.technical_schemes
@@ -193,15 +235,18 @@ def _chunk_ids_for_section(title: str, evidence_pack: EvidencePack) -> list[int]
 
 def _image_ids_for_section(
     title: str,
+    volume: str,
+    section_type: str,
     evidence_pack: EvidencePack,
     template_profile: TemplateProfile | None,
 ) -> list[int]:
     slot_keywords = _slot_keywords(
         template_profile.image_slots if template_profile else [], title
     )
-    if _contains_any(title, QUALIFICATION_KEYWORDS):
+    route = _evidence_route(title, volume, section_type)
+    if route == "qualification":
         keywords = (*QUALIFICATION_KEYWORDS, *slot_keywords)
-    elif _contains_any(title, TECHNICAL_KEYWORDS):
+    elif route == "technical":
         keywords = ("施工平面图", "现场", "布置", *slot_keywords)
     else:
         keywords = slot_keywords

@@ -1,89 +1,21 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from uuid import uuid4
 
-from psycopg2.extras import Json, RealDictCursor
+from psycopg2.extras import Json
 
-from agents.generator_agent import (
-    build_bid_outline,
-    generate_bid_document,
-    load_bid_template,
-)
 from core.config import settings
-from rag import retriever
-from schemas.bid import BidGenerationResult
 from schemas.tender import TenderRequirements
-from services.project_service import ProjectNotFoundError, _connect
-from utils.docx_exporter import markdown_to_docx
+from services.project_service import _connect
+from utils.docx_exporter import markdown_to_docx, strip_meta_notes
 from utils.minio_client import minio_client
 
 
+logger = logging.getLogger(__name__)
+
 PLACEHOLDER_WORDS = ("待补充", "TODO", "占位", "placeholder")
-
-
-def generate_and_export(project_id: int) -> BidGenerationResult:
-    project = _fetch_project_for_generation(project_id)
-    parsed_json = project.get("parsed_json")
-    if not parsed_json:
-        raise ValueError("Project has no parsed tender requirements")
-
-    requirements = TenderRequirements.model_validate(parsed_json)
-    from services import template_service
-
-    bid_template = (
-        template_service.bid_template_for_project(project_id) or load_bid_template()
-    )
-    outline = build_bid_outline(requirements, bid_template)
-    retrieved_chunks_by_section = {
-        section.title: retriever.retrieve(
-            _section_query(section.title, requirements), top_k=3
-        )
-        for section in outline
-    }
-    from services import knowledge_service
-
-    knowledge_images = knowledge_service.list_knowledge_image_references(
-        _image_reference_query(requirements),
-        limit=12,
-    )
-    from services import bid_plan_service, evidence_pack_service
-
-    template_profile = _template_profile_for_project(project_id)
-    evidence_pack = evidence_pack_service.build_evidence_pack(
-        requirements,
-        image_references=knowledge_images,
-        retrieved_results=retrieved_chunks_by_section,
-    )
-    bid_plan = bid_plan_service.build_bid_plan(
-        requirements,
-        template_profile=template_profile,
-        evidence_pack=evidence_pack,
-    )
-
-    with _status(project_id, "generating"):
-        markdown = generate_bid_document(
-            requirements,
-            retrieved_chunks_by_section,
-            bid_template,
-            knowledge_images=knowledge_images,
-            bid_plan=bid_plan,
-        )
-        quality_report = evaluate_generation_quality(markdown)
-        markdown_object, docx_object = export_markdown_for_project(
-            project_id,
-            markdown,
-            quality_report,
-        )
-
-    return BidGenerationResult(
-        outline=outline,
-        markdown=markdown,
-        generated_markdown_path=markdown_object,
-        generated_docx_path=docx_object,
-        quality_report=quality_report,
-    )
 
 
 def export_markdown_for_project(
@@ -91,6 +23,9 @@ def export_markdown_for_project(
     markdown: str,
     quality_report: dict[str, float | int],
 ) -> tuple[str, str]:
+    # Defense in depth: workflow meta sections and tdg volume markers must
+    # never reach the delivered document, even if the caller forgot to strip.
+    markdown = strip_meta_notes(markdown)
     title = _extract_markdown_title(markdown) or "投标文件"
     with TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
@@ -152,24 +87,6 @@ def evaluate_generation_quality(markdown_text: str) -> dict[str, float | int]:
     }
 
 
-def _fetch_project_for_generation(project_id: int) -> dict:
-    with _connect() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(
-                """
-                SELECT id, name, parsed_json
-                FROM projects
-                WHERE id = %s
-                """,
-                (project_id,),
-            )
-            row = cursor.fetchone()
-
-    if not row:
-        raise ProjectNotFoundError(f"Project {project_id} was not found")
-    return dict(row)
-
-
 def _update_generation_paths(
     project_id: int,
     markdown_path: str,
@@ -198,43 +115,6 @@ def _update_generation_paths(
             )
 
 
-def _set_status(project_id: int, status: str) -> None:
-    with _connect() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE projects SET status = %s WHERE id = %s",
-                (status, project_id),
-            )
-
-
-def start_generation(project_id: int, background_tasks) -> dict[str, str]:
-    task_id = uuid4().hex
-    _set_status(project_id, "processing")
-    background_tasks.add_task(_run_background_generation, project_id)
-    return {"task_id": task_id, "status": "processing"}
-
-
-def _run_background_generation(project_id: int) -> None:
-    try:
-        generate_and_export(project_id)
-    except Exception:
-        _set_status(project_id, "generation_failed")
-
-
-class _status:
-    def __init__(self, project_id: int, status: str) -> None:
-        self.project_id = project_id
-        self.status = status
-
-    def __enter__(self):
-        _set_status(self.project_id, self.status)
-
-    def __exit__(self, exc_type, exc, tb):
-        if exc_type is not None:
-            _set_status(self.project_id, "generation_failed")
-        return False
-
-
 def _extract_markdown_title(markdown_text: str) -> str | None:
     for line in markdown_text.splitlines():
         stripped = line.strip()
@@ -243,22 +123,6 @@ def _extract_markdown_title(markdown_text: str) -> str | None:
             if title:
                 return title
     return None
-
-
-def _section_query(section_title: str, requirements: TenderRequirements) -> str:
-    descriptions = [
-        item.description
-        for item in requirements.technical_score_items
-        if section_title in item.title or item.title in section_title
-    ]
-    if not descriptions:
-        descriptions = [
-            item.description for item in requirements.technical_score_items[:2]
-        ]
-    return (
-        "历史投标文件 施工组织设计 技术措施 正式标书措辞 素材参考 "
-        f"{requirements.project_name} {section_title} {' '.join(descriptions)}"
-    )
 
 
 def _image_reference_query(requirements: TenderRequirements) -> str:
@@ -276,21 +140,15 @@ def _image_reference_query(requirements: TenderRequirements) -> str:
     )
 
 
-def _template_profile_for_project(project_id: int):
-    from services import template_service
-
-    try:
-        return template_service.template_profile_for_project(project_id)
-    except Exception:
-        return None
-
-
 def _resolve_knowledge_image(document_id: int) -> bytes | None:
     from services import knowledge_service
 
     try:
         return knowledge_service.get_knowledge_document_file_bytes(document_id)
     except Exception:
+        logger.exception(
+            "Failed to resolve knowledge image bytes for document %s", document_id
+        )
         return None
 
 

@@ -1,11 +1,22 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
+from core.config import DEFAULT_JWT_SECRET, settings
 from schemas.auth import LoginResponse, UserProfile
 from services import auth_service
 
 
 client = TestClient(app)
+
+
+def test_startup_rejects_default_jwt_secret_when_not_debug(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "jwt_secret", DEFAULT_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", False)
+
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+        with TestClient(app):
+            pass
 
 
 def test_login_returns_access_token(monkeypatch) -> None:

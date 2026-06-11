@@ -37,7 +37,11 @@ if str(BACKEND_DIR) not in sys.path:
 from agents import generator_agent  # noqa: E402
 from schemas.bid_template import BidTemplate  # noqa: E402
 from schemas.tender import RequirementItem, TenderRequirements  # noqa: E402
-from utils.docx_exporter import build_export_filename, markdown_to_docx  # noqa: E402
+from utils.docx_exporter import (  # noqa: E402
+    build_export_filename,
+    markdown_to_docx,
+    strip_meta_notes,
+)
 
 
 def load_requirements(path: str | Path | None, *, demo: bool = False) -> TenderRequirements:
@@ -114,7 +118,7 @@ def generate_bid_artifacts(
         enable_llm_generation=enable_llm_generation,
     )
     try:
-        markdown = generator_agent.generate_bid_document(
+        package = generator_agent.generate_bid_package(
             requirements,
             retrieved_chunks or {},
             bid_template=template,
@@ -122,6 +126,9 @@ def generate_bid_artifacts(
     finally:
         generator_agent.get_settings = original_get_settings
 
+    # The combined markdown keeps lossless volume markers so it can be split
+    # back into 商务/技术/报价 volumes later.
+    markdown = package.combined_markdown
     prefix = _safe_prefix(requirements.project_name or "投标文件")
     markdown_path = output_path / (markdown_name or f"{prefix}.md")
     markdown_path.write_text(markdown, encoding="utf-8")
@@ -133,7 +140,7 @@ def generate_bid_artifacts(
             or build_export_filename(requirements.project_name or "投标文件", suffix="docx")
         )
         markdown_to_docx(
-            markdown,
+            strip_meta_notes(markdown),
             docx_path,
             title=f"{requirements.project_name or '投标文件'} 投标文件",
             subtitle="技术标及商务标",

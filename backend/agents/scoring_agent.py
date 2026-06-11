@@ -6,6 +6,10 @@ from agents.reviewer_agent import find_markdown_location
 from schemas.review import ReviewReport
 from schemas.strategy import ScoreItemPrediction, ScorePrediction
 from schemas.tender import RequirementItem, TenderRequirements
+from utils.keywords import extract_keywords
+
+
+_KEYWORD_STOPWORDS = frozenset({"评分", "得分", "内容", "要求", "投标", "方案"})
 
 
 SCORING_SYSTEM_PROMPT = """角色扮演：你是一位“评标委员会技术评分模拟专家 + 标书短板诊断顾问”。
@@ -131,19 +135,13 @@ def _max_score(item: RequirementItem) -> float:
 
 def _keywords(item: RequirementItem) -> list[str]:
     text = f"{item.title} {item.description}"
-    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", text)
-    filtered = [
-        token
-        for token in tokens
-        if token not in {"评分", "得分", "内容", "要求", "投标", "方案"}
-    ]
-    return filtered[:8] or [item.title[:20]]
+    keywords = extract_keywords(text, stopwords=_KEYWORD_STOPWORDS, limit=8)
+    return keywords or [item.title[:20]]
 
 
 def _review_penalty(item: RequirementItem, review_report: ReviewReport | None) -> float:
     if not review_report:
         return 0
-    text = f"{item.title} {item.description}"
     for finding in review_report.findings:
         if finding.status == "fail" and (
             item.title in finding.evidence or any(token in finding.evidence for token in _keywords(item)[:3])

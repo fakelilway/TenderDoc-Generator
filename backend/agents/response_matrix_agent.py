@@ -6,6 +6,10 @@ from agents.reviewer_agent import find_markdown_location
 from schemas.review import ReviewFinding, ReviewReport, ReviewStatus
 from schemas.strategy import PricingStrategy, ResponseMatrix, ResponseMatrixRow
 from schemas.tender import RequirementItem, TenderRequirements
+from utils.keywords import extract_keywords
+
+
+_KEYWORD_STOPWORDS = frozenset({"要求", "投标", "评分", "人工", "确认", "待补充"})
 
 
 def build_response_matrix(
@@ -148,13 +152,8 @@ def _matching_finding(
 
 
 def _keywords(text: str) -> list[str]:
-    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", text)
-    filtered = [
-        token
-        for token in tokens
-        if token not in {"要求", "投标", "评分", "人工", "确认", "待补充"}
-    ]
-    return filtered[:6] or [text[:20]]
+    keywords = extract_keywords(text, stopwords=_KEYWORD_STOPWORDS, limit=6)
+    return keywords or [text[:20]]
 
 
 def _section_for_line(markdown: str, line_number: int | None) -> str:

@@ -125,8 +125,8 @@ def index_uploaded_knowledge(
         except ValueError as error:
             mode = "evidence_only"
             extraction_message = str(error)
-    chunks = split_text(text)
-    indexing_status = "indexed" if chunks else "evidence_only"
+    raw_chunks = split_text(text)
+    indexing_status = "indexed" if raw_chunks else "evidence_only"
     if mode == "structured_evidence":
         indexing_status = "structured_evidence"
     metadata = {
@@ -135,7 +135,6 @@ def index_uploaded_knowledge(
         "indexing_status": indexing_status,
         "extraction_message": extraction_message,
     }
-    raw_chunks = split_text(text)
     if not raw_chunks and indexing_status in {"structured_evidence", "evidence_only"}:
         summary_text = _evidence_summary_text(safe_name, metadata)
         raw_chunks = [summary_text] if summary_text else []
@@ -554,6 +553,7 @@ def rename_knowledge_document(
                 (document_id,),
             )
             chunk_count = int(cursor.fetchone()[0])
+        conn.commit()
 
     return {
         "document_id": int(row[0]),
@@ -578,6 +578,7 @@ def delete_knowledge_document(document_id: int) -> None:
                 (document_id,),
             )
             row = cursor.fetchone()
+        conn.commit()
 
     if not row:
         raise ValueError(f"Knowledge document {document_id} was not found")

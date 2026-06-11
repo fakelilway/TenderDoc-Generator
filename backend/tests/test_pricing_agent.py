@@ -74,6 +74,21 @@ def test_pricing_report_keeps_manual_points_and_never_quotes_prices() -> None:
     assert "人工确认点" in text
     assert "报价为" not in text
     assert "综合单价为" not in text
+
+
+def test_markdown_preserves_pricing_manual_points_uses_fill_in_blanks() -> None:
+    # Live convention: pricing lines keep an underline blank for manual fill-in.
     assert markdown_preserves_pricing_manual_points(
+        "本次投标总报价为________元（大写：________整）。"
+    )
+    assert markdown_preserves_pricing_manual_points(
+        "我单位承诺按招标文件规定的金额（________元）提交投标保证金。"
+    )
+    # The sanitizer strips "人工确认点" annotations, so the legacy marker alone
+    # no longer counts as a preserved manual confirmation.
+    assert not markdown_preserves_pricing_manual_points(
         "人工确认点：【待补充】投标总价、工程量清单综合单价"
     )
+    # Pricing lines without blanks (auto-filled numbers) do not count either.
+    assert not markdown_preserves_pricing_manual_points("投标总价为1000万元。")
+    assert not markdown_preserves_pricing_manual_points("施工组织设计正文。________")

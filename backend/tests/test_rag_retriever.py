@@ -48,6 +48,31 @@ def test_retrieve_returns_ranked_results(monkeypatch) -> None:
     assert results[0].score > results[1].score
 
 
+def test_cross_encoder_is_loaded_once_per_model_name(monkeypatch) -> None:
+    instantiations = []
+
+    class FakeCrossEncoder:
+        def __init__(self, model_name):
+            instantiations.append(model_name)
+
+        def predict(self, pairs):
+            return [float(len(pairs) - index) for index in range(len(pairs))]
+
+    monkeypatch.setattr(retriever, "CrossEncoder", FakeCrossEncoder)
+    monkeypatch.setattr(retriever, "_cross_encoder_cache", {})
+    results = [
+        RetrievalResult(1, 1, "施工组织设计", {}, 0.1, 0.9),
+        RetrievalResult(2, 1, "企业资质证书", {}, 0.2, 0.8),
+    ]
+
+    first = retriever.rerank_with_cross_encoder("施工组织设计", results, "bge-reranker")
+    second = retriever.rerank_with_cross_encoder("施工组织设计", results, "bge-reranker")
+
+    assert instantiations == ["bge-reranker"]
+    assert [result.chunk_id for result in first] == [1, 2]
+    assert [result.chunk_id for result in second] == [1, 2]
+
+
 def test_keyword_rerank_promotes_overlap() -> None:
     results = [
         RetrievalResult(1, 1, "无关内容", {}, 0.01, 0.99),

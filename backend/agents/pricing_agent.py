@@ -117,15 +117,22 @@ def generate_pricing_strategy_report(
     )
 
 
+# Live convention for generated bids: the sanitizer strips "人工确认点" style
+# annotations, so manual confirmation shows up as underline fill-in blanks
+# ("________") on pricing-related lines instead.
+PRICING_MANUAL_LINE_KEYWORDS = ("报价", "金额", "总价", "单价", "保证金")
+PRICING_FILL_IN_BLANK = "________"
+
+
 def markdown_preserves_pricing_manual_points(markdown: str) -> bool:
     pricing_lines = [
         line
         for line in markdown.splitlines()
-        if any(keyword in line for keyword in ("报价", "投标总价", "单价", "清单", "金额"))
+        if any(keyword in line for keyword in PRICING_MANUAL_LINE_KEYWORDS)
     ]
     if not pricing_lines:
         return False
-    return any("人工确认点" in line and "待补充" in line for line in pricing_lines)
+    return any(PRICING_FILL_IN_BLANK in line for line in pricing_lines)
 
 
 def _all_items(requirements: TenderRequirements) -> list[RequirementItem]:

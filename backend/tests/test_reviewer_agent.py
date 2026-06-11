@@ -27,6 +27,11 @@ def test_load_invalid_bid_rules_contains_common_items() -> None:
     assert "safety_production_license" in rule_ids
 
 
+def test_load_invalid_bid_rules_is_cached() -> None:
+    # The rules JSON must not be re-read from disk on every review() call.
+    assert load_invalid_bid_rules() is load_invalid_bid_rules()
+
+
 def test_reviewer_prompt_defines_role_experience_and_task() -> None:
     assert "角色扮演" in REVIEWER_SYSTEM_PROMPT
     assert "经验背书" in REVIEWER_SYSTEM_PROMPT
@@ -93,7 +98,7 @@ def test_review_warns_when_pricing_manual_confirmation_is_missing() -> None:
     missing_report = review(requirements, "## 商务标\n\n工程量清单综合单价完整。")
     preserved_report = review(
         requirements,
-        "## 商务标\n\n人工确认点：【待补充】工程量清单综合单价。",
+        "## 商务标\n\n本次投标总报价为________元，工程量清单综合单价由人工填写。",
     )
 
     assert "pricing_manual_confirmation" in {

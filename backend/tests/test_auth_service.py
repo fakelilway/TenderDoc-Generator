@@ -1,7 +1,9 @@
+import logging
 from datetime import timedelta
 
 import pytest
 
+from core.config import DEFAULT_JWT_SECRET, settings, validate_security_settings
 from schemas.auth import UserPermissionsUpdateRequest
 from services import auth_service
 
@@ -35,6 +37,34 @@ def test_expired_access_token_is_rejected() -> None:
 
     with pytest.raises(auth_service.AuthError):
         auth_service.decode_access_token(token)
+
+
+def test_default_jwt_secret_is_rejected_when_debug_is_off() -> None:
+    insecure = settings.model_copy(
+        update={"jwt_secret": DEFAULT_JWT_SECRET, "debug": False}
+    )
+
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+        validate_security_settings(insecure)
+
+
+def test_default_jwt_secret_logs_warning_in_debug(caplog) -> None:
+    insecure = settings.model_copy(
+        update={"jwt_secret": DEFAULT_JWT_SECRET, "debug": True}
+    )
+
+    with caplog.at_level(logging.WARNING, logger="core.config"):
+        validate_security_settings(insecure)
+
+    assert any("JWT_SECRET" in record.message for record in caplog.records)
+
+
+def test_custom_jwt_secret_passes_validation() -> None:
+    secure = settings.model_copy(
+        update={"jwt_secret": "a-long-random-secret", "debug": False}
+    )
+
+    validate_security_settings(secure)
 
 
 def test_authenticate_rejects_wrong_account_type(monkeypatch) -> None:

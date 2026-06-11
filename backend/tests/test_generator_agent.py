@@ -1,10 +1,15 @@
 from types import SimpleNamespace
 
 from agents import generator_agent
-from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT, build_document_prompt
+from prompts.generator_prompt import (
+    GENERATOR_SYSTEM_PROMPT,
+    build_section_prompt,
+    redact_pii,
+)
 from schemas.bid_plan import BidPlan, BidPlanSection
 from schemas.bid_template import BidTemplate, BidTemplateSection
 from schemas.tender import RequirementItem, TenderRequirements
+from utils.docx_exporter import VOLUME_MARKERS, split_delivery_markdown
 
 
 def _requirements() -> TenderRequirements:
@@ -72,23 +77,34 @@ def test_generator_prompt_defines_role_experience_and_task() -> None:
     assert "你的任务" in GENERATOR_SYSTEM_PROMPT
 
 
-def test_document_prompt_uses_template_priority_instead_of_hardcoded_format() -> None:
-    messages = build_document_prompt(
-        requirements=_requirements(),
-        outline_titles=["第一章、总体施工组织布置及规划", "第二章、专项交通导改与保通方案"],
-        retrieved_chunks=[],
-        company_name="安徽正奇建设有限公司",
-        bid_template=_bid_template(),
+def test_generator_prompt_forbids_reusing_sample_personal_data() -> None:
+    assert "知识库/RAG 样本中出现的人名、身份证号、电话、证书编号、具体金额等只属于历史样本" in GENERATOR_SYSTEM_PROMPT
+    assert "一律不得作为本项目事实写入正文，相应位置使用下划线空白" in GENERATOR_SYSTEM_PROMPT
+
+
+def test_redact_pii_masks_citizen_ids_and_mobile_numbers() -> None:
+    text = "项目经理张三，身份证号342401199001011234，联系电话13812345678，证书有效。"
+    redacted = redact_pii(text)
+
+    assert "342401199001011234" not in redacted
+    assert "13812345678" not in redacted
+    assert "████" in redacted
+    assert "证书有效" in redacted
+    # Trailing-X citizen IDs are masked too.
+    assert "34240119900101123X" not in redact_pii("身份证号34240119900101123X")
+
+
+def test_section_prompt_redacts_pii_from_retrieved_chunks() -> None:
+    messages = build_section_prompt(
+        "第一章、总体施工组织布置及规划",
+        _requirements(),
+        ["项目经理李四，身份证号110101198801012345，手机号15987654321。"],
     )
     user_prompt = messages[1]["content"]
 
-    assert "结构来源优先级" in user_prompt
-    assert "BidTemplate JSON 是唯一章节结构来源" in user_prompt
-    assert "知识库/RAG 只提供素材" in user_prompt
-    assert "输出结构必须严格如下" not in user_prompt
-    assert "### 1. 施工组织设计" not in user_prompt
-    assert "第二章、专项交通导改与保通方案" in user_prompt
-    assert "附表一、施工总体计划表" in user_prompt
+    assert "110101198801012345" not in user_prompt
+    assert "15987654321" not in user_prompt
+    assert "████" in user_prompt
 
 
 def test_build_bid_outline_maps_input_to_company_template() -> None:
@@ -301,23 +317,18 @@ def test_bid_plan_filters_section_chunks_and_images(monkeypatch):
     assert "不属于本章节的商务资料" not in package.technical_markdown
 
 
-def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
-    monkeypatch.setattr(
-        generator_agent,
-        "_generate_document_with_llm",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
-    )
+def test_generate_bid_package_uses_complete_bid_file_shell(monkeypatch):
     monkeypatch.setattr(
         generator_agent,
         "generate_bid_section",
         lambda section_title, requirements, chunks: f"## {section_title}\n\n正文。",
     )
 
-    markdown = generator_agent.generate_bid_document(_requirements(), {})
+    package = generator_agent.generate_bid_package(_requirements(), {})
+    markdown = package.combined_markdown
 
     assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
     assert "投标人：安徽正奇建设有限公司" in markdown
-    assert "## 投标文件目录" in markdown
     assert "## 一、投标函及投标函附录" in markdown
     assert "## 五、施工组织设计" in markdown
     assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
@@ -331,18 +342,44 @@ def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
     assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 五、施工组织设计")
 
 
-def test_generate_bid_document_includes_template_appendices(monkeypatch):
+def test_generate_bid_package_combined_markdown_carries_lossless_volume_markers(
+    monkeypatch,
+):
+    _enable_llm_generation(monkeypatch)
     monkeypatch.setattr(
         generator_agent,
-        "_generate_document_with_llm",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        "generate_bid_section",
+        lambda section_title, requirements, chunks: f"## {section_title}\n\n技术正文。",
     )
 
-    markdown = generator_agent.generate_bid_document(
+    package = generator_agent.generate_bid_package(
         _requirements(),
         {},
         bid_template=_bid_template(),
     )
+    markdown = package.combined_markdown
+
+    for key in ("commercial", "technical", "pricing"):
+        assert VOLUME_MARKERS[key] in markdown
+
+    # Sections are generated concurrently but must stay in outline order.
+    assert package.technical_markdown.index(
+        "## 第一章、总体施工组织布置及规划"
+    ) < package.technical_markdown.index("## 第二章、专项交通导改与保通方案")
+
+    volumes = split_delivery_markdown(markdown)
+    assert volumes["commercial"] == package.commercial_markdown.strip()
+    assert volumes["technical"] == package.technical_markdown.strip()
+    assert volumes["pricing"] == package.pricing_markdown.strip()
+
+
+def test_generate_bid_package_includes_template_appendices():
+    package = generator_agent.generate_bid_package(
+        _requirements(),
+        {},
+        bid_template=_bid_template(),
+    )
+    markdown = package.combined_markdown
 
     assert "- 第二章、专项交通导改与保通方案" in markdown
     assert "## 附图附表" in markdown
@@ -354,7 +391,7 @@ def test_generate_bid_document_includes_template_appendices(monkeypatch):
     assert "### 1. 施工组织设计" not in markdown
 
 
-def test_generate_bid_document_prefers_single_document_llm(monkeypatch):
+def test_generate_bid_package_uses_section_llm_for_technical_volume(monkeypatch):
     _enable_llm_generation(monkeypatch)
     monkeypatch.setattr(
         generator_agent,
@@ -463,14 +500,13 @@ def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:
     # The prompt no longer mandates emitting authoring meta-text.
     assert "必须使用“⚠️人工确认点" not in GENERATOR_SYSTEM_PROMPT
 
-    messages = build_document_prompt(
-        requirements=_requirements(),
-        outline_titles=["第一章、总体施工组织布置及规划"],
-        retrieved_chunks=["第13页/共892页\n施工总体部署说明。\n……"],
-        company_name="安徽正奇建设有限公司",
+    messages = build_section_prompt(
+        "第一章、总体施工组织布置及规划",
+        _requirements(),
+        ["第13页/共892页\n施工总体部署说明。\n……"],
     )
     user_prompt = messages[1]["content"]
-    assert "严禁事项" in user_prompt
+    assert "写作约束必须遵守" in user_prompt
     # Leaked RAG page footers / dot leaders are cleaned out of injected chunks.
     assert "第13页/共892页" not in user_prompt
     assert "施工总体部署说明。" in user_prompt

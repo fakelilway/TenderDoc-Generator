@@ -3,6 +3,7 @@ from schemas.bid import BidPackage, BidSectionOutline
 from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import workflow_service
+from utils.docx_exporter import VOLUME_MARKERS, combine_delivery_volumes
 
 
 PARSED_JSON = {
@@ -88,7 +89,8 @@ def test_start_bid_workflow_resets_state_before_background_thread(monkeypatch) -
     assert reset_calls == [(7, "processing")]
     assert task["status"] == "processing"
     assert saved_states[0].trace_events[0].stage == "generate"
-    assert persisted_states[0].trace_events[0].message
+    # Traces without a project status transition only update Redis.
+    assert persisted_states == []
     assert thread_calls[0]["args"] == (7,)
     assert thread_calls[0]["daemon"] is True
     assert thread_calls[-1] == {"started": True}
@@ -223,6 +225,98 @@ def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) 
     assert chunks["第一章、总体施工组织布置及规划"][0].content == "历史施工措施片段"
 
 
+def test_retrieve_for_outline_distributes_selected_chunks_by_overlap(
+    monkeypatch,
+) -> None:
+    references = [
+        {"chunk_id": 1, "document_id": 1, "content": "施工组织设计总体部署方案。", "metadata": {}},
+        {"chunk_id": 2, "document_id": 1, "content": "施工进度计划与组织安排。", "metadata": {}},
+        {"chunk_id": 3, "document_id": 1, "content": "施工现场平面布置方案。", "metadata": {}},
+        {"chunk_id": 4, "document_id": 2, "content": "质量保证体系与质量控制措施。", "metadata": {}},
+        {"chunk_id": 5, "document_id": 2, "content": "焊接质量检验控制要求。", "metadata": {}},
+        {"chunk_id": 6, "document_id": 2, "content": "成品保护质量措施。", "metadata": {}},
+        {"chunk_id": 7, "document_id": 3, "content": "项目联系电话名录。", "metadata": {}},
+    ]
+    monkeypatch.setattr(
+        workflow_service,
+        "get_knowledge_references",
+        lambda chunk_ids: references,
+    )
+    outline = [
+        BidSectionOutline(title="施工组织设计", focus_points=["总体部署"]),
+        BidSectionOutline(title="质量保证措施", focus_points=["质量控制"]),
+    ]
+
+    result = workflow_service._retrieve_for_outline(
+        TenderRequirements.model_validate(PARSED_JSON),
+        outline,
+        [1, 2, 3, 4, 5, 6, 7],
+    )
+
+    technical_ids = [chunk.chunk_id for chunk in result["施工组织设计"]]
+    quality_ids = [chunk.chunk_id for chunk in result["质量保证措施"]]
+    # Each section gets its own best-overlapping material, not the same first 3.
+    assert technical_ids[:3] == [1, 2, 3]
+    assert quality_ids[:3] == [4, 5, 6]
+    # Every selected chunk lands in at least one section (no silent drops).
+    assert set(technical_ids) | set(quality_ids) == {1, 2, 3, 4, 5, 6, 7}
+
+
+def test_retrieve_for_outline_selected_chunks_fall_back_without_overlap(
+    monkeypatch,
+) -> None:
+    references = [
+        {"chunk_id": index, "document_id": 1, "content": "abc", "metadata": {}}
+        for index in (1, 2, 3, 4)
+    ]
+    monkeypatch.setattr(
+        workflow_service,
+        "get_knowledge_references",
+        lambda chunk_ids: references,
+    )
+    outline = [
+        BidSectionOutline(title="施工组织设计", focus_points=[]),
+        BidSectionOutline(title="质量保证措施", focus_points=[]),
+    ]
+
+    result = workflow_service._retrieve_for_outline(
+        TenderRequirements.model_validate(PARSED_JSON),
+        outline,
+        [1, 2, 3, 4],
+    )
+
+    for section in outline:
+        assert [chunk.chunk_id for chunk in result[section.title]] == [1, 2, 3]
+
+
+def test_correct_markdown_keeps_volumes_clean_via_notes_marker() -> None:
+    volumes = {
+        "commercial": "# 商务文件\n\n## 资格审查资料\n\n营业执照与资质。",
+        "technical": "# 技术文件\n\n## 施工组织设计\n\n施工部署。",
+        "pricing": "# 报价文件\n\n## 投标报价说明\n\n报价构成。",
+    }
+    combined = combine_delivery_volumes("测试项目投标文件", volumes)
+    report = {
+        "findings": [
+            {"rule": "missing_bond", "status": "fail", "suggestion": "补充投标保证金响应。"}
+        ]
+    }
+
+    corrected = workflow_service.correct_markdown(combined, report)
+    corrected = workflow_service._apply_human_corrections(corrected, {"note": "调整工期承诺。"})
+    recovered = workflow_service._volumes_from_combined_markdown(corrected)
+
+    assert "## 审查修正说明" in corrected
+    assert "## 人工修正意见" in corrected
+    # Both meta blocks share one notes section instead of stacking markers.
+    assert corrected.count(VOLUME_MARKERS["notes"]) == 1
+    for label, body in volumes.items():
+        assert recovered[label] == body
+    for body in recovered.values():
+        assert "审查修正说明" not in body
+        assert "人工修正意见" not in body
+
+
 def test_confirm_project_applies_human_corrections(monkeypatch) -> None:
     initial = WorkflowState(
         project_id=7,
@@ -264,6 +358,67 @@ def test_confirm_project_applies_human_corrections(monkeypatch) -> None:
     assert state.approved is True
     assert "补充投标保证金响应" in state.draft_markdown
     assert exported
+
+
+def test_confirm_project_applies_corrections_on_top_of_edited_markdown(
+    monkeypatch,
+) -> None:
+    initial = WorkflowState(
+        project_id=7,
+        parsed=PARSED_JSON,
+        draft_markdown="# 标书\n\n## 施工组织设计\n\n旧草稿内容。",
+        review_report={"findings": [], "fail_count": 0},
+        status="human_review",
+        awaiting_human=True,
+    )
+    edited = "# 标书\n\n## 施工组织设计\n\n人工编辑后的部署方案。"
+    cleared = []
+    exported = []
+    monkeypatch.setattr(
+        workflow_service, "load_workflow_state", lambda project_id: initial
+    )
+    monkeypatch.setattr(workflow_service, "save_workflow_state", lambda state: None)
+    monkeypatch.setattr(
+        workflow_service, "_persist_state", lambda project_id, state: None
+    )
+    monkeypatch.setattr(
+        workflow_service, "_set_project_status", lambda project_id, status: None
+    )
+    monkeypatch.setattr(workflow_service, "_clear_edited_markdown", cleared.append)
+    monkeypatch.setattr(
+        workflow_service,
+        "_fetch_project",
+        lambda project_id: {
+            "id": project_id,
+            "parsed_json": PARSED_JSON,
+            "edited_markdown": edited,
+        },
+    )
+    monkeypatch.setattr(
+        workflow_service.generation_service,
+        "export_markdown_for_project",
+        lambda project_id, markdown, quality: exported.append(markdown),
+    )
+
+    state = workflow_service.confirm_project(
+        7,
+        approved=True,
+        corrections={"note": "补充投标保证金响应。"},
+    )
+
+    # The manual editor save is the base and this round's corrections are
+    # applied on top of it instead of being overwritten.
+    assert "人工编辑后的部署方案" in state.draft_markdown
+    assert "补充投标保证金响应" in state.draft_markdown
+    assert "旧草稿内容" not in state.draft_markdown
+    # edited_markdown is consumed exactly once so it cannot go stale.
+    assert cleared == [7]
+    # The workflow draft keeps the meta notes for the review loop, while the
+    # exported delivery markdown is stripped of notes and volume markers.
+    assert "人工修正意见" in state.draft_markdown
+    assert exported
+    assert "人工修正意见" not in exported[0]
+    assert "tdg:volume" not in exported[0]
 
 
 def test_build_closure_test_report_calculates_detection_rate() -> None:

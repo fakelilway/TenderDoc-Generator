@@ -572,50 +572,98 @@ def _split_table_row(line: str) -> list[str]:
     return [cell.strip() for cell in stripped.split("|")]
 
 
-def split_bid_markdown(markdown_text: str) -> dict[str, str]:
-    """Split a single bid markdown into 技术标 / 商务标 volumes.
+VOLUME_MARKERS = {
+    "commercial": "<!-- tdg:volume:commercial -->",
+    "technical": "<!-- tdg:volume:technical -->",
+    "pricing": "<!-- tdg:volume:pricing -->",
+    "notes": "<!-- tdg:volume:notes -->",
+}
+_VOLUME_MARKER_PATTERN = re.compile(
+    r"<!--\s*tdg:volume:(commercial|technical|pricing|notes)\s*-->"
+)
+_VOLUME_TITLE_LABELS = {
+    "commercial": "商务文件",
+    "technical": "技术文件",
+    "pricing": "报价文件",
+}
+_META_NOTE_HEADINGS = ("审查修正说明", "人工修正意见")
 
-    Top-level sections (``##``) whose heading mentions commercial keywords are
-    routed to the 商务标 volume; everything else stays in the 技术标 volume. The
-    document title (``#``) is preserved as a prefix for both volumes. Returns a
-    mapping with only the non-empty volumes.
+
+def combine_delivery_volumes(
+    doc_title: str,
+    volumes: dict[str, str],
+    notes: str = "",
+) -> str:
+    """Combine per-volume markdown into one document with explicit markers.
+
+    Volume order follows the delivery contract: commercial, technical, pricing.
+    The markers let ``split_delivery_markdown`` recover the exact volumes later
+    instead of guessing by heading keywords. ``notes`` holds review/correction
+    meta text that belongs to no volume and is stripped before export.
     """
-    lines = markdown_text.splitlines()
-    doc_title = _extract_title(markdown_text)
-
-    technical: list[str] = []
-    commercial: list[str] = []
-    current = technical
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("# ") and not stripped.startswith("## "):
-            # Document level title; skip, it is re-added per volume.
+    parts: list[str] = []
+    if doc_title:
+        parts.append(f"# {doc_title}")
+        parts.append("")
+    for label in ("commercial", "technical", "pricing"):
+        body = (volumes.get(label) or "").strip()
+        if not body:
             continue
-        if stripped.startswith("## "):
-            heading = stripped[3:]
-            current = (
-                commercial
-                if any(keyword in heading for keyword in COMMERCIAL_KEYWORDS)
-                else technical
-            )
-        current.append(line)
+        parts.append(VOLUME_MARKERS[label])
+        parts.append("")
+        parts.append(body)
+        parts.append("")
+    if notes.strip():
+        parts.append(VOLUME_MARKERS["notes"])
+        parts.append("")
+        parts.append(notes.strip())
+        parts.append("")
+    return "\n".join(parts).strip() + "\n"
 
-    volumes: dict[str, str] = {}
-    for label, body in (("技术标", technical), ("商务标", commercial)):
-        text = "\n".join(body).strip()
-        if not text:
+
+def _split_by_markers(markdown_text: str) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in markdown_text.splitlines():
+        match = _VOLUME_MARKER_PATTERN.match(line.strip())
+        if match:
+            current = sections.setdefault(match.group(1), [])
             continue
-        prefix = f"# {doc_title}（{label}）\n\n" if doc_title else f"# {label}\n\n"
-        volumes[label] = prefix + text
-    return volumes
+        if current is not None:
+            current.append(line)
+    return {label: "\n".join(body).strip() for label, body in sections.items()}
 
 
 def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
-    """Split bid markdown into 商务文件 / 技术文件 / 报价文件 volumes."""
-    lines = markdown_text.splitlines()
+    """Split bid markdown into 商务文件 / 技术文件 / 报价文件 volumes.
+
+    Documents produced by ``combine_delivery_volumes`` carry explicit volume
+    markers and split losslessly; the meta ``notes`` section is excluded from
+    every volume. Legacy documents without markers fall back to the heading
+    keyword heuristic.
+    """
     doc_title = _extract_title(markdown_text)
 
+    if _VOLUME_MARKER_PATTERN.search(markdown_text):
+        marked = _split_by_markers(markdown_text)
+        volumes: dict[str, str] = {}
+        for label in ("commercial", "technical", "pricing"):
+            text = marked.get(label, "")
+            title_label = _VOLUME_TITLE_LABELS[label]
+            if text and text.lstrip().startswith("# "):
+                volumes[label] = text
+            else:
+                prefix = (
+                    f"# {doc_title}（{title_label}）\n\n"
+                    if doc_title
+                    else f"# {title_label}\n\n"
+                )
+                volumes[label] = prefix + (
+                    text or "（本卷暂无自动归类内容，请人工补充。）"
+                )
+        return volumes
+
+    lines = markdown_text.splitlines()
     technical: list[str] = []
     commercial: list[str] = []
     pricing: list[str] = []
@@ -629,7 +677,9 @@ def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
         if stripped.startswith("#"):
             heading = stripped.lstrip("#").strip()
             seen_section = True
-            if any(keyword in heading for keyword in PRICING_KEYWORDS):
+            if any(keyword in heading for keyword in _META_NOTE_HEADINGS):
+                current = []  # meta notes belong to no volume
+            elif any(keyword in heading for keyword in PRICING_KEYWORDS):
                 current = pricing
             elif any(keyword in heading for keyword in COMMERCIAL_KEYWORDS):
                 current = commercial
@@ -639,23 +689,51 @@ def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
             current = technical
         current.append(line)
 
-    volumes: dict[str, str] = {}
+    volumes = {}
     for label, body in (
         ("commercial", commercial),
         ("technical", technical),
         ("pricing", pricing),
     ):
         text = "\n".join(body).strip()
-        title_label = {
-            "technical": "技术文件",
-            "commercial": "商务文件",
-            "pricing": "报价文件",
-        }[label]
+        title_label = _VOLUME_TITLE_LABELS[label]
         prefix = (
             f"# {doc_title}（{title_label}）\n\n" if doc_title else f"# {title_label}\n\n"
         )
         volumes[label] = prefix + (text or "（本卷暂无自动归类内容，请人工补充。）")
     return volumes
+
+
+def strip_meta_notes(markdown_text: str) -> str:
+    """Remove review/correction meta sections and volume markers for export.
+
+    Drops the marked ``notes`` section, legacy ``## 审查修正说明`` /
+    ``## 人工修正意见`` heading blocks, and all ``tdg:volume`` marker comments,
+    so internal workflow annotations never reach the delivered document.
+    """
+    kept: list[str] = []
+    skipping_notes = False
+    skipping_heading = False
+    for line in markdown_text.splitlines():
+        stripped = line.strip()
+        match = _VOLUME_MARKER_PATTERN.match(stripped)
+        if match:
+            skipping_notes = match.group(1) == "notes"
+            skipping_heading = False
+            continue
+        if skipping_notes:
+            continue
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            skipping_heading = any(
+                keyword in heading for keyword in _META_NOTE_HEADINGS
+            )
+            if skipping_heading:
+                continue
+        if skipping_heading:
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip() + "\n"
 
 
 _SAFE_NAME_PATTERN = re.compile(r"[^\w.\-一-鿿]+", flags=re.UNICODE)

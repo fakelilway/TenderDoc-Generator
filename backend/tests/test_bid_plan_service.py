@@ -119,3 +119,41 @@ def test_build_bid_plan_can_fall_back_to_document_outline() -> None:
 
     assert plan.sections[0].title == "商务文件"
     assert plan.sections[1].title == "投标函"
+
+
+def test_technical_section_with_certificate_like_title_keeps_technical_evidence() -> None:
+    pack = EvidencePack(
+        company_certificates=[
+            EvidenceItem(
+                chunk_id=11,
+                document_id=101,
+                title="营业执照",
+                certificate_type="营业执照",
+            )
+        ],
+        person_certificates=[
+            EvidenceItem(
+                chunk_id=12,
+                document_id=102,
+                title="张三一级建造师证",
+                certificate_type="建造师证",
+            )
+        ],
+        technical_schemes=[
+            EvidenceItem(chunk_id=22, document_id=103, content="质量保证体系与质量保证措施")
+        ],
+    )
+
+    plan = build_bid_plan(
+        _requirements(),
+        evidence_pack=pack,
+        document_outline=[
+            BidDocumentOutlineSection(title="质量保证措施", volume="技术标")
+        ],
+    )
+
+    section = plan.section_for_title("质量保证措施")
+    assert section
+    assert section.evidence_chunk_ids == [22]
+    assert 11 not in section.evidence_chunk_ids
+    assert 12 not in section.evidence_chunk_ids

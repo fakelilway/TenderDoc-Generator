@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app, authorized_project
+from core.config import settings
 from rag import retriever
 from schemas.auth import UserAdminProfile, UserProfile
 from schemas.workflow import WorkflowState
@@ -116,23 +117,12 @@ def test_parse_project_returns_result(monkeypatch) -> None:
     assert response.json()["parsed_json"]["project_name"] == "测试项目"
 
 
-def test_generate_project_starts_async_task(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "api.main.generation_service.start_generation",
-        lambda project_id, background_tasks: {
-            "task_id": "task-123",
-            "status": "processing",
-        },
-    )
+def test_legacy_generate_and_review_endpoints_are_removed() -> None:
+    generate_response = client.post("/api/project/7/generate")
+    review_response = client.get("/api/project/7/review")
 
-    response = client.post("/api/project/7/generate")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "project_id": 7,
-        "status": "processing",
-        "task_id": "task-123",
-    }
+    assert generate_response.status_code == 404
+    assert review_response.status_code == 404
 
 
 def test_download_project_returns_presigned_url(monkeypatch) -> None:
@@ -192,27 +182,6 @@ def test_download_project_supports_review_artifact(monkeypatch) -> None:
     assert captured == {"artifact": "review", "expiry": 600}
 
 
-def test_review_returns_invalid_bid_items(monkeypatch) -> None:
-    item = {
-        "title": "否决投标",
-        "description": "未提交保证金",
-        "source": {"source_text": "未提交保证金", "page_number": 5},
-    }
-    monkeypatch.setattr(
-        "api.main.project_service.get_project_review",
-        lambda project_id: {
-            "project_id": project_id,
-            "status": "parsed",
-            "invalid_bid_items": [item],
-        },
-    )
-
-    response = client.get("/api/project/7/review")
-
-    assert response.status_code == 200
-    assert response.json()["invalid_bid_items"] == [item]
-
-
 def test_project_not_found_returns_404(monkeypatch) -> None:
     def missing(_project_id):
         raise ProjectNotFoundError("Project 404 was not found")
@@ -223,6 +192,34 @@ def test_project_not_found_returns_404(monkeypatch) -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Project 404 was not found"
+
+
+def test_unexpected_error_hides_details_when_not_debug(monkeypatch) -> None:
+    def boom(_project_id):
+        raise RuntimeError("connection to db-internal-host:5432 failed")
+
+    monkeypatch.setattr("api.main.project_service.get_project_status", boom)
+    monkeypatch.setattr(settings, "debug", False)
+
+    response = client.get("/api/project/7/status")
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "db-internal-host" not in detail
+    assert "请求编号" in detail
+
+
+def test_unexpected_error_echoes_details_in_debug(monkeypatch) -> None:
+    def boom(_project_id):
+        raise RuntimeError("boom details")
+
+    monkeypatch.setattr("api.main.project_service.get_project_status", boom)
+    monkeypatch.setattr(settings, "debug", True)
+
+    response = client.get("/api/project/7/status")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "boom details"
 
 
 def test_upload_knowledge_indexes_file(monkeypatch) -> None:

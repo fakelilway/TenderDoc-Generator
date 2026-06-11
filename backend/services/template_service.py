@@ -225,19 +225,49 @@ def seed_template_from_json(
 
 
 def list_templates() -> list[dict[str, Any]]:
+    # Summary columns only: the full template_json/template_profile_json blobs
+    # can be large and are not needed to build list summaries.
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
                 SELECT id, name, source_filename, project_type, specialty,
                        envelope_type, region, project_year, tags,
-                       template_json, template_profile_json, created_by, created_at
+                       template_json->>'project_name' AS project_name,
+                       (template_json->>'page_count')::int AS page_count,
+                       (
+                           template_profile_json IS NOT NULL
+                           AND template_profile_json NOT IN ('{}'::jsonb, 'null'::jsonb)
+                       ) AS has_profile,
+                       template_profile_json->>'generated_by' AS profile_generated_by,
+                       created_by, created_at
                 FROM bid_templates
                 ORDER BY created_at DESC, id DESC
                 """
             )
             rows = cursor.fetchall()
-    return [_template_summary(dict(row)) for row in rows]
+    return [_summary_from_columns(dict(row)) for row in rows]
+
+
+def _summary_from_columns(row: dict[str, Any]) -> dict[str, Any]:
+    """Build a summary from rows that already select the summary columns."""
+    return {
+        "id": int(row["id"]),
+        "name": row["name"],
+        "source_filename": row.get("source_filename"),
+        "project_type": row.get("project_type"),
+        "specialty": row.get("specialty"),
+        "envelope_type": row.get("envelope_type"),
+        "region": row.get("region"),
+        "project_year": row.get("project_year"),
+        "tags": row.get("tags") or [],
+        "project_name": row.get("project_name"),
+        "page_count": row.get("page_count"),
+        "has_profile": bool(row.get("has_profile")),
+        "profile_generated_by": row.get("profile_generated_by"),
+        "created_by": row.get("created_by"),
+        "created_at": row.get("created_at"),
+    }
 
 
 def _fetch_template_row(template_id: int) -> dict[str, Any]:

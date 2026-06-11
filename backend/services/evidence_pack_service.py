@@ -4,7 +4,6 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from rag import retriever
 from rag.retriever import RetrievalResult
 from schemas.evidence import EvidenceItem, EvidencePack
 from schemas.tender import TenderRequirements
@@ -92,40 +91,6 @@ def build_evidence_pack(
     if requirements.project_name:
         pack.notes.append(f"证据包已按项目“{requirements.project_name}”构建。")
     return pack
-
-
-def evidence_pack_for_project(
-    project_id: int,
-    requirements: TenderRequirements,
-    *,
-    selected_chunk_ids: list[int] | None = None,
-    image_limit: int = 12,
-) -> EvidencePack:
-    from services import knowledge_service
-    from services.project_service import get_knowledge_references
-
-    selected_refs = get_knowledge_references(selected_chunk_ids or [])
-    retrieved: list[RetrievalResult | str] = []
-    if not selected_refs:
-        try:
-            retrieved = retriever.retrieve(
-                _query_for_requirements(requirements), top_k=12
-            )
-        except Exception:
-            retrieved = []
-    try:
-        image_refs = knowledge_service.list_knowledge_image_references(
-            _image_query_for_requirements(requirements),
-            limit=image_limit,
-        )
-    except Exception:
-        image_refs = []
-    return build_evidence_pack(
-        requirements,
-        selected_references=selected_refs,
-        image_references=image_refs,
-        retrieved_results=retrieved,
-    )
 
 
 def _add_text_item(
@@ -266,30 +231,6 @@ def _iter_results(
             flattened.extend(items or [])
         return flattened
     return retrieved_results
-
-
-def _query_for_requirements(requirements: TenderRequirements) -> str:
-    return (
-        "企业历史投标文件 施工组织设计 技术措施 商务资格 证件 业绩 报价清单 "
-        f"{requirements.project_name} "
-        f"{' '.join(item.description for item in requirements.technical_score_items[:5])} "
-        f"{' '.join(item.description for item in requirements.qualification_list[:5])}"
-    )
-
-
-def _image_query_for_requirements(requirements: TenderRequirements) -> str:
-    descriptions = [
-        item.description
-        for item in [
-            *requirements.qualification_list,
-            *requirements.technical_score_items,
-            *requirements.invalid_bid_items,
-        ]
-    ]
-    return (
-        f"{requirements.project_name} 营业执照 资质证书 安全生产许可证 "
-        "建造师 身份证 建安证 交安证 职称证 社保 业绩 施工平面图 " + " ".join(descriptions)
-    )
 
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:

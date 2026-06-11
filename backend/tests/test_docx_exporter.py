@@ -6,9 +6,12 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml.ns import qn
 
 from utils.docx_exporter import (
+    VOLUME_MARKERS,
     build_export_filename,
+    combine_delivery_volumes,
     markdown_to_docx,
-    split_bid_markdown,
+    split_delivery_markdown,
+    strip_meta_notes,
 )
 
 
@@ -101,7 +104,7 @@ def test_markdown_to_docx_adds_cover_toc_header_and_page_numbers(
     assert "PAGE" in footer_xml
 
 
-def test_split_bid_markdown_routes_commercial_sections() -> None:
+def test_split_delivery_markdown_keyword_fallback_routes_sections() -> None:
     markdown = """# 某项目投标文件
 
 ## 施工组织设计
@@ -121,29 +124,48 @@ def test_split_bid_markdown_routes_commercial_sections() -> None:
 营业执照与资质。
 """
 
-    volumes = split_bid_markdown(markdown)
+    volumes = split_delivery_markdown(markdown)
 
-    assert set(volumes) == {"技术标", "商务标"}
-    assert "施工组织设计" in volumes["技术标"]
-    assert "项目管理机构" in volumes["技术标"]
-    assert "投标报价说明" in volumes["商务标"]
-    assert "资格审查资料" in volumes["商务标"]
+    assert set(volumes) == {"commercial", "technical", "pricing"}
+    assert "施工组织设计" in volumes["technical"]
+    assert "项目管理机构" in volumes["technical"]
+    assert "投标报价说明" in volumes["pricing"]
+    assert "资格审查资料" in volumes["commercial"]
     # Each volume keeps a document-level title prefix.
-    assert volumes["技术标"].startswith("# 某项目投标文件（技术标）")
-    assert volumes["商务标"].startswith("# 某项目投标文件（商务标）")
+    assert volumes["technical"].startswith("# 某项目投标文件（技术文件）")
+    assert volumes["commercial"].startswith("# 某项目投标文件（商务文件）")
 
 
-def test_split_bid_markdown_single_volume_when_no_commercial_sections() -> None:
-    markdown = """# 技术方案
+def test_combine_delivery_volumes_round_trip_is_lossless() -> None:
+    volumes = {
+        "commercial": "# 商务文件\n\n## 资格审查资料\n\n营业执照与资质。",
+        "technical": "# 技术文件\n\n## 施工组织设计\n\n施工部署。",
+        "pricing": "# 报价文件\n\n## 投标报价说明\n\n报价构成。",
+    }
 
-## 施工组织设计
+    combined = combine_delivery_volumes("某项目投标文件", volumes, notes="## 审查修正说明\n\n- 修正项")
+    recovered = split_delivery_markdown(combined)
 
-施工部署。
-"""
+    for label, body in volumes.items():
+        assert recovered[label] == body
+    # The notes section is excluded from every delivery volume.
+    assert all("审查修正说明" not in body for body in recovered.values())
 
-    volumes = split_bid_markdown(markdown)
 
-    assert set(volumes) == {"技术标"}
+def test_strip_meta_notes_removes_markers_and_meta_sections() -> None:
+    combined = combine_delivery_volumes(
+        "某项目投标文件",
+        {"technical": "# 技术文件\n\n## 施工组织设计\n\n施工部署。"},
+        notes="## 人工修正意见\n\n补充保证金响应。",
+    )
+
+    stripped = strip_meta_notes(combined)
+
+    assert "tdg:volume" not in stripped
+    assert "人工修正意见" not in stripped
+    assert "补充保证金响应" not in stripped
+    assert "施工部署。" in stripped
+    assert VOLUME_MARKERS["technical"] not in stripped
 
 
 def test_build_export_filename_includes_name_and_version() -> None:

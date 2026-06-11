@@ -2,21 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   Database,
   Download,
   FileStack,
   FolderOpen,
   Loader2,
-  LogOut,
-  Plus,
   RefreshCw,
   Trash2,
   Users
 } from "lucide-react";
-import { deleteProject, listProjects, logout as logoutRequest } from "@/lib/api";
-import { clearSession, getStoredSession } from "@/lib/auth";
+import { deleteProject, listProjects } from "@/lib/api";
+import { getStoredSession } from "@/lib/auth";
 import { NavLinkButton } from "@/components/NavLinkButton";
+import { ViewShell } from "@/components/ViewShell";
 import type { ProjectSummary } from "@/lib/types";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -139,77 +137,48 @@ export function ProjectsView() {
     }
   }
 
-  async function handleLogout() {
-    try {
-      await logoutRequest();
-    } catch {
-      // Local logout proceeds even if the token has already expired.
-    }
-    clearSession();
-    window.location.replace("/login");
-  }
-
   return (
-    <main className="min-h-screen bg-field">
-      <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-6">
-          <div className="flex items-center gap-3">
-            <NavLinkButton href="/" icon={ArrowLeft}>
-              返回主页
-            </NavLinkButton>
-            <h1 className="flex items-center gap-2 text-lg font-semibold text-ink">
-              <FolderOpen className="h-5 w-5" />
-              历史项目
-            </h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {username ? (
-              <span className="inline-flex h-9 items-center rounded-md border border-line bg-field px-3 text-sm font-medium text-muted">
-                {username}
-              </span>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => void load()}
-              disabled={loading}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              刷新
-            </button>
-            <NavLinkButton href="/knowledge" icon={Database}>
-              知识库
-            </NavLinkButton>
-            {isAdmin ? (
-              <>
-                <NavLinkButton href="/templates" icon={FileStack}>
-                  模板库
-                </NavLinkButton>
-                <NavLinkButton href="/admin/users" icon={Users}>
-                  账号管理
-                </NavLinkButton>
-              </>
-            ) : null}
-            <NavLinkButton href="/" icon={Plus} variant="primary">
-              新建项目
-            </NavLinkButton>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-            >
-              <LogOut className="h-4 w-4" />
-              退出
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-4xl px-4 py-6 lg:px-6">
+    <ViewShell
+      title="历史项目"
+      icon={FolderOpen}
+      maxWidth="4xl"
+      actions={
+        <>
+          {username ? (
+            <span className="inline-flex h-9 items-center rounded-md border border-line bg-field px-3 text-sm font-medium text-muted">
+              {username}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            刷新
+          </button>
+          <NavLinkButton href="/knowledge" icon={Database}>
+            知识库
+          </NavLinkButton>
+          {isAdmin ? (
+            <>
+              <NavLinkButton href="/templates" icon={FileStack}>
+                模板库
+              </NavLinkButton>
+              <NavLinkButton href="/admin/users" icon={Users}>
+                账号管理
+              </NavLinkButton>
+            </>
+          ) : null}
+        </>
+      }
+    >
+      <>
         {error ? (
           <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger">
             {error}
@@ -296,7 +265,7 @@ export function ProjectsView() {
             </div>
           ))}
         </div>
-      </div>
-    </main>
+      </>
+    </ViewShell>
   );
 }

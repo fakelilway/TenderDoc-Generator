@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from threading import Thread
 from uuid import uuid4
 
@@ -202,10 +203,6 @@ def run_bid_workflow(
     )
     state.evidence_pack = evidence_pack.model_dump(mode="json")
     state.bid_plan = bid_plan.model_dump(mode="json")
-    state.retrieved_chunks = {
-        title: [chunk.content for chunk in chunks]
-        for title, chunks in retrieved_by_section.items()
-    }
     state.rag_references = [
         {
             "section_title": title,
@@ -318,10 +315,11 @@ def run_bid_workflow(
             "人工暂停已关闭，开始导出 Markdown 和 DOCX。",
             project_status="generating",
         )
+        delivery_markdown = _delivery_markdown(state.draft_markdown)
         exported = generation_service.export_markdown_for_project(
             project_id,
-            state.draft_markdown,
-            generation_service.evaluate_generation_quality(state.draft_markdown),
+            delivery_markdown,
+            generation_service.evaluate_generation_quality(delivery_markdown),
         )
         if exported:
             markdown_path, docx_path = exported
@@ -351,6 +349,14 @@ def confirm_project(
     if not state:
         raise ValueError("Workflow state was not found")
 
+    # The project row is fetched first so a manual editor save (edited_markdown)
+    # becomes the base draft, with this round's corrections applied on top of it
+    # instead of being silently overwritten.
+    project = _fetch_project(project_id)
+    if project.get("edited_markdown"):
+        state.draft_markdown = project["edited_markdown"]
+        _clear_edited_markdown(project_id)
+
     state.corrections = corrections or {}
     if state.corrections:
         _append_trace(
@@ -364,7 +370,7 @@ def confirm_project(
             state.draft_markdown,
             state.corrections,
         )
-        state.draft_volumes = _volumes_from_combined_markdown(state.draft_markdown)
+    state.draft_volumes = _volumes_from_combined_markdown(state.draft_markdown)
 
     _append_trace(
         state,
@@ -373,10 +379,6 @@ def confirm_project(
         "人工确认后重新执行审查。",
         project_status="reviewing",
     )
-    project = _fetch_project(project_id)
-    if project.get("edited_markdown"):
-        state.draft_markdown = project["edited_markdown"]
-        state.draft_volumes = _volumes_from_combined_markdown(state.draft_markdown)
     requirements = TenderRequirements.model_validate(
         project.get("confirmed_parsed_json") or project["parsed_json"]
     )
@@ -394,10 +396,11 @@ def confirm_project(
         "正在导出最终 Markdown 和 Word DOCX，并上传到 MinIO。",
         project_status="generating",
     )
+    delivery_markdown = _delivery_markdown(state.draft_markdown)
     exported = generation_service.export_markdown_for_project(
         project_id,
-        state.draft_markdown,
-        generation_service.evaluate_generation_quality(state.draft_markdown),
+        delivery_markdown,
+        generation_service.evaluate_generation_quality(delivery_markdown),
     )
     state.final_checklist = _build_final_checklist(requirements, state)
     if exported:
@@ -424,6 +427,45 @@ def _volumes_from_combined_markdown(markdown: str) -> dict[str, str]:
     return split_delivery_markdown(markdown)
 
 
+def _delivery_markdown(markdown: str) -> str:
+    from utils.docx_exporter import strip_meta_notes
+
+    return strip_meta_notes(markdown)
+
+
+def _append_meta_block(markdown: str, block: str) -> str:
+    """Append a review/correction meta block into the marked notes section.
+
+    Meta text must live under the ``notes`` volume marker so that
+    ``split_delivery_markdown`` keeps every delivery volume clean of workflow
+    annotations. When the document has no notes section yet, one is created at
+    the end.
+    """
+    from utils.docx_exporter import VOLUME_MARKERS
+
+    notes_marker = VOLUME_MARKERS["notes"]
+    block = block.strip()
+    if notes_marker not in markdown:
+        return markdown.rstrip() + "\n" + "\n" + notes_marker + "\n\n" + block + "\n"
+
+    lines = markdown.splitlines()
+    markers = set(VOLUME_MARKERS.values())
+    notes_index = next(
+        index for index, line in enumerate(lines) if notes_marker in line
+    )
+    end_index = len(lines)
+    for index in range(notes_index + 1, len(lines)):
+        if lines[index].strip() in markers:
+            end_index = index
+            break
+    head = "\n".join(lines[:end_index]).rstrip()
+    tail = "\n".join(lines[end_index:]).strip()
+    combined = head + "\n\n" + block + "\n"
+    if tail:
+        combined += "\n" + tail + "\n"
+    return combined
+
+
 def correct_markdown(markdown: str, review_report: dict) -> str:
     fail_items = [
         item
@@ -433,12 +475,11 @@ def correct_markdown(markdown: str, review_report: dict) -> str:
     if not fail_items:
         return markdown
 
-    additions = ["", "## 审查修正说明", ""]
+    additions = ["## 审查修正说明", ""]
     for item in fail_items:
         suggestion = item.get("suggestion") or "补充响应招标文件要求。"
         additions.append(f"- 针对 `{item.get('rule', 'unknown')}`：{suggestion}")
-    additions.append("")
-    return markdown.rstrip() + "\n" + "\n".join(additions)
+    return _append_meta_block(markdown, "\n".join(additions))
 
 
 def build_closure_test_report(
@@ -491,7 +532,11 @@ def _append_trace(
         state.status = project_status
         _set_project_status(state.project_id, project_status)
     save_workflow_state(state)
-    _persist_state(state.project_id, state)
+    # Postgres persistence is comparatively expensive, so the full state is
+    # only flushed on project status transitions and terminal events; Redis
+    # always holds the latest trace.
+    if project_status or status in ("done", "failed"):
+        _persist_state(state.project_id, state)
 
 
 def load_workflow_state(project_id: int) -> WorkflowState | None:
@@ -549,7 +594,7 @@ def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
             )
             for reference in references
         ]
-        return {section.title: selected_results[:3] for section in outline}
+        return _distribute_selected_chunks(selected_results, outline)
 
     query = (
         "历史投标文件 施工组织设计 技术措施 正式标书措辞 素材参考 "
@@ -562,6 +607,95 @@ def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
     except Exception:
         shared_chunks = []
     return {section.title: shared_chunks[:3] for section in outline}
+
+
+_SECTION_KEYWORD_SPLIT_RE = re.compile(r"[\s、，。；：/（）()【】\[\]:;,.\-—]+")
+
+
+def _section_keywords(section) -> list[str]:
+    keywords: list[str] = []
+    for text in (section.title, *section.focus_points):
+        for token in _SECTION_KEYWORD_SPLIT_RE.split(text or ""):
+            token = token.strip()
+            if len(token) >= 2 and token not in keywords:
+                keywords.append(token)
+    return keywords
+
+
+def _keyword_overlap(keywords: list[str], haystack: str) -> int:
+    """Score how well a chunk's text matches one outline section.
+
+    Full keyword hits dominate; partial hits are counted through shared
+    two-character grams so long Chinese headings still match related material.
+    """
+    score = 0
+    for keyword in keywords:
+        if keyword in haystack:
+            score += len(keyword) * 2
+            continue
+        score += sum(
+            1
+            for index in range(len(keyword) - 1)
+            if keyword[index : index + 2] in haystack
+        )
+    return score
+
+
+def _distribute_selected_chunks(selected_results, outline):
+    """Spread user-selected chunks across outline sections by keyword overlap.
+
+    Each section keeps its top 3 overlapping chunks, and every selected chunk
+    is guaranteed to land in at least its best-matching section so no manual
+    selection is silently dropped. Without any overlap the legacy behaviour
+    (first 3 chunks for every section) is kept.
+    """
+    if not outline:
+        return {}
+    if not selected_results:
+        return {section.title: [] for section in outline}
+
+    keywords_by_title = {
+        section.title: _section_keywords(section) for section in outline
+    }
+    scores_by_title: dict[str, list[tuple[int, int]]] = {
+        section.title: [] for section in outline
+    }
+    best_section_for_chunk: list[str | None] = []
+    for index, chunk in enumerate(selected_results):
+        haystack = f"{chunk.content} {chunk.metadata.get('file_name', '')}"
+        best_score = 0
+        best_title: str | None = None
+        for section in outline:
+            score = _keyword_overlap(keywords_by_title[section.title], haystack)
+            scores_by_title[section.title].append((score, index))
+            if score > best_score:
+                best_score = score
+                best_title = section.title
+        best_section_for_chunk.append(best_title)
+
+    if not any(title for title in best_section_for_chunk):
+        return {section.title: selected_results[:3] for section in outline}
+
+    assigned: dict[str, list[int]] = {}
+    for section in outline:
+        ranked = sorted(
+            scores_by_title[section.title],
+            key=lambda item: (-item[0], item[1]),
+        )
+        assigned[section.title] = [
+            index for score, index in ranked[:3] if score > 0
+        ]
+
+    placed = {index for indices in assigned.values() for index in indices}
+    fallback_title = outline[0].title
+    for index, best_title in enumerate(best_section_for_chunk):
+        if index not in placed:
+            assigned[best_title or fallback_title].append(index)
+
+    return {
+        title: [selected_results[index] for index in indices]
+        for title, indices in assigned.items()
+    }
 
 
 def _knowledge_images_for_requirements(
@@ -641,6 +775,20 @@ def _set_project_status(project_id: int, status: str) -> None:
             )
 
 
+def _clear_edited_markdown(project_id: int) -> None:
+    """Drop edited_markdown once it has been merged into the workflow draft.
+
+    Leaving it in place would re-apply a stale manual edit on every later
+    confirmation round and overwrite newer corrections.
+    """
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE projects SET edited_markdown = NULL WHERE id = %s",
+                (project_id,),
+            )
+
+
 def _reset_workflow_state(project_id: int, status: str) -> None:
     _redis_client().delete(_workflow_key(project_id))
     with _connect() as conn:
@@ -661,21 +809,33 @@ def _reset_workflow_state(project_id: int, status: str) -> None:
 def _apply_human_corrections(markdown: str, corrections: dict) -> str:
     note = corrections.get("note") or corrections.get("instruction") or ""
     sections = corrections.get("sections") or {}
-    additions = ["", "## 人工修正意见", ""]
+    additions = ["## 人工修正意见", ""]
     if note:
         additions.append(note)
     for title, content in sections.items():
         additions.append(f"### {title}")
         additions.append(str(content))
-    additions.append("")
-    return markdown.rstrip() + "\n" + "\n".join(additions)
+    return _append_meta_block(markdown, "\n".join(additions))
 
 
 def _build_final_checklist(
     requirements: TenderRequirements,
     state: WorkflowState,
 ) -> dict:
-    markdown = state.draft_markdown
+    manual_fields = (state.pricing_strategy or {}).get("manual_fields") or []
+    pricing_manual_fields = [
+        _checklist_point(field.get("label"), field.get("reason"))
+        for field in manual_fields
+        if field.get("label") or field.get("reason")
+    ]
+    review_points = [
+        _checklist_point(
+            finding.get("rule"),
+            finding.get("suggestion") or finding.get("evidence") or "需人工复核",
+        )
+        for finding in (state.review_report or {}).get("findings", [])
+        if finding.get("status") != "pass"
+    ]
     return {
         "invalid_bid_responses": [
             {
@@ -686,19 +846,20 @@ def _build_final_checklist(
             }
             for item in requirements.invalid_bid_items
         ],
-        "manual_confirmation_points": [
-            line.strip() for line in markdown.splitlines() if "人工确认点" in line
-        ],
-        "pricing_manual_fields": [
-            line.strip()
-            for line in markdown.splitlines()
-            if "人工确认点" in line
-            and any(keyword in line for keyword in ("报价", "金额", "单价", "清单"))
-        ],
+        "manual_confirmation_points": pricing_manual_fields + review_points,
+        "pricing_manual_fields": pricing_manual_fields,
         "attachment_list": [
             item.title for item in requirements.qualification_list if item.title
         ],
     }
+
+
+def _checklist_point(label: object, detail: object) -> str:
+    label_text = str(label or "").strip()
+    detail_text = str(detail or "").strip()
+    if label_text and detail_text:
+        return f"{label_text}：{detail_text}"
+    return label_text or detail_text
 
 
 def _finding_status(title: str, review_report: dict) -> str:

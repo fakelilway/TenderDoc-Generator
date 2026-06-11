@@ -24,6 +24,7 @@ class FakeCursor:
 class FakeConnection:
     def __init__(self, cursor):
         self.cursor_obj = cursor
+        self.commits = 0
 
     def __enter__(self):
         return self
@@ -31,8 +32,34 @@ class FakeConnection:
     def __exit__(self, exc_type, exc, tb):
         return False
 
+    def commit(self):
+        self.commits += 1
+
     def cursor(self, *args, **kwargs):
         return self.cursor_obj
+
+
+def _fake_execute_values(cursor, statement, argslist, template=None, fetch=False):
+    cursor.statements.append((statement, list(argslist)))
+    rows = []
+    for _values in argslist:
+        cursor.next_id += 1
+        rows.append({"id": cursor.next_id})
+    return rows if fetch else None
+
+
+def _patch_store(monkeypatch, cursor):
+    connections = []
+
+    def fake_connect():
+        connection = FakeConnection(cursor)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(vector_store, "_metadata_index_ready", False)
+    monkeypatch.setattr(vector_store, "_connect", fake_connect)
+    monkeypatch.setattr(vector_store, "execute_values", _fake_execute_values)
+    return connections
 
 
 def test_format_vector_uses_pgvector_literal(monkeypatch) -> None:
@@ -44,10 +71,12 @@ def test_format_vector_uses_pgvector_literal(monkeypatch) -> None:
     )
 
 
-def test_store_knowledge_chunks_inserts_document_and_chunks(monkeypatch) -> None:
+def test_store_knowledge_chunks_inserts_document_and_batched_chunks(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(vector_store.settings, "embedding_dimension", 3)
     cursor = FakeCursor()
-    monkeypatch.setattr(vector_store, "_connect", lambda: FakeConnection(cursor))
+    connections = _patch_store(monkeypatch, cursor)
 
     result = vector_store.store_knowledge_chunks(
         file_name="知识.txt",
@@ -62,13 +91,18 @@ def test_store_knowledge_chunks_inserts_document_and_chunks(monkeypatch) -> None
 
     assert result == {"document_id": 11, "chunk_ids": [12, 13]}
     assert len(cursor.statements) == 3
-    assert "INSERT INTO documents" in cursor.statements[0][0]
-    assert "INSERT INTO knowledge_chunks" in cursor.statements[1][0]
+    assert "knowledge_chunks_metadata_gin" in cursor.statements[0][0]
+    assert "USING GIN (metadata)" in cursor.statements[0][0]
+    assert "INSERT INTO documents" in cursor.statements[1][0]
+    insert_statement, argslist = cursor.statements[2]
+    assert "INSERT INTO knowledge_chunks" in insert_statement
+    assert len(argslist) == 2  # one batched execute_values call for all chunks
+    assert all(connection.commits == 1 for connection in connections)
 
 
 def test_store_knowledge_chunks_allows_evidence_only_document(monkeypatch) -> None:
     cursor = FakeCursor()
-    monkeypatch.setattr(vector_store, "_connect", lambda: FakeConnection(cursor))
+    _patch_store(monkeypatch, cursor)
 
     result = vector_store.store_knowledge_chunks(
         file_name="身份证.jpg",
@@ -80,5 +114,18 @@ def test_store_knowledge_chunks_allows_evidence_only_document(monkeypatch) -> No
     )
 
     assert result == {"document_id": 11, "chunk_ids": []}
-    assert len(cursor.statements) == 1
-    assert "INSERT INTO documents" in cursor.statements[0][0]
+    assert len(cursor.statements) == 2
+    assert "knowledge_chunks_metadata_gin" in cursor.statements[0][0]
+    assert "INSERT INTO documents" in cursor.statements[1][0]
+
+
+def test_metadata_index_is_created_once_per_process(monkeypatch) -> None:
+    cursor = FakeCursor()
+    _patch_store(monkeypatch, cursor)
+
+    vector_store.ensure_metadata_index()
+    vector_store.ensure_metadata_index()
+
+    statements = [statement for statement, _params in cursor.statements]
+    assert len(statements) == 1
+    assert "CREATE INDEX IF NOT EXISTS knowledge_chunks_metadata_gin" in statements[0]

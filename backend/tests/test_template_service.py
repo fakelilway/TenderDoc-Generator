@@ -78,6 +78,29 @@ def _template_row(**overrides):
     return row
 
 
+def _summary_row(**overrides):
+    """Row shape returned by the summary-columns-only list_templates query."""
+    row = {
+        "id": 1,
+        "name": "公路模板",
+        "source_filename": "road.pdf",
+        "project_type": "公路工程",
+        "specialty": "道路",
+        "envelope_type": "第一信封",
+        "region": "安徽",
+        "project_year": 2025,
+        "tags": ["公路", "市政"],
+        "project_name": "某公路工程",
+        "page_count": 120,
+        "has_profile": True,
+        "profile_generated_by": "deterministic_template_profile_agent",
+        "created_by": 1,
+        "created_at": None,
+    }
+    row.update(overrides)
+    return row
+
+
 def test_create_template_parses_and_inserts(monkeypatch) -> None:
     cursor = FakeCursor([_template_row()])
     monkeypatch.setattr(template_service, "_connect", lambda: FakeConnection(cursor))
@@ -227,8 +250,8 @@ def test_seed_template_from_json_backfills_existing_profile(
 def test_list_templates_returns_summaries(monkeypatch) -> None:
     cursor = FakeCursor(
         [
-            _template_row(id=2, name="房建模板", project_type="房屋建筑"),
-            _template_row(id=1, name="公路模板", project_type="公路工程"),
+            _summary_row(id=2, name="房建模板", project_type="房屋建筑"),
+            _summary_row(id=1, name="公路模板", project_type="公路工程"),
         ]
     )
     monkeypatch.setattr(template_service, "_connect", lambda: FakeConnection(cursor))
@@ -237,6 +260,14 @@ def test_list_templates_returns_summaries(monkeypatch) -> None:
 
     assert [t["id"] for t in templates] == [2, 1]
     assert templates[0]["name"] == "房建模板"
+    assert templates[0]["project_name"] == "某公路工程"
+    assert templates[0]["page_count"] == 120
+    assert templates[0]["has_profile"] is True
+    statement, _params = cursor.statements[0]
+    # Summary query must not pull the full template_json/profile blobs.
+    assert "template_json->>'project_name'" in statement
+    assert "template_json," not in statement
+    assert "template_profile_json," not in statement
 
 
 def test_update_template_renames_and_tags(monkeypatch) -> None:
@@ -268,10 +299,10 @@ def test_delete_template_missing_raises(monkeypatch) -> None:
 def test_recommend_templates_ranks_matching_type_first(monkeypatch) -> None:
     cursor = FakeCursor(
         [
-            _template_row(
+            _summary_row(
                 id=2, name="房建模板", project_type="房屋建筑", specialty="建筑", tags=["房建"]
             ),
-            _template_row(
+            _summary_row(
                 id=1, name="公路模板", project_type="公路工程", specialty="道路", tags=["公路"]
             ),
         ]

@@ -50,7 +50,6 @@ export type WorkflowState = {
   document_outline?: BidDocumentOutlineSection[];
   selected_chunk_ids?: number[];
   rag_references?: RagReference[];
-  retrieved_chunks?: Record<string, string[]>;
   draft_markdown?: string;
   draft_volumes?: Partial<Record<DeliveryVolumeKey, string>>;
   final_checklist?: FinalChecklist | null;
@@ -359,11 +358,6 @@ export type TemplateRecommendResponse = {
 
 export type TemplateDeleteResponse = {
   ok: boolean;
-};
-
-export type ProjectTemplateResponse = {
-  project_id: number;
-  template_id: number | null;
 };
 
 export type TemplateUploadPayload = {

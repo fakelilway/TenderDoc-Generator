@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import {
   CheckCircle2,
   Download,
@@ -78,6 +79,7 @@ const finalStatuses = new Set([
   "approved",
   "finished",
   "generated",
+  "draft_saved",
   "failed",
   "generation_failed"
 ]);
@@ -89,6 +91,41 @@ const runningStatuses = new Set([
   "generating",
   "reviewing"
 ]);
+
+// Statuses where a draft exists and the delivery preview is worth fetching.
+const previewStatuses = new Set([
+  "generated",
+  "reviewing",
+  "human_review",
+  "needs_revision",
+  "draft_saved",
+  "approved",
+  "finished"
+]);
+
+type DirtyField = "markdown" | "parsed" | "outline" | "chunks";
+
+function statesEqual(a: unknown, b: unknown) {
+  if (Object.is(a, b)) {
+    return true;
+  }
+  // Object.is already covers equal strings; avoid serializing large markdown.
+  if (typeof a === "string" && typeof b === "string") {
+    return false;
+  }
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+function setStateIfChanged<T>(
+  setter: Dispatch<SetStateAction<T>>,
+  next: NoInfer<T>
+) {
+  setter((current) => (statesEqual(current, next) ? current : (next as T)));
+}
 
 function readableStatus(status: string) {
   const labels: Record<string, string> = {
@@ -106,6 +143,7 @@ function readableStatus(status: string) {
     generated: "已生成",
     reviewing: "审查中",
     human_review: "待确认",
+    draft_saved: "草稿已保存",
     needs_revision: "待修正",
     approved: "已批准",
     finished: "已完成",
@@ -240,6 +278,13 @@ export function TenderWorkspace({
   const autoStartedWorkflowProject = useRef<number | null>(null);
   const lastHumanPromptKey = useRef("");
   const autoAnalysisTriggered = useRef<Set<string>>(new Set());
+  // Fields with unsaved local edits; polling must not overwrite these.
+  const dirtyFields = useRef<Set<DirtyField>>(new Set());
+  // Guards against stale/out-of-order refresh responses after project switches.
+  const projectIdRef = useRef<number | null>(initialProjectId);
+  const refreshSeq = useRef(0);
+  // Last status applied by refreshProject, for detecting preview transitions.
+  const lastRefreshedStatus = useRef<string | null>(null);
 
   const canConfirm = Boolean(projectId && workflowState?.awaiting_human);
   const canStartWorkflow = Boolean(
@@ -253,50 +298,62 @@ export function TenderWorkspace({
   const applyWorkflowSnapshot = useCallback(
     (state?: WorkflowState | null, report?: ReviewReport | null) => {
       if (state) {
-        setWorkflowState(state);
+        setStateIfChanged(setWorkflowState, state);
         if (state.status) {
           setStatus(state.status);
         }
-        if (state.draft_markdown) {
-          setMarkdown(state.draft_markdown);
+        if (state.draft_markdown && !dirtyFields.current.has("markdown")) {
+          setStateIfChanged(setMarkdown, state.draft_markdown);
         }
-        if (state.draft_volumes) {
-          setDeliveryPreview(volumePreviewFromDrafts(state.draft_volumes));
+        if (state.draft_volumes && !dirtyFields.current.has("markdown")) {
+          setStateIfChanged(
+            setDeliveryPreview,
+            volumePreviewFromDrafts(state.draft_volumes)
+          );
         }
-        if (state.parsed) {
-          setParsedJson(state.parsed);
-          setParsedJsonText(JSON.stringify(state.parsed, null, 2));
+        if (state.parsed && !dirtyFields.current.has("parsed")) {
+          setStateIfChanged(setParsedJson, state.parsed);
+          setStateIfChanged(
+            setParsedJsonText,
+            JSON.stringify(state.parsed, null, 2)
+          );
         }
-        if (state.bid_outline) {
-          setOutline(state.bid_outline);
+        if (state.bid_outline && !dirtyFields.current.has("outline")) {
+          setStateIfChanged(setOutline, state.bid_outline);
         }
         if (state.document_outline) {
-          setDocumentOutline(state.document_outline);
+          setStateIfChanged(setDocumentOutline, state.document_outline);
         }
-        if (state.selected_chunk_ids) {
-          setSelectedChunkIds(state.selected_chunk_ids);
+        if (state.selected_chunk_ids && !dirtyFields.current.has("chunks")) {
+          setStateIfChanged(setSelectedChunkIds, state.selected_chunk_ids);
         }
         if (state.rag_references) {
-          setRagReferences(state.rag_references);
+          setStateIfChanged(setRagReferences, state.rag_references);
         }
         if (state.final_checklist) {
-          setFinalChecklist(state.final_checklist);
+          setStateIfChanged(setFinalChecklist, state.final_checklist);
           if (state.final_checklist.response_matrix) {
-            setResponseMatrix(state.final_checklist.response_matrix);
+            setStateIfChanged(
+              setResponseMatrix,
+              state.final_checklist.response_matrix
+            );
           }
         }
         if (state.final_versions) {
-          setFinalVersions(state.final_versions);
+          setStateIfChanged(setFinalVersions, state.final_versions);
         }
         if (state.review_report) {
-          setReviewReport(state.review_report);
+          setStateIfChanged(setReviewReport, state.review_report);
         }
         if (state.pricing_strategy) {
-          setPricingStrategy(state.pricing_strategy as PricingStrategy);
+          setStateIfChanged(
+            setPricingStrategy,
+            state.pricing_strategy as PricingStrategy
+          );
         }
       }
       if (report) {
-        setReviewReport(report);
+        setStateIfChanged(setReviewReport, report);
       }
     },
     []
@@ -305,36 +362,66 @@ export function TenderWorkspace({
   const refreshDeliveryPreview = useCallback(async (id: number) => {
     try {
       const preview = await getProjectDeliveryPreview(id);
-      setDeliveryPreview(preview.volumes);
+      // Drop stale responses, and never overwrite a preview that reflects
+      // fresher local markdown edits.
+      if (projectIdRef.current !== id || dirtyFields.current.has("markdown")) {
+        return;
+      }
+      setStateIfChanged(setDeliveryPreview, preview.volumes);
     } catch {
-      setDeliveryPreview(null);
+      // Keep the previous preview on transient fetch failures.
     }
   }, []);
 
   const refreshProject = useCallback(
     async (id: number, silent = false) => {
+      const seq = ++refreshSeq.current;
+      const isStale = () =>
+        projectIdRef.current !== id || refreshSeq.current !== seq;
       try {
         const projectStatus = await getProjectStatus(id);
+        if (isStale()) {
+          return;
+        }
         setStatus(projectStatus.status);
-        if (projectStatus.parsed) {
+        if (projectStatus.parsed && !dirtyFields.current.has("parsed")) {
           const result = await getProjectResult(id);
-          if (result.parsed_json) {
-            setParsedJson(result.parsed_json);
-            setParsedJsonText(JSON.stringify(result.parsed_json, null, 2));
+          if (isStale()) {
+            return;
+          }
+          if (result.parsed_json && !dirtyFields.current.has("parsed")) {
+            setStateIfChanged(setParsedJson, result.parsed_json);
+            setStateIfChanged(
+              setParsedJsonText,
+              JSON.stringify(result.parsed_json, null, 2)
+            );
           }
         }
 
         const reviewSnapshot = await getProjectReviewReport(id);
-        setStatus(reviewSnapshot.workflow_state?.status || reviewSnapshot.status);
+        if (isStale()) {
+          return;
+        }
+        const nextStatus =
+          reviewSnapshot.workflow_state?.status || reviewSnapshot.status;
+        const previousStatus = lastRefreshedStatus.current;
+        lastRefreshedStatus.current = nextStatus;
+        setStatus(nextStatus);
         applyWorkflowSnapshot(
           reviewSnapshot.workflow_state,
           reviewSnapshot.review_report
         );
-        if (reviewSnapshot.workflow_state?.draft_markdown) {
+        // Fetch the delivery preview only when transitioning into a
+        // preview-relevant status, not on every poll tick.
+        if (
+          reviewSnapshot.workflow_state?.draft_markdown &&
+          previewStatuses.has(nextStatus) &&
+          !previewStatuses.has(previousStatus ?? "")
+        ) {
           await refreshDeliveryPreview(id);
         }
       } catch (refreshError) {
-        if (!silent) {
+        if (!silent && !isStale()) {
           setError(errorMessage(refreshError));
         }
       }
@@ -505,8 +592,7 @@ export function TenderWorkspace({
   useEffect(() => {
     if (!projectId) return;
     const triggerStatuses = new Set([
-      "awaiting_human",
-      "reviewing",
+      "human_review",
       "approved",
       "finished",
       "generated",
@@ -532,6 +618,21 @@ export function TenderWorkspace({
       .catch(() => {});
   }, [projectId, status]);
 
+  function handleParsedJsonTextChange(value: string) {
+    dirtyFields.current.add("parsed");
+    setParsedJsonText(value);
+  }
+
+  function handleOutlineChange(next: BidOutlineSection[]) {
+    dirtyFields.current.add("outline");
+    setOutline(next);
+  }
+
+  function handleMarkdownChange(value: string) {
+    dirtyFields.current.add("markdown");
+    setMarkdown(value);
+  }
+
   function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
     if (nextFile && (!projectName.trim() || projectName === "演示技术标项目")) {
@@ -546,23 +647,32 @@ export function TenderWorkspace({
 
     setBusy(true);
     setError(null);
-      setReviewReport(null);
-      setWorkflowState(null);
-      setParsedJson(null);
-      setParsedJsonText("");
-      setOutline([]);
-      setRagResults([]);
-      setSelectedChunkIds([]);
-      setRagReferences([]);
-      setFinalChecklist(null);
-      setFinalVersions([]);
-      setPricingStrategy(null);
-      setPricingReport(null);
-      setScorePrediction(null);
-      setResponseMatrix(null);
-      setMarkdown("");
-      setHumanPromptOpen(false);
-      lastHumanPromptKey.current = "";
+    setReviewReport(null);
+    setWorkflowState(null);
+    setParsedJson(null);
+    setParsedJsonText("");
+    setOutline([]);
+    setDocumentOutline([]);
+    setRagResults([]);
+    setSelectedChunkIds([]);
+    setRagReferences([]);
+    setFinalChecklist(null);
+    setFinalVersions([]);
+    setPricingStrategy(null);
+    setPricingReport(null);
+    setScorePrediction(null);
+    setResponseMatrix(null);
+    setMarkdown("");
+    setDeliveryPreview(null);
+    setHumanPromptOpen(false);
+    lastHumanPromptKey.current = "";
+    autoStartedWorkflowProject.current = null;
+    autoAnalysisTriggered.current = new Set();
+    dirtyFields.current = new Set();
+    lastRefreshedStatus.current = null;
+    // Invalidate any in-flight refresh for the previous project.
+    projectIdRef.current = null;
+    refreshSeq.current += 1;
     setActiveLine(null);
 
     try {
@@ -572,6 +682,7 @@ export function TenderWorkspace({
         file,
         selectedTemplateId
       );
+      projectIdRef.current = created.project_id;
       setProjectId(created.project_id);
       window.history.pushState(null, "", `/project/${created.project_id}`);
       setStatus(created.status);
@@ -600,10 +711,12 @@ export function TenderWorkspace({
     try {
       const parsed = JSON.parse(parsedJsonText) as Record<string, unknown>;
       const confirmed = await confirmParsedProject(projectId, parsed);
+      dirtyFields.current.delete("parsed");
       setStatus(confirmed.status);
       setParsedJson(confirmed.confirmed_parsed_json);
       setParsedJsonText(JSON.stringify(confirmed.confirmed_parsed_json, null, 2));
       const built = await buildProjectOutline(projectId);
+      dirtyFields.current.delete("outline");
       setStatus(built.status);
       setOutline(built.bid_outline);
       setDocumentOutline(built.document_outline ?? []);
@@ -622,6 +735,7 @@ export function TenderWorkspace({
     setError(null);
     try {
       const built = await buildProjectOutline(projectId);
+      dirtyFields.current.delete("outline");
       setStatus(built.status);
       setOutline(built.bid_outline);
       setDocumentOutline(built.document_outline ?? []);
@@ -640,6 +754,7 @@ export function TenderWorkspace({
     setError(null);
     try {
       const saved = await saveProjectOutline(projectId, outline);
+      dirtyFields.current.delete("outline");
       setStatus(saved.status);
       setOutline(saved.bid_outline);
       setDocumentOutline(saved.document_outline ?? []);
@@ -679,6 +794,7 @@ export function TenderWorkspace({
   }
 
   function handleToggleChunk(chunkId: number) {
+    dirtyFields.current.add("chunks");
     setSelectedChunkIds((current) =>
       current.includes(chunkId)
         ? current.filter((id) => id !== chunkId)
@@ -694,6 +810,7 @@ export function TenderWorkspace({
     setError(null);
     try {
       const saved = await saveKnowledgeSelection(projectId, selectedChunkIds);
+      dirtyFields.current.delete("chunks");
       setSelectedChunkIds(saved.selected_chunk_ids);
       setRagReferences(saved.references);
     } catch (saveError) {
@@ -711,6 +828,7 @@ export function TenderWorkspace({
     setError(null);
     try {
       const saved = await saveDraftMarkdown(projectId, markdown);
+      dirtyFields.current.delete("markdown");
       setStatus(saved.status);
       setMarkdown(saved.draft_markdown);
       if (saved.review_report) {
@@ -1151,21 +1269,21 @@ export function TenderWorkspace({
             parsed={parsedJson}
             value={parsedJsonText}
             busy={actionBusy}
-            onChange={setParsedJsonText}
+            onChange={handleParsedJsonTextChange}
             onSave={handleConfirmParsed}
           />
           <OutlineEditor
             outline={outline}
             documentOutline={documentOutline}
             busy={actionBusy}
-            onChange={setOutline}
+            onChange={handleOutlineChange}
             onBuild={handleBuildOutline}
             onSave={handleSaveOutline}
           />
           <DraftEditor
             markdown={markdown}
             busy={actionBusy}
-            onChange={setMarkdown}
+            onChange={handleMarkdownChange}
             onSave={handleSaveDraft}
             onChecklist={handleFinalChecklist}
           />

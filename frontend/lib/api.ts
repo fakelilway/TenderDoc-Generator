@@ -27,7 +27,6 @@ import type {
   ProjectReviewReportResponse,
   ProjectScorePredictionResponse,
   ProjectStatusResponse,
-  ProjectTemplateResponse,
   RegisterPayload,
   RegistrationCodeResponse,
   UserCreatePayload,
@@ -145,19 +144,6 @@ export function createProject(
     method: "POST",
     body
   });
-}
-
-export function setProjectTemplate(
-  projectId: number,
-  templateId: number | null
-) {
-  return requestJson<ProjectTemplateResponse>(
-    `/api/project/${projectId}/template`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ template_id: templateId })
-    }
-  );
 }
 
 export function listTemplates() {

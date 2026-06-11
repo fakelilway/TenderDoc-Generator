@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from pathlib import Path
 
@@ -5,6 +6,10 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+DEFAULT_JWT_SECRET = "your-secret-key"
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -61,9 +66,9 @@ class Settings(BaseSettings):
         alias="BID_TEMPLATE_PATH",
     )
 
-    debug: bool = Field(True, alias="DEBUG")
+    debug: bool = Field(False, alias="DEBUG")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
-    jwt_secret: str = Field("your-secret-key", alias="JWT_SECRET")
+    jwt_secret: str = Field(DEFAULT_JWT_SECRET, alias="JWT_SECRET")
     jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
     jwt_expires_minutes: int = Field(720, alias="JWT_EXPIRES_MINUTES")
     default_admin_username: str = Field("admin", alias="DEFAULT_ADMIN_USERNAME")
@@ -76,6 +81,27 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_security_settings(current: Settings) -> None:
+    """Refuse to run with the default JWT secret outside debug mode.
+
+    Call at application startup: raises ``RuntimeError`` when the JWT secret
+    is still the hardcoded default and debug is off; logs a prominent warning
+    when debug is on.
+    """
+    if current.jwt_secret != DEFAULT_JWT_SECRET:
+        return
+    if not current.debug:
+        raise RuntimeError(
+            "JWT_SECRET is still set to the insecure built-in default. "
+            "Set a strong, random JWT_SECRET before running with DEBUG=false."
+        )
+    logger.warning(
+        "SECURITY WARNING: JWT_SECRET is the insecure built-in default; "
+        "tokens can be forged by anyone who reads the source. "
+        "Set JWT_SECRET before deploying."
+    )
 
 
 settings = get_settings()

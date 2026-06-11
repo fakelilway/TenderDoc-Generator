@@ -5,6 +5,13 @@ from schemas.tender import TenderRequirements
 from services import project_service
 
 
+@pytest.fixture(autouse=True)
+def clear_delivery_preview_cache():
+    project_service._delivery_preview_cache.clear()
+    yield
+    project_service._delivery_preview_cache.clear()
+
+
 class FakeCursor:
     def __init__(self, rows):
         self.rows = list(rows)
@@ -355,11 +362,23 @@ def test_authorize_project_access_allows_admin(monkeypatch) -> None:
     assert project_service.authorize_project_access(1, user_id=99, is_admin=True) == 5
 
 
-def test_authorize_project_access_allows_legacy_unowned(monkeypatch) -> None:
+def test_authorize_project_access_rejects_legacy_unowned_for_regular_user(
+    monkeypatch,
+) -> None:
     cursor = FakeCursor([{"owner_user_id": None}])
     monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
 
-    assert project_service.authorize_project_access(1, user_id=99) is None
+    with pytest.raises(project_service.ProjectAccessError):
+        project_service.authorize_project_access(1, user_id=99)
+
+
+def test_authorize_project_access_allows_legacy_unowned_for_admin(monkeypatch) -> None:
+    cursor = FakeCursor([{"owner_user_id": None}])
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    assert (
+        project_service.authorize_project_access(1, user_id=99, is_admin=True) is None
+    )
 
 
 def test_authorize_project_access_missing_project(monkeypatch) -> None:
@@ -402,7 +421,8 @@ def test_list_projects_for_regular_user_filters_owner(monkeypatch) -> None:
     projects = project_service.list_projects(viewer_id=5, is_admin=False)
 
     statement, params = cursor.statements[0]
-    assert "owner_user_id = %s OR p.owner_user_id IS NULL" in statement
+    assert "p.owner_user_id = %s" in statement
+    assert "IS NULL" not in statement
     assert params[0] == 5
     assert [p["project_id"] for p in projects] == [2, 1]
     assert projects[0]["has_download"] is True
@@ -566,6 +586,42 @@ def test_delivery_preview_splits_commercial_technical_and_pricing(monkeypatch) -
     assert result["volumes"]["pricing"]["label"] == "报价文件"
 
 
+class CountingDownloadMinio(FakePresignMinio):
+    def __init__(self):
+        super().__init__()
+        self.download_calls = 0
+
+    def download_bytes(self, bucket, object_name):
+        self.download_calls += 1
+        return super().download_bytes(bucket, object_name)
+
+
+def test_delivery_preview_is_cached_until_content_changes(monkeypatch) -> None:
+    edited = "# 投标文件\n\n## 投标函\n\n更新后的商务内容。"
+    rows = [
+        _download_project_row(),
+        _download_project_row(),
+        _download_project_row(edited_markdown=edited),
+    ]
+    fake_minio = CountingDownloadMinio()
+    monkeypatch.setattr(
+        project_service,
+        "_connect",
+        lambda: FakeConnection(FakeCursor([rows.pop(0)])),
+    )
+    monkeypatch.setattr(project_service, "minio_client", fake_minio)
+
+    first = project_service.get_project_delivery_preview(7)
+    second = project_service.get_project_delivery_preview(7)
+    third = project_service.get_project_delivery_preview(7)
+
+    # The first two polls share the same content; MinIO is hit only once.
+    assert fake_minio.download_calls == 1
+    assert second == first
+    # Once the project content changes the preview is recomputed.
+    assert "更新后的商务内容" in third["volumes"]["commercial"]["markdown"]
+
+
 def test_delivery_preview_prefers_generated_draft_volumes(monkeypatch) -> None:
     cursor = FakeCursor(
         [
@@ -681,3 +737,83 @@ def test_delete_project_missing_raises(monkeypatch) -> None:
 
     with pytest.raises(project_service.ProjectNotFoundError):
         project_service.delete_project(7)
+
+
+def test_checklist_unaddressed_invalid_bid_item_is_not_responded() -> None:
+    # Regression: an unrelated review finding must not mark every invalid-bid
+    # item as responded (former operator-precedence bug in _checklist_items).
+    items = project_service._checklist_items(
+        [{"title": "投标保证金", "description": "未按时提交投标保证金的将被否决投标"}],
+        {"findings": [{"rule": "无关规则", "status": "fail", "evidence": "别的证据"}]},
+        "# 标书\n\n完全不相关的内容。",
+    )
+
+    assert items[0]["responded"] is False
+    assert items[0]["manual_confirmed"] is False
+
+
+def test_checklist_item_responded_when_description_in_markdown() -> None:
+    description = "未按时提交投标保证金的将被否决投标"
+    items = project_service._checklist_items(
+        [{"title": "投标保证金", "description": description}],
+        {"findings": []},
+        f"# 标书\n\n{description}——本项目已按要求提交保证金。",
+    )
+
+    assert items[0]["responded"] is True
+
+
+def test_checklist_item_with_empty_description_is_not_responded() -> None:
+    items = project_service._checklist_items(
+        [{"title": "投标保证金", "description": ""}],
+        {"findings": []},
+        "# 标书\n\n正文内容。",
+    )
+
+    assert items[0]["responded"] is False
+
+
+def test_get_project_status_uses_lightweight_query(monkeypatch) -> None:
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "name": "项目",
+                "status": "parsed",
+                "owner_user_id": 5,
+                "created_at": None,
+                "parsed": True,
+                "workflow_status": "approved",
+            }
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    status = project_service.get_project_status(7)
+
+    statement, _params = cursor.statements[0]
+    assert "parsed_json IS NOT NULL" in statement
+    assert "review_report_json" not in statement
+    assert "edited_markdown" not in statement
+    assert status == {"project_id": 7, "status": "approved", "parsed": True}
+
+
+def test_get_project_status_keeps_running_status(monkeypatch) -> None:
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "name": "项目",
+                "status": "parsing",
+                "owner_user_id": 5,
+                "created_at": None,
+                "parsed": False,
+                "workflow_status": "approved",
+            }
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    status = project_service.get_project_status(7)
+
+    assert status == {"project_id": 7, "status": "parsing", "parsed": False}

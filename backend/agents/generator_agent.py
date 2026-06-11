@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from openai import OpenAI
 
 from agents.parser_agent import _has_real_key, _is_placeholder_project_name
 from core.config import get_settings
-from prompts.generator_prompt import build_document_prompt, build_section_prompt
+from prompts.generator_prompt import build_section_prompt
 from rag.retriever import RetrievalResult
 from schemas.bid import BidDocumentOutlineSection, BidPackage, BidSectionOutline
 from schemas.bid_plan import BidPlan
@@ -15,6 +16,7 @@ from schemas.bid_template import BidTemplate
 from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
 from services.bid_tone_checker import line_has_forbidden_tone
+from utils.docx_exporter import combine_delivery_volumes
 
 
 class GeneratorAgentError(RuntimeError):
@@ -268,24 +270,6 @@ def build_bid_document_outline(
     return document_outline
 
 
-def generate_bid_document(
-    requirements: TenderRequirements,
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-    bid_template: BidTemplate | None = None,
-    pricing_strategy: PricingStrategy | None = None,
-    knowledge_images: list[dict[str, object]] | None = None,
-    bid_plan: BidPlan | None = None,
-) -> str:
-    return generate_bid_package(
-        requirements,
-        retrieved_chunks_by_section,
-        bid_template,
-        pricing_strategy,
-        knowledge_images,
-        bid_plan,
-    ).combined_markdown
-
-
 def generate_bid_package(
     requirements: TenderRequirements,
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
@@ -330,9 +314,10 @@ def generate_bid_package(
         settings.company_name,
         missing_template=not _template_has_price_section(bid_template),
     )
-    combined = combine_bid_package_volumes(
-        requirements,
-        settings.company_name,
+    # The combined document carries lossless volume markers so it can later be
+    # split back into the exact volumes (see utils.docx_exporter).
+    combined = combine_delivery_volumes(
+        f"{_project_title(requirements)} 投标文件",
         {
             "commercial": commercial,
             "technical": technical,
@@ -345,29 +330,6 @@ def generate_bid_package(
         pricing_markdown=pricing,
         combined_markdown=combined,
     )
-
-
-def combine_bid_package_volumes(
-    requirements: TenderRequirements,
-    company_name: str,
-    volumes: dict[str, str],
-) -> str:
-    parts = _document_preface(requirements, company_name)
-    parts.extend(
-        [
-            "## 投标文件目录",
-            "",
-            "- 商务文件",
-            "- 技术文件",
-            "- 报价文件",
-            "",
-        ]
-    )
-    for key in ("commercial", "technical", "pricing"):
-        markdown = (volumes.get(key) or "").strip()
-        if markdown:
-            parts.extend([markdown, ""])
-    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
 def _generate_commercial_volume(
@@ -475,54 +437,6 @@ def _project_title(requirements: TenderRequirements) -> str:
     return "投标项目"
 
 
-def _ensure_document_header(
-    markdown: str,
-    requirements: TenderRequirements,
-    company_name: str,
-) -> str:
-    title = f"# {_project_title(requirements)} 投标文件"
-    lines = markdown.lstrip().splitlines()
-    if not lines:
-        lines = [title]
-    elif lines[0].lstrip().startswith("#"):
-        lines[0] = title
-    else:
-        lines = [title, "", *lines]
-
-    has_company_name = any(company_name in line for line in lines[:12])
-    if company_name and not has_company_name:
-        insert_at = 1
-        if len(lines) > 1 and lines[1].strip():
-            lines.insert(insert_at, "")
-            insert_at += 1
-        lines.insert(insert_at, f"**投标人：{company_name}**")
-        lines.insert(insert_at + 1, "")
-
-    text = "\n".join(lines).strip()
-    has_business_block = "【商务标】" in text or "## 一、商务标" in text or "## 二、商务标" in text
-    has_technical_block = "【技术标】" in text or "## 一、技术标" in text or "## 二、技术标" in text
-    if not has_business_block:
-        fallback_business = _business_bid_fallback(requirements)
-        technical_body = "\n".join(lines[1:]).strip()
-        lines = [
-            *_document_preface(requirements, company_name),
-            "【技术标】",
-            "",
-            "## 一、技术标",
-            "",
-            technical_body,
-            "",
-            *fallback_business,
-        ]
-    elif not has_technical_block:
-        lines.insert(3, "")
-        lines.insert(4, "【技术标】")
-        lines.insert(5, "")
-        lines.insert(6, "## 一、技术标")
-
-    return "\n".join(lines).strip() + "\n"
-
-
 def _document_preface(
     requirements: TenderRequirements,
     company_name: str,
@@ -540,60 +454,6 @@ def _document_preface(
     ]
 
 
-def _generate_template_ordered_document_fallback(
-    requirements: TenderRequirements,
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-    bid_template: BidTemplate,
-    pricing_strategy: PricingStrategy | None,
-    use_local_section_fallback: bool,
-) -> str:
-    settings = get_settings()
-    outline = build_bid_outline(requirements, bid_template)
-    parts = _document_preface(requirements, settings.company_name)
-    parts.extend(["## 投标文件目录", ""])
-    for section in build_bid_document_outline(requirements, bid_template):
-        parts.append(f"- [{section.volume}] {section.title}")
-        for child in section.children[:12]:
-            parts.append(f"  - {child.title}")
-    parts.append("")
-
-    emitted_appendices = False
-    emitted_price = False
-    for section in bid_template.main_sections:
-        if section.section_type == "construction_design":
-            parts.extend(
-                _technical_volume_from_outline(
-                    requirements,
-                    outline,
-                    retrieved_chunks_by_section,
-                    use_local_section_fallback,
-                )
-            )
-            if bid_template.appendix_sections and not emitted_appendices:
-                parts.extend(_appendix_fallback(bid_template))
-                emitted_appendices = True
-            continue
-
-        if (
-            _document_volume_for_section(section.title, section.section_type)
-            == "报价/经济标"
-        ):
-            parts.extend(_price_bid_fallback(pricing_strategy))
-            emitted_price = True
-            continue
-
-        parts.extend(
-            _business_section_from_template(requirements, section, pricing_strategy)
-        )
-
-    if bid_template.appendix_sections and not emitted_appendices:
-        parts.extend(_appendix_fallback(bid_template))
-    if not emitted_price:
-        parts.extend(_price_bid_fallback(pricing_strategy, missing_template=True))
-
-    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
-
-
 def _technical_volume_from_outline(
     requirements: TenderRequirements,
     outline: list[BidSectionOutline],
@@ -606,7 +466,10 @@ def _technical_volume_from_outline(
     for section in outline:
         parts.append(f"- {section.title}")
     parts.append("")
-    for section in outline:
+    if not outline:
+        return parts
+
+    def _render_section(section: BidSectionOutline) -> str:
         chunks = _filter_chunks_for_bid_plan(
             retrieved_chunks_by_section.get(section.title, []),
             bid_plan,
@@ -614,25 +477,30 @@ def _technical_volume_from_outline(
         )
         chunk_text = _bid_text_chunks(chunks)
         if use_local_section_fallback:
-            section_markdown = _generate_section_fallback(
+            return _generate_section_fallback(
                 section.title,
                 requirements,
                 chunk_text,
             )
-        else:
-            if knowledge_images:
-                section_markdown = generate_bid_section(
-                    section.title,
-                    requirements,
-                    chunk_text,
-                    knowledge_images,
-                )
-            else:
-                section_markdown = generate_bid_section(
-                    section.title,
-                    requirements,
-                    chunk_text,
-                )
+        if knowledge_images:
+            return generate_bid_section(
+                section.title,
+                requirements,
+                chunk_text,
+                knowledge_images,
+            )
+        return generate_bid_section(
+            section.title,
+            requirements,
+            chunk_text,
+        )
+
+    # Sections are independent, so the per-section LLM calls run concurrently;
+    # results are re-assembled in outline order. Per-section failures still
+    # fall back locally inside ``generate_bid_section``.
+    with ThreadPoolExecutor(max_workers=min(4, len(outline))) as executor:
+        section_markdowns = list(executor.map(_render_section, outline))
+    for section_markdown in section_markdowns:
         parts.extend([section_markdown, ""])
     return parts
 
@@ -1037,52 +905,6 @@ def _escape_marker_caption(caption: str) -> str:
     return caption.replace('"', "'").strip()
 
 
-def _generate_document_with_llm(
-    requirements: TenderRequirements,
-    outline: list[BidSectionOutline],
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-    company_name: str,
-    bid_template: BidTemplate | None = None,
-    pricing_strategy: PricingStrategy | None = None,
-    knowledge_images: list[dict[str, object]] | None = None,
-) -> str:
-    settings = get_settings()
-    if _has_real_key(settings.openrouter_api_key):
-        api_key = settings.openrouter_api_key
-        base_url = settings.openrouter_base_url
-        model = settings.openrouter_model
-    elif _has_real_key(settings.deepseek_api_key):
-        api_key = settings.deepseek_api_key
-        base_url = settings.deepseek_base_url
-        model = settings.deepseek_model
-    else:
-        raise GeneratorAgentError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
-
-    chunks = _flatten_retrieved_chunks(retrieved_chunks_by_section)
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=60.0)
-    response = client.chat.completions.create(
-        model=model,
-        messages=build_document_prompt(
-            requirements=requirements,
-            outline_titles=[section.title for section in outline],
-            retrieved_chunks=chunks,
-            company_name=company_name,
-            bid_template=bid_template,
-            pricing_strategy=pricing_strategy,
-            knowledge_images=knowledge_images,
-        ),
-        temperature=0.2,
-        max_tokens=9000,
-        timeout=60.0,
-    )
-    if not response.choices:
-        raise GeneratorAgentError("LLM response did not contain choices")
-    content = (response.choices[0].message.content or "").strip()
-    if not content:
-        raise GeneratorAgentError("LLM response was empty")
-    return content if content.endswith("\n") else content + "\n"
-
-
 def generate_bid_section(
     section_title: str,
     requirements: TenderRequirements,
@@ -1394,23 +1216,6 @@ def _chunk_content(chunk: RetrievalResult | str) -> str:
     if isinstance(chunk, str):
         return chunk
     return chunk.content
-
-
-def _flatten_retrieved_chunks(
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-) -> list[str]:
-    chunks: list[str] = []
-    seen: set[str] = set()
-    for section_chunks in retrieved_chunks_by_section.values():
-        for chunk in section_chunks:
-            content = _chunk_content(chunk).strip()
-            if not content or content in seen:
-                continue
-            chunks.append(content)
-            seen.add(content)
-            if len(chunks) >= 12:
-                return chunks
-    return chunks
 
 
 def _technical_titles_from_template(

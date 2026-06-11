@@ -1,29 +1,48 @@
 from __future__ import annotations
 
+import threading
 from typing import Callable
 
-import psycopg2
-from psycopg2.extras import Json, RealDictCursor
+from psycopg2.extras import Json, RealDictCursor, execute_values
 
 from core.config import settings
+from core.db import get_db_connection
 from rag.embeddings import embed_texts
 from rag.indexer import KnowledgeChunk
 
 
 EmbedTexts = Callable[[list[str]], list[list[float]]]
 
+_METADATA_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS knowledge_chunks_metadata_gin
+ON knowledge_chunks USING GIN (metadata)
+"""
+
+_metadata_index_lock = threading.Lock()
+_metadata_index_ready = False
+
 
 def _connect():
-    if settings.database_url:
-        return psycopg2.connect(settings.database_url)
+    """Pooled connection context manager; commits are the caller's job."""
+    return get_db_connection()
 
-    return psycopg2.connect(
-        host=settings.postgres_host,
-        port=settings.postgres_port,
-        dbname=settings.postgres_db,
-        user=settings.postgres_user,
-        password=settings.postgres_password,
-    )
+
+def ensure_metadata_index() -> None:
+    """Schema init: GIN index so metadata-filtered vector search can use an index.
+
+    Idempotent and executed once per process.
+    """
+    global _metadata_index_ready
+    if _metadata_index_ready:
+        return
+    with _metadata_index_lock:
+        if _metadata_index_ready:
+            return
+        with _connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(_METADATA_INDEX_SQL)
+            conn.commit()
+        _metadata_index_ready = True
 
 
 def format_vector(vector: list[float]) -> str:
@@ -48,6 +67,8 @@ def store_knowledge_chunks(
     if chunks and len(embeddings) != len(chunks):
         raise ValueError("Embedding count does not match chunk count")
 
+    ensure_metadata_index()
+
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
@@ -62,21 +83,28 @@ def store_knowledge_chunks(
             document_id = cursor.fetchone()["id"]
 
             chunk_ids: list[int] = []
-            for chunk, embedding in zip(chunks, embeddings):
-                cursor.execute(
+            if chunks:
+                rows = execute_values(
+                    cursor,
                     """
                     INSERT INTO knowledge_chunks
                         (document_id, content, metadata, embedding)
-                    VALUES (%s, %s, %s, %s::vector)
+                    VALUES %s
                     RETURNING id
                     """,
-                    (
-                        document_id,
-                        chunk.content,
-                        Json(chunk.metadata),
-                        format_vector(embedding),
-                    ),
+                    [
+                        (
+                            document_id,
+                            chunk.content,
+                            Json(chunk.metadata),
+                            format_vector(embedding),
+                        )
+                        for chunk, embedding in zip(chunks, embeddings)
+                    ],
+                    template="(%s, %s, %s, %s::vector)",
+                    fetch=True,
                 )
-                chunk_ids.append(cursor.fetchone()["id"])
+                chunk_ids = [row["id"] for row in rows]
+        conn.commit()
 
     return {"document_id": document_id, "chunk_ids": chunk_ids}

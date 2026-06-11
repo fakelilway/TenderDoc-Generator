@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
 import psycopg2
@@ -24,6 +27,7 @@ from agents.response_matrix_agent import build_response_matrix
 from agents.reviewer_agent import review
 from agents.scoring_agent import predict_score
 from core.config import settings
+from core.db import get_db_connection
 from schemas.review import ReviewReport
 from schemas.strategy import PricingStrategy
 from schemas.tender import TenderRequirements
@@ -48,17 +52,17 @@ class ProjectAccessError(Exception):
 _RUNNING_STATUSES = {"uploading", "parsing", "processing", "generating", "reviewing"}
 
 
-def _connect():
-    if settings.database_url:
-        return psycopg2.connect(settings.database_url)
+@contextmanager
+def _connect() -> Iterator[psycopg2.extensions.connection]:
+    """Yield a pooled connection that commits on success, rolls back on error.
 
-    return psycopg2.connect(
-        host=settings.postgres_host,
-        port=settings.postgres_port,
-        dbname=settings.postgres_db,
-        user=settings.postgres_user,
-        password=settings.postgres_password,
-    )
+    Wraps ``core.db.get_db_connection`` so every ``with _connect() as conn:``
+    call site keeps the transactional semantics it had with a raw psycopg2
+    connection used as a context manager, while reusing pooled connections.
+    """
+    with get_db_connection() as conn:
+        with conn:
+            yield conn
 
 
 def _safe_filename(filename: str) -> str:
@@ -100,6 +104,37 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     status,
                     template_id,
                     created_at
+                FROM projects
+                WHERE id = %s
+                """,
+                (project_id,),
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+
+    return dict(row)
+
+
+def _fetch_project_status(project_id: int) -> dict[str, Any]:
+    """Fetch only the lightweight columns needed for status polling.
+
+    Avoids selecting the JSONB blobs that ``_fetch_project`` pulls; the 2s
+    frontend poll only needs scalar fields plus derived flags.
+    """
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    status,
+                    owner_user_id,
+                    created_at,
+                    parsed_json IS NOT NULL AS parsed,
+                    workflow_state_json->>'status' AS workflow_status
                 FROM projects
                 WHERE id = %s
                 """,
@@ -188,14 +223,15 @@ def authorize_project_access(
 ) -> int | None:
     """Ensure ``user_id`` may access ``project_id``.
 
-    Admins may access any project. Regular users may access projects they own
-    or legacy projects with no owner recorded. Raises ``ProjectAccessError``
-    otherwise and ``ProjectNotFoundError`` when the project does not exist.
+    Admins may access any project, including legacy projects with no owner
+    recorded. Regular users may only access projects they own. Raises
+    ``ProjectAccessError`` otherwise and ``ProjectNotFoundError`` when the
+    project does not exist.
     """
     owner_id = get_project_owner(project_id)
     if is_admin:
         return owner_id
-    if owner_id is not None and owner_id != user_id:
+    if owner_id is None or owner_id != user_id:
         raise ProjectAccessError("无权访问该项目")
     return owner_id
 
@@ -222,6 +258,7 @@ def delete_project(project_id: int) -> None:
     with _connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+    invalidate_delivery_preview_cache(project_id)
 
 
 def _project_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -253,8 +290,8 @@ def list_projects(
 ) -> list[dict[str, Any]]:
     """List projects visible to the requesting user, newest first.
 
-    Regular users only see projects they own (plus legacy ownerless ones).
-    Admins see every project, optionally filtered to a single owner.
+    Regular users only see projects they own; legacy ownerless projects are
+    admin-only. Admins see every project, optionally filtered to one owner.
     """
     clauses: list[str] = []
     params: list[Any] = []
@@ -263,7 +300,7 @@ def list_projects(
             clauses.append("p.owner_user_id = %s")
             params.append(owner_user_id)
     else:
-        clauses.append("(p.owner_user_id = %s OR p.owner_user_id IS NULL)")
+        clauses.append("p.owner_user_id = %s")
         params.append(viewer_id)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -295,18 +332,16 @@ def list_projects(
 
 
 def get_project_status(project_id: int) -> dict[str, Any]:
-    project = _fetch_project(project_id)
-    workflow_state = project.get("workflow_state_json") or {}
+    project = _fetch_project_status(project_id)
     project_status = project["status"]
-    running_statuses = {"uploading", "parsing", "processing", "generating", "reviewing"}
     return {
         "project_id": project["id"],
         "status": (
             project_status
-            if project_status in running_statuses
-            else workflow_state.get("status") or project_status
+            if project_status in _RUNNING_STATUSES
+            else project["workflow_status"] or project_status
         ),
-        "parsed": project["parsed_json"] is not None,
+        "parsed": bool(project["parsed"]),
     }
 
 
@@ -619,6 +654,7 @@ def save_draft_markdown(project_id: int, markdown: str) -> dict[str, Any]:
             row = cursor.fetchone()
     if not row:
         raise ProjectNotFoundError(f"Project {project_id} was not found")
+    invalidate_delivery_preview_cache(project_id)
     return dict(row)
 
 
@@ -728,22 +764,34 @@ def build_final_checklist(project_id: int) -> dict[str, Any]:
         if parsed_json
         else TenderRequirements()
     )
+    pricing_strategy = _project_pricing_strategy(project) or extract_pricing_strategy(
+        requirements
+    )
     matrix = build_response_matrix(
         project_id,
         requirements,
         markdown,
         review_report=_review_report_from_json(review_report),
-        pricing_strategy=_project_pricing_strategy(project)
-        or extract_pricing_strategy(requirements),
+        pricing_strategy=pricing_strategy,
     )
+    pricing_manual_fields = [
+        f"{field.label}：{field.reason}" if field.reason else field.label
+        for field in pricing_strategy.manual_fields
+        if field.label or field.reason
+    ]
+    review_points = [
+        f"{finding.get('rule', '')}：{finding.get('suggestion') or finding.get('evidence') or '需人工复核'}"
+        for finding in review_report.get("findings", [])
+        if finding.get("status") != "pass"
+    ]
     checklist = {
         "invalid_bid_responses": _checklist_items(
             parsed_json.get("invalid_bid_items", []),
             review_report,
             markdown,
         ),
-        "manual_confirmation_points": _manual_confirmation_points(markdown),
-        "pricing_manual_fields": _pricing_manual_fields(markdown),
+        "manual_confirmation_points": pricing_manual_fields + review_points,
+        "pricing_manual_fields": pricing_manual_fields,
         "attachment_list": _attachment_list(parsed_json),
         "response_matrix": matrix.model_dump(),
     }
@@ -824,8 +872,40 @@ def _delivery_markdown_source(project: dict[str, Any]) -> str:
     )
 
 
+# Cache of the latest delivery preview per project, keyed by a fingerprint of
+# the fields the preview is derived from. The fingerprint changes on any
+# project write that affects the preview, so stale entries are never served;
+# write paths in this module also invalidate eagerly.
+_delivery_preview_cache: dict[int, tuple[str, dict[str, Any]]] = {}
+
+
+def _delivery_preview_fingerprint(project: dict[str, Any]) -> str:
+    workflow_state = project.get("workflow_state_json") or {}
+    payload = json.dumps(
+        {
+            "status": project.get("status"),
+            "edited_markdown": project.get("edited_markdown"),
+            "draft_markdown": workflow_state.get("draft_markdown"),
+            "draft_volumes": workflow_state.get("draft_volumes"),
+            "generated_markdown_path": project.get("generated_markdown_path"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def invalidate_delivery_preview_cache(project_id: int) -> None:
+    _delivery_preview_cache.pop(project_id, None)
+
+
 def get_project_delivery_preview(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
+    fingerprint = _delivery_preview_fingerprint(project)
+    cached = _delivery_preview_cache.get(project_id)
+    if cached and cached[0] == fingerprint:
+        return cached[1]
     volumes = _delivery_volumes(project)
     response_volumes = {}
     for key, label in _DELIVERY_VOLUME_LABELS.items():
@@ -837,11 +917,13 @@ def get_project_delivery_preview(project_id: int) -> dict[str, Any]:
             "line_count": len(markdown.splitlines()),
             "char_count": len(markdown),
         }
-    return {
+    preview = {
         "project_id": project["id"],
         "status": project["status"],
         "volumes": response_volumes,
     }
+    _delivery_preview_cache[project_id] = (fingerprint, preview)
+    return preview
 
 
 def _delivery_volumes(project: dict[str, Any]) -> dict[str, str]:
@@ -881,16 +963,19 @@ def _checklist_items(
     markdown: str,
 ) -> list[dict[str, Any]]:
     findings = review_report.get("findings", [])
-    return [
-        {
-            "title": item.get("title", "废标风险"),
-            "requirement": item.get("description", ""),
-            "status": _matching_status(item, findings),
-            "responded": bool(item.get("description", "")[:12] in markdown or findings),
-            "manual_confirmed": False,
-        }
-        for item in invalid_items
-    ]
+    items = []
+    for item in invalid_items:
+        snippet = item.get("description", "")[:12]
+        items.append(
+            {
+                "title": item.get("title", "废标风险"),
+                "requirement": item.get("description", ""),
+                "status": _matching_status(item, findings),
+                "responded": bool(snippet and (snippet in markdown)),
+                "manual_confirmed": False,
+            }
+        )
+    return items
 
 
 def _matching_status(item: dict[str, Any], findings: list[dict[str, Any]]) -> str:
@@ -905,36 +990,12 @@ def _matching_status(item: dict[str, Any], findings: list[dict[str, Any]]) -> st
     return "pending"
 
 
-def _manual_confirmation_points(markdown: str) -> list[str]:
-    return [line.strip() for line in markdown.splitlines() if "人工确认点" in line]
-
-
-def _pricing_manual_fields(markdown: str) -> list[str]:
-    keywords = ("报价", "清单", "金额", "单价", "投标总价")
-    return [
-        line.strip()
-        for line in _manual_confirmation_points(markdown)
-        if any(keyword in line for keyword in keywords)
-    ]
-
-
 def _attachment_list(parsed_json: dict[str, Any]) -> list[str]:
     titles = [
         item.get("title", "") for item in parsed_json.get("qualification_list", [])
     ]
     defaults = ["营业执照", "资质证书", "安全生产许可证", "项目经理证书", "业绩证明"]
     return [title for title in titles if title] or defaults
-
-
-def get_project_review(project_id: int) -> dict[str, Any]:
-    project = _fetch_project(project_id)
-    parsed_json = project["parsed_json"] or {}
-    return {
-        "project_id": project["id"],
-        "status": project["status"],
-        "invalid_bid_items": parsed_json.get("invalid_bid_items", []),
-        "review_report": project.get("review_report_json"),
-    }
 
 
 _DOWNLOAD_ARTIFACTS = {
