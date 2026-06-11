@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -65,9 +66,22 @@ def index_uploaded_knowledge(
     file_bytes: bytes,
     filename: str,
     content_type: str | None = None,
+    project_type: str | None = None,
     document_type: str | None = None,
+    document_category: str | None = None,
     specialty: str | None = None,
+    volume: str | None = None,
+    region: str | None = None,
     project_year: int | None = None,
+    owner_type: str | None = None,
+    owner_name: str | None = None,
+    certificate_type: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    sensitivity: str | None = None,
+    usage_scope: str | None = None,
+    verified_status: str | None = None,
+    image_insertable: bool | None = None,
     tags: list[str] | None = None,
     ingestion_mode: str | None = None,
 ) -> dict[str, object]:
@@ -79,7 +93,28 @@ def index_uploaded_knowledge(
     minio_client.upload_file(settings.minio_bucket, file_bytes, object_name)
 
     mode = ingestion_mode or _default_ingestion_mode(safe_name, document_type)
-    metadata = _clean_metadata(document_type, specialty, project_year, tags)
+    metadata = _clean_metadata(
+        project_type=project_type,
+        document_type=document_type,
+        document_category=document_category,
+        specialty=specialty,
+        volume=volume,
+        region=region,
+        project_year=project_year,
+        owner_type=owner_type,
+        owner_name=owner_name,
+        certificate_type=certificate_type,
+        valid_from=valid_from,
+        valid_to=valid_to,
+        sensitivity=sensitivity,
+        usage_scope=usage_scope,
+        verified_status=verified_status,
+        image_insertable=image_insertable
+        if image_insertable is not None
+        else _preview_type(_file_type(safe_name, content_type), safe_name, False)
+        == "image",
+        tags=tags,
+    )
     text = ""
     extraction_message = ""
     if mode == "rag_text":
@@ -169,13 +204,7 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
             "file_name": row[1],
             "file_path": row[2],
             "file_type": row[3],
-            "document_type": (row[4] or {}).get("document_type"),
-            "specialty": (row[4] or {}).get("specialty"),
-            "project_year": (row[4] or {}).get("project_year"),
-            "tags": (row[4] or {}).get("tags", []),
-            "ingestion_mode": (row[4] or {}).get("ingestion_mode"),
-            "indexing_status": (row[4] or {}).get("indexing_status"),
-            "extraction_message": (row[4] or {}).get("extraction_message"),
+            **_metadata_summary(row[4] or {}),
             "created_at": row[5].isoformat(),
             "chunk_count": int(row[6]),
         }
@@ -259,16 +288,17 @@ def list_knowledge_image_references(
         file_name = str(row[1] or "")
         if _preview_type(file_type, file_name, has_text=False) != "image":
             continue
+        if metadata.get("image_insertable") is False:
+            continue
+        if _metadata_is_expired(metadata):
+            continue
         candidates.append(
             {
                 "document_id": int(row[0]),
                 "file_name": file_name,
                 "file_path": row[2],
                 "file_type": file_type,
-                "document_type": metadata.get("document_type"),
-                "specialty": metadata.get("specialty"),
-                "project_year": metadata.get("project_year"),
-                "tags": metadata.get("tags", []),
+                **_metadata_summary(metadata),
                 "caption": _image_caption(file_name, metadata),
                 "match_score": _image_reference_score(query, file_name, metadata),
             }
@@ -343,6 +373,9 @@ def _preview_type(file_type: str, file_name: str, has_text: bool) -> str:
 
 def _image_caption(file_name: str, metadata: dict) -> str:
     parts = [
+        str(metadata.get("owner_name") or "").strip(),
+        str(metadata.get("certificate_type") or "").strip(),
+        str(metadata.get("document_category") or "").strip(),
         str(metadata.get("document_type") or "").strip(),
         str(metadata.get("specialty") or "").strip(),
         str(metadata.get("project_year") or "").strip(),
@@ -357,7 +390,21 @@ def _image_caption(file_name: str, metadata: dict) -> str:
 
 def _image_reference_score(query: str, file_name: str, metadata: dict) -> int:
     haystack_parts = [file_name]
-    for key in ("document_type", "specialty", "project_year"):
+    for key in (
+        "project_type",
+        "document_type",
+        "document_category",
+        "specialty",
+        "volume",
+        "region",
+        "project_year",
+        "owner_type",
+        "owner_name",
+        "certificate_type",
+        "sensitivity",
+        "usage_scope",
+        "verified_status",
+    ):
         value = metadata.get(key)
         if value:
             haystack_parts.append(str(value))
@@ -386,18 +433,61 @@ def _image_reference_score(query: str, file_name: str, metadata: dict) -> int:
 def rename_knowledge_document(
     document_id: int,
     title: str,
+    project_type: str | None = None,
     document_type: str | None = None,
+    document_category: str | None = None,
     specialty: str | None = None,
+    volume: str | None = None,
+    region: str | None = None,
     project_year: int | None = None,
+    owner_type: str | None = None,
+    owner_name: str | None = None,
+    certificate_type: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    sensitivity: str | None = None,
+    usage_scope: str | None = None,
+    verified_status: str | None = None,
+    image_insertable: bool | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, object]:
     safe_title = _safe_title(title)
     if not safe_title:
         raise ValueError("Knowledge document title is required")
 
-    metadata = _clean_metadata(document_type, specialty, project_year, tags)
     with _connect() as conn:
         with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT metadata_json
+                FROM documents
+                WHERE id = %s AND project_id IS NULL
+                """,
+                (document_id,),
+            )
+            current = cursor.fetchone()
+            if not current:
+                raise ValueError(f"Knowledge document {document_id} was not found")
+            metadata = _merge_metadata(
+                current[0] or {},
+                project_type=project_type,
+                document_type=document_type,
+                document_category=document_category,
+                specialty=specialty,
+                volume=volume,
+                region=region,
+                project_year=project_year,
+                owner_type=owner_type,
+                owner_name=owner_name,
+                certificate_type=certificate_type,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                sensitivity=sensitivity,
+                usage_scope=usage_scope,
+                verified_status=verified_status,
+                image_insertable=image_insertable,
+                tags=tags,
+            )
             cursor.execute(
                 """
                 UPDATE documents
@@ -434,13 +524,7 @@ def rename_knowledge_document(
         "file_name": row[1],
         "file_path": row[2],
         "file_type": row[3],
-        "document_type": (row[4] or {}).get("document_type"),
-        "specialty": (row[4] or {}).get("specialty"),
-        "project_year": (row[4] or {}).get("project_year"),
-        "tags": (row[4] or {}).get("tags", []),
-        "ingestion_mode": (row[4] or {}).get("ingestion_mode"),
-        "indexing_status": (row[4] or {}).get("indexing_status"),
-        "extraction_message": (row[4] or {}).get("extraction_message"),
+        **_metadata_summary(row[4] or {}),
         "created_at": row[5].isoformat(),
         "chunk_count": chunk_count,
     }
@@ -473,19 +557,96 @@ def delete_knowledge_document(document_id: int) -> None:
 
 
 def _clean_metadata(
-    document_type: str | None,
-    specialty: str | None,
-    project_year: int | None,
-    tags: list[str] | None,
+    *,
+    project_type: str | None = None,
+    document_type: str | None = None,
+    document_category: str | None = None,
+    specialty: str | None = None,
+    volume: str | None = None,
+    region: str | None = None,
+    project_year: int | None = None,
+    owner_type: str | None = None,
+    owner_name: str | None = None,
+    certificate_type: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    sensitivity: str | None = None,
+    usage_scope: str | None = None,
+    verified_status: str | None = None,
+    image_insertable: bool | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, object]:
     clean_tags = [
         re.sub(r"\s+", " ", tag).strip() for tag in (tags or []) if str(tag).strip()
     ]
     metadata: dict[str, object] = {"tags": sorted(set(clean_tags))}
-    if document_type and document_type.strip():
-        metadata["document_type"] = document_type.strip()
-    if specialty and specialty.strip():
-        metadata["specialty"] = specialty.strip()
+    for key, value in {
+        "project_type": project_type,
+        "document_type": document_type,
+        "document_category": document_category,
+        "specialty": specialty,
+        "volume": volume,
+        "region": region,
+        "owner_type": owner_type,
+        "owner_name": owner_name,
+        "certificate_type": certificate_type,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "sensitivity": sensitivity,
+        "usage_scope": usage_scope,
+        "verified_status": verified_status,
+    }.items():
+        if value and str(value).strip():
+            metadata[key] = re.sub(r"\s+", " ", str(value)).strip()
     if project_year:
         metadata["project_year"] = int(project_year)
+    if image_insertable is not None:
+        metadata["image_insertable"] = bool(image_insertable)
     return metadata
+
+
+def _merge_metadata(existing: dict, **updates) -> dict[str, object]:
+    merged = dict(existing or {})
+    clean_updates = _clean_metadata(**updates)
+    for key, value in clean_updates.items():
+        if key == "tags" and updates.get("tags") is None:
+            continue
+        merged[key] = value
+    return merged
+
+
+def _metadata_summary(metadata: dict) -> dict[str, object]:
+    return {
+        "project_type": metadata.get("project_type"),
+        "document_type": metadata.get("document_type"),
+        "document_category": metadata.get("document_category"),
+        "specialty": metadata.get("specialty"),
+        "volume": metadata.get("volume"),
+        "region": metadata.get("region"),
+        "project_year": metadata.get("project_year"),
+        "owner_type": metadata.get("owner_type"),
+        "owner_name": metadata.get("owner_name"),
+        "certificate_type": metadata.get("certificate_type"),
+        "valid_from": metadata.get("valid_from"),
+        "valid_to": metadata.get("valid_to"),
+        "sensitivity": metadata.get("sensitivity"),
+        "usage_scope": metadata.get("usage_scope"),
+        "verified_status": metadata.get("verified_status"),
+        "image_insertable": metadata.get("image_insertable"),
+        "tags": metadata.get("tags", []),
+        "ingestion_mode": metadata.get("ingestion_mode"),
+        "indexing_status": metadata.get("indexing_status"),
+        "extraction_message": metadata.get("extraction_message"),
+    }
+
+
+def _metadata_is_expired(metadata: dict) -> bool:
+    if str(metadata.get("verified_status") or "").strip() == "已过期":
+        return True
+    valid_to = str(metadata.get("valid_to") or "").strip()
+    if not valid_to:
+        return False
+    try:
+        return date.fromisoformat(valid_to) < date.today()
+    except ValueError:
+        return False

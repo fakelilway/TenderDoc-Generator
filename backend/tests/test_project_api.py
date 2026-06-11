@@ -228,11 +228,14 @@ def test_project_not_found_returns_404(monkeypatch) -> None:
 def test_upload_knowledge_indexes_file(monkeypatch) -> None:
     captured = {}
 
-    def fake_index_uploaded_knowledge(file_bytes, filename, content_type=None):
+    def fake_index_uploaded_knowledge(
+        file_bytes, filename, content_type=None, **kwargs
+    ):
         captured.update(
             file_bytes=file_bytes,
             filename=filename,
             content_type=content_type,
+            metadata=kwargs,
         )
         return {
             "document_id": 9,
@@ -250,6 +253,13 @@ def test_upload_knowledge_indexes_file(monkeypatch) -> None:
     response = client.post(
         "/api/knowledge/upload",
         files={"file": ("sample.txt", b"knowledge text", "text/plain")},
+        data={
+            "project_type": "公路工程",
+            "document_category": "人员证件",
+            "volume": "资格文件",
+            "certificate_type": "一级建造师证",
+            "image_insertable": "true",
+        },
     )
 
     assert response.status_code == 200
@@ -264,6 +274,13 @@ def test_upload_knowledge_indexes_file(monkeypatch) -> None:
         "file_bytes": b"knowledge text",
         "filename": "sample.txt",
         "content_type": "text/plain",
+        "metadata": {
+            "project_type": "公路工程",
+            "document_category": "人员证件",
+            "volume": "资格文件",
+            "certificate_type": "一级建造师证",
+            "image_insertable": True,
+        },
     }
 
 
@@ -379,9 +396,10 @@ def test_regular_user_cannot_edit_knowledge_document() -> None:
 def test_rename_knowledge_document_updates_title(monkeypatch) -> None:
     captured = {}
 
-    def fake_rename(document_id, title):
+    def fake_rename(document_id, title, **kwargs):
         captured["document_id"] = document_id
         captured["title"] = title
+        captured["metadata"] = kwargs
         return {
             "document_id": document_id,
             "file_name": title,
@@ -398,12 +416,25 @@ def test_rename_knowledge_document_updates_title(monkeypatch) -> None:
 
     response = client.patch(
         "/api/knowledge/documents/9",
-        json={"title": "企业技术标模板 v2"},
+        json={
+            "title": "企业技术标模板 v2",
+            "project_type": "市政道路",
+            "volume": "技术文件",
+            "tags": ["施工方案"],
+        },
     )
 
     assert response.status_code == 200
     assert response.json()["file_name"] == "企业技术标模板 v2"
-    assert captured == {"document_id": 9, "title": "企业技术标模板 v2"}
+    assert captured == {
+        "document_id": 9,
+        "title": "企业技术标模板 v2",
+        "metadata": {
+            "project_type": "市政道路",
+            "volume": "技术文件",
+            "tags": ["施工方案"],
+        },
+    }
 
 
 def test_delete_knowledge_document_removes_document(monkeypatch) -> None:

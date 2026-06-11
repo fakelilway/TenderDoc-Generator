@@ -36,7 +36,17 @@ def test_image_upload_defaults_to_structured_evidence_without_ocr(monkeypatch) -
         b"image-bytes",
         "人员_张三_身份证.jpg",
         content_type="image/jpeg",
+        project_type="公路工程",
         document_type="身份证",
+        document_category="人员证件",
+        volume="资格文件",
+        owner_type="人员",
+        owner_name="张三",
+        certificate_type="身份证",
+        valid_to="2028-12-31",
+        sensitivity="高敏感",
+        usage_scope="可插图",
+        verified_status="已核验",
     )
 
     assert result["document_id"] == 7
@@ -44,6 +54,12 @@ def test_image_upload_defaults_to_structured_evidence_without_ocr(monkeypatch) -
     assert result["indexing_status"] == "structured_evidence"
     assert stored["chunks"] == []
     assert stored["metadata"]["ingestion_mode"] == "structured_evidence"
+    assert stored["metadata"]["project_type"] == "公路工程"
+    assert stored["metadata"]["document_category"] == "人员证件"
+    assert stored["metadata"]["volume"] == "资格文件"
+    assert stored["metadata"]["owner_name"] == "张三"
+    assert stored["metadata"]["certificate_type"] == "身份证"
+    assert stored["metadata"]["image_insertable"] is True
 
 
 def test_doc_upload_in_rag_mode_falls_back_to_evidence_only_when_conversion_missing(
@@ -173,6 +189,28 @@ def test_list_knowledge_image_references_prioritizes_matching_image_docs(
                     "knowledge/license.png",
                     "png",
                     {"document_type": "公司", "tags": ["营业执照"]},
+                ),
+                (
+                    4,
+                    "过期_安全生产许可证.png",
+                    "knowledge/expired.png",
+                    "png",
+                    {
+                        "document_category": "企业证件",
+                        "tags": ["安全生产许可证"],
+                        "valid_to": "2020-01-01",
+                    },
+                ),
+                (
+                    5,
+                    "禁止插图_身份证.png",
+                    "knowledge/private.png",
+                    "png",
+                    {
+                        "document_category": "人员证件",
+                        "tags": ["身份证"],
+                        "image_insertable": False,
+                    },
                 ),
             ]
 

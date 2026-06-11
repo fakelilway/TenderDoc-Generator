@@ -96,8 +96,19 @@ def retrieve_filtered(
     query: str,
     top_k: int = 5,
     rerank: bool = True,
+    project_type: str | None = None,
     document_type: str | None = None,
+    document_category: str | None = None,
     specialty: str | None = None,
+    volume: str | None = None,
+    region: str | None = None,
+    project_year: int | None = None,
+    owner_type: str | None = None,
+    owner_name: str | None = None,
+    certificate_type: str | None = None,
+    sensitivity: str | None = None,
+    usage_scope: str | None = None,
+    verified_status: str | None = None,
     tags: list[str] | None = None,
     chunk_ids: list[int] | None = None,
 ) -> list[RetrievalResult]:
@@ -108,12 +119,26 @@ def retrieve_filtered(
     query_embedding = format_vector(embed_text(query))
     filters = ["embedding IS NOT NULL"]
     params: list[object] = []
-    if document_type:
-        filters.append("metadata->>'document_type' = %s")
-        params.append(document_type)
-    if specialty:
-        filters.append("metadata->>'specialty' = %s")
-        params.append(specialty)
+    for key, value in (
+        ("project_type", project_type),
+        ("document_type", document_type),
+        ("document_category", document_category),
+        ("specialty", specialty),
+        ("volume", volume),
+        ("region", region),
+        ("owner_type", owner_type),
+        ("owner_name", owner_name),
+        ("certificate_type", certificate_type),
+        ("sensitivity", sensitivity),
+        ("usage_scope", usage_scope),
+        ("verified_status", verified_status),
+    ):
+        if value:
+            filters.append(f"metadata->>'{key}' = %s")
+            params.append(value)
+    if project_year:
+        filters.append("(metadata->>'project_year')::int = %s")
+        params.append(project_year)
     if tags:
         filters.append("metadata->'tags' ?| %s")
         params.append(tags)

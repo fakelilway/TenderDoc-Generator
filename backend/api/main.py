@@ -219,21 +219,48 @@ def delete_user(
 @app.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
 async def upload_knowledge(
     file: UploadFile = File(...),
+    project_type: str | None = Form(None),
     document_type: str | None = Form(None),
+    document_category: str | None = Form(None),
     specialty: str | None = Form(None),
+    volume: str | None = Form(None),
+    region: str | None = Form(None),
     project_year: int | None = Form(None),
+    owner_type: str | None = Form(None),
+    owner_name: str | None = Form(None),
+    certificate_type: str | None = Form(None),
+    valid_from: str | None = Form(None),
+    valid_to: str | None = Form(None),
+    sensitivity: str | None = Form(None),
+    usage_scope: str | None = Form(None),
+    verified_status: str | None = Form(None),
+    image_insertable: bool | None = Form(None),
     tags: str | None = Form(None),
     ingestion_mode: str | None = Form(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_edit),
 ) -> KnowledgeUploadResponse:
     try:
         metadata_kwargs = {}
-        if document_type is not None:
-            metadata_kwargs["document_type"] = document_type
-        if specialty is not None:
-            metadata_kwargs["specialty"] = specialty
-        if project_year is not None:
-            metadata_kwargs["project_year"] = project_year
+        for key, value in {
+            "project_type": project_type,
+            "document_type": document_type,
+            "document_category": document_category,
+            "specialty": specialty,
+            "volume": volume,
+            "region": region,
+            "project_year": project_year,
+            "owner_type": owner_type,
+            "owner_name": owner_name,
+            "certificate_type": certificate_type,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "sensitivity": sensitivity,
+            "usage_scope": usage_scope,
+            "verified_status": verified_status,
+            "image_insertable": image_insertable,
+        }.items():
+            if value is not None:
+                metadata_kwargs[key] = value
         parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
         if parsed_tags:
             metadata_kwargs["tags"] = parsed_tags
@@ -277,14 +304,28 @@ def rename_knowledge_document(
 ) -> KnowledgeDocumentSummary:
     try:
         kwargs = {}
-        if request.document_type is not None:
-            kwargs["document_type"] = request.document_type
-        if request.specialty is not None:
-            kwargs["specialty"] = request.specialty
-        if request.project_year is not None:
-            kwargs["project_year"] = request.project_year
-        if request.tags:
-            kwargs["tags"] = request.tags
+        for key in (
+            "project_type",
+            "document_type",
+            "document_category",
+            "specialty",
+            "volume",
+            "region",
+            "project_year",
+            "owner_type",
+            "owner_name",
+            "certificate_type",
+            "valid_from",
+            "valid_to",
+            "sensitivity",
+            "usage_scope",
+            "verified_status",
+            "image_insertable",
+            "tags",
+        ):
+            value = getattr(request, key)
+            if value is not None:
+                kwargs[key] = value
         document = knowledge_service.rename_knowledge_document(
             document_id,
             request.title,
@@ -331,18 +372,57 @@ def delete_knowledge_document(
 def search_knowledge(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
+    project_type: str | None = Query(None),
     document_type: str | None = Query(None),
+    document_category: str | None = Query(None),
     specialty: str | None = Query(None),
+    volume: str | None = Query(None),
+    region: str | None = Query(None),
+    project_year: int | None = Query(None),
+    owner_type: str | None = Query(None),
+    owner_name: str | None = Query(None),
+    certificate_type: str | None = Query(None),
+    sensitivity: str | None = Query(None),
+    usage_scope: str | None = Query(None),
+    verified_status: str | None = Query(None),
     tags: list[str] | None = Query(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
 ) -> KnowledgeSearchResponse:
     try:
-        if document_type or specialty or tags:
+        if any(
+            [
+                project_type,
+                document_type,
+                document_category,
+                specialty,
+                volume,
+                region,
+                project_year,
+                owner_type,
+                owner_name,
+                certificate_type,
+                sensitivity,
+                usage_scope,
+                verified_status,
+                tags,
+            ]
+        ):
             results = retriever.retrieve_filtered(
                 query,
                 top_k=top_k,
+                project_type=project_type,
                 document_type=document_type,
+                document_category=document_category,
                 specialty=specialty,
+                volume=volume,
+                region=region,
+                project_year=project_year,
+                owner_type=owner_type,
+                owner_name=owner_name,
+                certificate_type=certificate_type,
+                sensitivity=sensitivity,
+                usage_scope=usage_scope,
+                verified_status=verified_status,
                 tags=tags,
             )
         else:

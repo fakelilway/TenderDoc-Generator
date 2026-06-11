@@ -5,16 +5,30 @@ import type { KnowledgeSearchResult, RagReference } from "@/lib/types";
 
 type Props = {
   query: string;
+  projectType: string;
   documentType: string;
+  documentCategory: string;
   specialty: string;
+  volume: string;
+  region: string;
+  certificateType: string;
+  usageScope: string;
+  verifiedStatus: string;
   tagText: string;
   results: KnowledgeSearchResult[];
   selectedIds: number[];
   references: RagReference[];
   busy: boolean;
   onQueryChange: (value: string) => void;
+  onProjectTypeChange: (value: string) => void;
   onDocumentTypeChange: (value: string) => void;
+  onDocumentCategoryChange: (value: string) => void;
   onSpecialtyChange: (value: string) => void;
+  onVolumeChange: (value: string) => void;
+  onRegionChange: (value: string) => void;
+  onCertificateTypeChange: (value: string) => void;
+  onUsageScopeChange: (value: string) => void;
+  onVerifiedStatusChange: (value: string) => void;
   onTagTextChange: (value: string) => void;
   onSearch: () => void;
   onToggle: (chunkId: number) => void;
@@ -23,16 +37,30 @@ type Props = {
 
 export function RagSelectionPanel({
   query,
+  projectType,
   documentType,
+  documentCategory,
   specialty,
+  volume,
+  region,
+  certificateType,
+  usageScope,
+  verifiedStatus,
   tagText,
   results,
   selectedIds,
   references,
   busy,
   onQueryChange,
+  onProjectTypeChange,
   onDocumentTypeChange,
+  onDocumentCategoryChange,
   onSpecialtyChange,
+  onVolumeChange,
+  onRegionChange,
+  onCertificateTypeChange,
+  onUsageScopeChange,
+  onVerifiedStatusChange,
   onTagTextChange,
   onSearch,
   onToggle,
@@ -58,17 +86,59 @@ export function RagSelectionPanel({
           onChange={(event) => onQueryChange(event.target.value)}
           className="h-9 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-brand"
         />
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            value={projectType}
+            placeholder="项目类型"
+            onChange={(event) => onProjectTypeChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
           <input
             value={documentType}
-            placeholder="类型"
+            placeholder="细分类型"
             onChange={(event) => onDocumentTypeChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
+          <input
+            value={documentCategory}
+            placeholder="资料类别"
+            onChange={(event) => onDocumentCategoryChange(event.target.value)}
             className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
           />
           <input
             value={specialty}
             placeholder="专业"
             onChange={(event) => onSpecialtyChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
+          <input
+            value={volume}
+            placeholder="所属卷册"
+            onChange={(event) => onVolumeChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
+          <input
+            value={region}
+            placeholder="地区"
+            onChange={(event) => onRegionChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
+          <input
+            value={certificateType}
+            placeholder="证件/证明"
+            onChange={(event) => onCertificateTypeChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
+          <input
+            value={usageScope}
+            placeholder="用途范围"
+            onChange={(event) => onUsageScopeChange(event.target.value)}
+            className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
+          />
+          <input
+            value={verifiedStatus}
+            placeholder="核验状态"
+            onChange={(event) => onVerifiedStatusChange(event.target.value)}
             className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink outline-none focus:border-brand"
           />
           <input

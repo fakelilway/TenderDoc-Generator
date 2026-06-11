@@ -200,8 +200,15 @@ export function TenderWorkspace({
     []
   );
   const [ragQuery, setRagQuery] = useState("施工组织设计 技术标 模板");
+  const [ragProjectType, setRagProjectType] = useState("");
   const [ragDocumentType, setRagDocumentType] = useState("");
+  const [ragDocumentCategory, setRagDocumentCategory] = useState("");
   const [ragSpecialty, setRagSpecialty] = useState("");
+  const [ragVolume, setRagVolume] = useState("");
+  const [ragRegion, setRagRegion] = useState("");
+  const [ragCertificateType, setRagCertificateType] = useState("");
+  const [ragUsageScope, setRagUsageScope] = useState("");
+  const [ragVerifiedStatus, setRagVerifiedStatus] = useState("");
   const [ragTagText, setRagTagText] = useState("");
   const [ragResults, setRagResults] = useState<KnowledgeSearchResult[]>([]);
   const [selectedChunkIds, setSelectedChunkIds] = useState<number[]>([]);
@@ -652,8 +659,15 @@ export function TenderWorkspace({
         .map((tag) => tag.trim())
         .filter(Boolean);
       const response = await searchKnowledge(ragQuery, 8, {
+        projectType: ragProjectType.trim() || undefined,
         documentType: ragDocumentType.trim() || undefined,
+        documentCategory: ragDocumentCategory.trim() || undefined,
         specialty: ragSpecialty.trim() || undefined,
+        volume: ragVolume.trim() || undefined,
+        region: ragRegion.trim() || undefined,
+        certificateType: ragCertificateType.trim() || undefined,
+        usageScope: ragUsageScope.trim() || undefined,
+        verifiedStatus: ragVerifiedStatus.trim() || undefined,
         tags
       });
       setRagResults(response.results);
@@ -1096,16 +1110,30 @@ export function TenderWorkspace({
           />
           <RagSelectionPanel
             query={ragQuery}
+            projectType={ragProjectType}
             documentType={ragDocumentType}
+            documentCategory={ragDocumentCategory}
             specialty={ragSpecialty}
+            volume={ragVolume}
+            region={ragRegion}
+            certificateType={ragCertificateType}
+            usageScope={ragUsageScope}
+            verifiedStatus={ragVerifiedStatus}
             tagText={ragTagText}
             results={ragResults}
             selectedIds={selectedChunkIds}
             references={ragReferences}
             busy={actionBusy}
             onQueryChange={setRagQuery}
+            onProjectTypeChange={setRagProjectType}
             onDocumentTypeChange={setRagDocumentType}
+            onDocumentCategoryChange={setRagDocumentCategory}
             onSpecialtyChange={setRagSpecialty}
+            onVolumeChange={setRagVolume}
+            onRegionChange={setRagRegion}
+            onCertificateTypeChange={setRagCertificateType}
+            onUsageScopeChange={setRagUsageScope}
+            onVerifiedStatusChange={setRagVerifiedStatus}
             onTagTextChange={setRagTagText}
             onSearch={handleSearchKnowledge}
             onToggle={handleToggleChunk}

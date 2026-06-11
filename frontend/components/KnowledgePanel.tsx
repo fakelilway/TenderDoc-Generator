@@ -51,6 +51,133 @@ function formatDate(value: string) {
   });
 }
 
+const projectTypeOptions = ["公路工程", "市政道路", "桥梁涵洞", "交通安全设施", "养护维修", "改建扩建", "排水管网"];
+const documentCategoryOptions = ["企业证件", "人员证件", "业绩证明", "历史投标文件", "施工方案", "报价清单", "规范标准", "图片附件"];
+const volumeOptions = ["商务文件", "资格文件", "技术文件", "报价文件", "附图附表"];
+const specialtyOptions = ["路基", "路面", "桥涵", "交安", "排水", "照明", "绿化", "质量", "安全", "进度", "环保"];
+const ownerTypeOptions = ["公司", "人员", "项目"];
+const certificateTypeOptions = ["营业执照", "资质证书", "安全生产许可证", "一级建造师证", "二级建造师证", "身份证", "建安证", "交安证", "职称证", "社保", "业绩"];
+const sensitivityOptions = ["普通", "内部", "敏感", "高敏感"];
+const usageScopeOptions = ["可用于RAG正文", "仅作证明附件", "可插图", "禁止进入大模型"];
+const verifiedStatusOptions = ["未核验", "已核验", "已过期", "需更新"];
+
+type KnowledgeMetaDraft = {
+  projectType: string;
+  documentType: string;
+  documentCategory: string;
+  specialty: string;
+  volume: string;
+  region: string;
+  projectYear: string;
+  ownerType: string;
+  ownerName: string;
+  certificateType: string;
+  validFrom: string;
+  validTo: string;
+  sensitivity: string;
+  usageScope: string;
+  verifiedStatus: string;
+  imageInsertable: boolean;
+  tagText: string;
+};
+
+function emptyMetaDraft(): KnowledgeMetaDraft {
+  return {
+    projectType: "",
+    documentType: "",
+    documentCategory: "",
+    specialty: "",
+    volume: "",
+    region: "",
+    projectYear: "",
+    ownerType: "",
+    ownerName: "",
+    certificateType: "",
+    validFrom: "",
+    validTo: "",
+    sensitivity: "",
+    usageScope: "",
+    verifiedStatus: "",
+    imageInsertable: true,
+    tagText: ""
+  };
+}
+
+function metaDraftFromDocument(document: KnowledgeDocumentSummary): KnowledgeMetaDraft {
+  return {
+    projectType: document.project_type ?? "",
+    documentType: document.document_type ?? "",
+    documentCategory: document.document_category ?? "",
+    specialty: document.specialty ?? "",
+    volume: document.volume ?? "",
+    region: document.region ?? "",
+    projectYear: document.project_year ? String(document.project_year) : "",
+    ownerType: document.owner_type ?? "",
+    ownerName: document.owner_name ?? "",
+    certificateType: document.certificate_type ?? "",
+    validFrom: document.valid_from ?? "",
+    validTo: document.valid_to ?? "",
+    sensitivity: document.sensitivity ?? "",
+    usageScope: document.usage_scope ?? "",
+    verifiedStatus: document.verified_status ?? "",
+    imageInsertable: document.image_insertable ?? true,
+    tagText: (document.tags ?? []).join(", ")
+  };
+}
+
+function splitTags(value: string) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function isImageFile(file: File | null) {
+  return Boolean(file?.type.startsWith("image/") || /\.(jpe?g|png|gif|webp)$/i.test(file?.name ?? ""));
+}
+
+function compactMeta(document: KnowledgeDocumentSummary) {
+  return [
+    document.project_type,
+    document.volume,
+    document.document_category ?? document.document_type,
+    document.specialty,
+    document.region,
+    document.certificate_type,
+    document.owner_name,
+    document.verified_status,
+    document.valid_to ? `有效期至${document.valid_to}` : null,
+    ...(document.tags ?? [])
+  ].filter(Boolean);
+}
+
+function MetaSelect({
+  value,
+  onChange,
+  placeholder,
+  options
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  options: string[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+    >
+      <option value="">{placeholder}</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function KnowledgePanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const session = getStoredSession();
@@ -59,9 +186,22 @@ export function KnowledgePanel() {
   const canEdit = isAdmin;
   const [documents, setDocuments] = useState<KnowledgeDocumentSummary[]>([]);
   const [file, setFile] = useState<File | null>(null);
+  const [projectType, setProjectType] = useState("");
   const [documentType, setDocumentType] = useState("");
+  const [documentCategory, setDocumentCategory] = useState("");
   const [specialty, setSpecialty] = useState("");
+  const [volume, setVolume] = useState("");
+  const [region, setRegion] = useState("");
   const [projectYear, setProjectYear] = useState("");
+  const [ownerType, setOwnerType] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [certificateType, setCertificateType] = useState("");
+  const [validFrom, setValidFrom] = useState("");
+  const [validTo, setValidTo] = useState("");
+  const [sensitivity, setSensitivity] = useState("");
+  const [usageScope, setUsageScope] = useState("");
+  const [verifiedStatus, setVerifiedStatus] = useState("");
+  const [imageInsertable, setImageInsertable] = useState(true);
   const [tagText, setTagText] = useState("");
   const [ingestionMode, setIngestionMode] = useState("auto");
   const [query, setQuery] = useState("施工组织设计 工期 质量 安全");
@@ -71,6 +211,7 @@ export function KnowledgePanel() {
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [editingMeta, setEditingMeta] = useState<KnowledgeMetaDraft>(emptyMetaDraft);
   const [preview, setPreview] = useState<KnowledgeDocumentPreview | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,12 +253,22 @@ export function KnowledgePanel() {
     try {
       const response = await uploadKnowledge(file, {
         documentType: documentType.trim() || undefined,
+        projectType: projectType.trim() || undefined,
+        documentCategory: documentCategory.trim() || undefined,
         specialty: specialty.trim() || undefined,
+        volume: volume.trim() || undefined,
+        region: region.trim() || undefined,
         projectYear: projectYear.trim() ? Number(projectYear) : null,
-        tags: tagText
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean),
+        ownerType: ownerType.trim() || undefined,
+        ownerName: ownerName.trim() || undefined,
+        certificateType: certificateType.trim() || undefined,
+        validFrom: validFrom.trim() || undefined,
+        validTo: validTo.trim() || undefined,
+        sensitivity: sensitivity.trim() || undefined,
+        usageScope: usageScope.trim() || undefined,
+        verifiedStatus: verifiedStatus.trim() || undefined,
+        imageInsertable: isImageFile(file) ? imageInsertable : undefined,
+        tags: splitTags(tagText),
         ingestionMode: ingestionMode === "auto" ? undefined : ingestionMode
       });
       const statusText =
@@ -126,9 +277,22 @@ export function KnowledgePanel() {
           : `${response.chunk_ids.length} 个片段`;
       setLastUpload(`${file.name}：${statusText}`);
       setFile(null);
+      setProjectType("");
       setDocumentType("");
+      setDocumentCategory("");
       setSpecialty("");
+      setVolume("");
+      setRegion("");
       setProjectYear("");
+      setOwnerType("");
+      setOwnerName("");
+      setCertificateType("");
+      setValidFrom("");
+      setValidTo("");
+      setSensitivity("");
+      setUsageScope("");
+      setVerifiedStatus("");
+      setImageInsertable(true);
       setTagText("");
       setIngestionMode("auto");
       if (fileInputRef.current) {
@@ -152,7 +316,19 @@ export function KnowledgePanel() {
     setSearching(true);
     setError(null);
     try {
-      const response = await searchKnowledge(value, 5);
+      const response = await searchKnowledge(value, 5, {
+        projectType: projectType.trim() || undefined,
+        documentType: documentType.trim() || undefined,
+        documentCategory: documentCategory.trim() || undefined,
+        specialty: specialty.trim() || undefined,
+        volume: volume.trim() || undefined,
+        region: region.trim() || undefined,
+        certificateType: certificateType.trim() || undefined,
+        sensitivity: sensitivity.trim() || undefined,
+        usageScope: usageScope.trim() || undefined,
+        verifiedStatus: verifiedStatus.trim() || undefined,
+        tags: splitTags(tagText)
+      });
       setResults(response.results);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "知识库检索失败");
@@ -164,6 +340,7 @@ export function KnowledgePanel() {
   function startEditing(document: KnowledgeDocumentSummary) {
     setEditingId(document.document_id);
     setEditingTitle(document.file_name);
+    setEditingMeta(metaDraftFromDocument(document));
     setError(null);
   }
 
@@ -176,7 +353,27 @@ export function KnowledgePanel() {
     setBusy(true);
     setError(null);
     try {
-      await renameKnowledgeDocument(documentId, title);
+      await renameKnowledgeDocument(documentId, title, {
+        projectType: editingMeta.projectType.trim() || null,
+        documentType: editingMeta.documentType.trim() || null,
+        documentCategory: editingMeta.documentCategory.trim() || null,
+        specialty: editingMeta.specialty.trim() || null,
+        volume: editingMeta.volume.trim() || null,
+        region: editingMeta.region.trim() || null,
+        projectYear: editingMeta.projectYear.trim()
+          ? Number(editingMeta.projectYear)
+          : null,
+        ownerType: editingMeta.ownerType.trim() || null,
+        ownerName: editingMeta.ownerName.trim() || null,
+        certificateType: editingMeta.certificateType.trim() || null,
+        validFrom: editingMeta.validFrom.trim() || null,
+        validTo: editingMeta.validTo.trim() || null,
+        sensitivity: editingMeta.sensitivity.trim() || null,
+        usageScope: editingMeta.usageScope.trim() || null,
+        verifiedStatus: editingMeta.verifiedStatus.trim() || null,
+        imageInsertable: editingMeta.imageInsertable,
+        tags: splitTags(editingMeta.tagText)
+      });
       setEditingId(null);
       setEditingTitle("");
       setResults([]);
@@ -306,17 +503,21 @@ export function KnowledgePanel() {
             )}
 
             <div className="grid grid-cols-2 gap-2">
+              <MetaSelect value={projectType} onChange={setProjectType} placeholder="项目类型" options={projectTypeOptions} />
+              <MetaSelect value={volume} onChange={setVolume} placeholder="所属卷册" options={volumeOptions} />
+              <MetaSelect value={documentCategory} onChange={setDocumentCategory} placeholder="资料类别" options={documentCategoryOptions} />
               <input
                 value={documentType}
                 onChange={(event) => setDocumentType(event.target.value)}
                 className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
-                placeholder="资料类型"
+                placeholder="细分类型"
               />
+              <MetaSelect value={specialty} onChange={setSpecialty} placeholder="专业" options={specialtyOptions} />
               <input
-                value={specialty}
-                onChange={(event) => setSpecialty(event.target.value)}
+                value={region}
+                onChange={(event) => setRegion(event.target.value)}
                 className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
-                placeholder="专业"
+                placeholder="地区"
               />
               <input
                 value={projectYear}
@@ -324,11 +525,42 @@ export function KnowledgePanel() {
                 className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
                 placeholder="年份"
               />
+              <MetaSelect value={ownerType} onChange={setOwnerType} placeholder="主体类型" options={ownerTypeOptions} />
+              <input
+                value={ownerName}
+                onChange={(event) => setOwnerName(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="主体名称"
+              />
+              <MetaSelect value={certificateType} onChange={setCertificateType} placeholder="证件/证明" options={certificateTypeOptions} />
+              <input
+                value={validFrom}
+                onChange={(event) => setValidFrom(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="有效期起 YYYY-MM-DD"
+              />
+              <input
+                value={validTo}
+                onChange={(event) => setValidTo(event.target.value)}
+                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="有效期至 YYYY-MM-DD"
+              />
+              <MetaSelect value={sensitivity} onChange={setSensitivity} placeholder="敏感级别" options={sensitivityOptions} />
+              <MetaSelect value={usageScope} onChange={setUsageScope} placeholder="用途范围" options={usageScopeOptions} />
+              <MetaSelect value={verifiedStatus} onChange={setVerifiedStatus} placeholder="核验状态" options={verifiedStatusOptions} />
+              <label className="flex h-9 items-center gap-2 rounded-md border border-line bg-field px-3 text-xs text-ink">
+                <input
+                  type="checkbox"
+                  checked={imageInsertable}
+                  onChange={(event) => setImageInsertable(event.target.checked)}
+                />
+                可插图
+              </label>
               <input
                 value={tagText}
                 onChange={(event) => setTagText(event.target.value)}
-                className="h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
-                placeholder="标签，逗号分隔"
+                className="col-span-2 h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
+                placeholder="补充标签，逗号分隔"
               />
               <select
                 value={ingestionMode}
@@ -421,34 +653,49 @@ export function KnowledgePanel() {
                   className="rounded-md border border-line bg-white px-3 py-2"
                 >
                   {editingId === document.document_id ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={editingTitle}
-                        onChange={(event) => setEditingTitle(event.target.value)}
-                        className="h-8 min-w-0 flex-1 rounded-md border border-line bg-field px-2 text-xs text-ink"
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        title="保存标题"
-                        disabled={busy}
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-ok text-white disabled:bg-green-300"
-                        onClick={() => saveTitle(document.document_id)}
-                      >
-                        {busy ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Check className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        title="取消"
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line text-muted hover:bg-field"
-                        onClick={() => setEditingId(null)}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={editingTitle}
+                          onChange={(event) => setEditingTitle(event.target.value)}
+                          className="h-8 min-w-0 flex-1 rounded-md border border-line bg-field px-2 text-xs text-ink"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          title="保存"
+                          disabled={busy}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-ok text-white disabled:bg-green-300"
+                          onClick={() => saveTitle(document.document_id)}
+                        >
+                          {busy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          title="取消"
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line text-muted hover:bg-field"
+                          onClick={() => setEditingId(null)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <MetaSelect value={editingMeta.projectType} onChange={(value) => setEditingMeta((current) => ({ ...current, projectType: value }))} placeholder="项目类型" options={projectTypeOptions} />
+                        <MetaSelect value={editingMeta.volume} onChange={(value) => setEditingMeta((current) => ({ ...current, volume: value }))} placeholder="所属卷册" options={volumeOptions} />
+                        <MetaSelect value={editingMeta.documentCategory} onChange={(value) => setEditingMeta((current) => ({ ...current, documentCategory: value }))} placeholder="资料类别" options={documentCategoryOptions} />
+                        <input value={editingMeta.documentType} onChange={(event) => setEditingMeta((current) => ({ ...current, documentType: event.target.value }))} className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="细分类型" />
+                        <MetaSelect value={editingMeta.specialty} onChange={(value) => setEditingMeta((current) => ({ ...current, specialty: value }))} placeholder="专业" options={specialtyOptions} />
+                        <input value={editingMeta.region} onChange={(event) => setEditingMeta((current) => ({ ...current, region: event.target.value }))} className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="地区" />
+                        <input value={editingMeta.ownerName} onChange={(event) => setEditingMeta((current) => ({ ...current, ownerName: event.target.value }))} className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="主体名称" />
+                        <MetaSelect value={editingMeta.certificateType} onChange={(value) => setEditingMeta((current) => ({ ...current, certificateType: value }))} placeholder="证件/证明" options={certificateTypeOptions} />
+                        <input value={editingMeta.validTo} onChange={(event) => setEditingMeta((current) => ({ ...current, validTo: event.target.value }))} className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="有效期至" />
+                        <MetaSelect value={editingMeta.verifiedStatus} onChange={(value) => setEditingMeta((current) => ({ ...current, verifiedStatus: value }))} placeholder="核验状态" options={verifiedStatusOptions} />
+                        <input value={editingMeta.tagText} onChange={(event) => setEditingMeta((current) => ({ ...current, tagText: event.target.value }))} className="col-span-2 h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="标签，逗号分隔" />
+                      </div>
                     </div>
                   ) : (
                     <div className="flex items-start gap-2">
@@ -468,11 +715,9 @@ export function KnowledgePanel() {
                             {document.extraction_message}
                           </p>
                         ) : null}
-                        {document.document_type || document.specialty || document.tags?.length ? (
+                        {compactMeta(document).length ? (
                           <p className="mt-1 truncate text-xs text-muted">
-                            {[document.document_type, document.specialty, ...(document.tags ?? [])]
-                              .filter(Boolean)
-                              .join(" / ")}
+                            {compactMeta(document).join(" / ")}
                           </p>
                         ) : null}
                       </div>

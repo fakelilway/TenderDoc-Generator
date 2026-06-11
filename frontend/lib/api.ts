@@ -358,23 +358,75 @@ export function getProjectDeliveryPreview(projectId: number) {
 export function uploadKnowledge(
   file: File,
   metadata?: {
+    projectType?: string;
     documentType?: string;
+    documentCategory?: string;
     specialty?: string;
+    volume?: string;
+    region?: string;
     projectYear?: number | null;
+    ownerType?: string;
+    ownerName?: string;
+    certificateType?: string;
+    validFrom?: string;
+    validTo?: string;
+    sensitivity?: string;
+    usageScope?: string;
+    verifiedStatus?: string;
+    imageInsertable?: boolean | null;
     tags?: string[];
     ingestionMode?: string;
   }
 ) {
   const body = new FormData();
   body.append("file", file);
+  if (metadata?.projectType) {
+    body.append("project_type", metadata.projectType);
+  }
   if (metadata?.documentType) {
     body.append("document_type", metadata.documentType);
+  }
+  if (metadata?.documentCategory) {
+    body.append("document_category", metadata.documentCategory);
   }
   if (metadata?.specialty) {
     body.append("specialty", metadata.specialty);
   }
+  if (metadata?.volume) {
+    body.append("volume", metadata.volume);
+  }
+  if (metadata?.region) {
+    body.append("region", metadata.region);
+  }
   if (metadata?.projectYear) {
     body.append("project_year", String(metadata.projectYear));
+  }
+  if (metadata?.ownerType) {
+    body.append("owner_type", metadata.ownerType);
+  }
+  if (metadata?.ownerName) {
+    body.append("owner_name", metadata.ownerName);
+  }
+  if (metadata?.certificateType) {
+    body.append("certificate_type", metadata.certificateType);
+  }
+  if (metadata?.validFrom) {
+    body.append("valid_from", metadata.validFrom);
+  }
+  if (metadata?.validTo) {
+    body.append("valid_to", metadata.validTo);
+  }
+  if (metadata?.sensitivity) {
+    body.append("sensitivity", metadata.sensitivity);
+  }
+  if (metadata?.usageScope) {
+    body.append("usage_scope", metadata.usageScope);
+  }
+  if (metadata?.verifiedStatus) {
+    body.append("verified_status", metadata.verifiedStatus);
+  }
+  if (metadata?.imageInsertable !== undefined && metadata.imageInsertable !== null) {
+    body.append("image_insertable", String(metadata.imageInsertable));
   }
   if (metadata?.tags?.length) {
     body.append("tags", metadata.tags.join(","));
@@ -392,9 +444,22 @@ export function renameKnowledgeDocument(
   documentId: number,
   title: string,
   metadata?: {
+    projectType?: string | null;
     documentType?: string | null;
+    documentCategory?: string | null;
     specialty?: string | null;
+    volume?: string | null;
+    region?: string | null;
     projectYear?: number | null;
+    ownerType?: string | null;
+    ownerName?: string | null;
+    certificateType?: string | null;
+    validFrom?: string | null;
+    validTo?: string | null;
+    sensitivity?: string | null;
+    usageScope?: string | null;
+    verifiedStatus?: string | null;
+    imageInsertable?: boolean | null;
     tags?: string[];
   }
 ) {
@@ -404,10 +469,23 @@ export function renameKnowledgeDocument(
       method: "PATCH",
       body: JSON.stringify({
         title,
+        project_type: metadata?.projectType ?? null,
         document_type: metadata?.documentType ?? null,
+        document_category: metadata?.documentCategory ?? null,
         specialty: metadata?.specialty ?? null,
+        volume: metadata?.volume ?? null,
+        region: metadata?.region ?? null,
         project_year: metadata?.projectYear ?? null,
-        tags: metadata?.tags ?? []
+        owner_type: metadata?.ownerType ?? null,
+        owner_name: metadata?.ownerName ?? null,
+        certificate_type: metadata?.certificateType ?? null,
+        valid_from: metadata?.validFrom ?? null,
+        valid_to: metadata?.validTo ?? null,
+        sensitivity: metadata?.sensitivity ?? null,
+        usage_scope: metadata?.usageScope ?? null,
+        verified_status: metadata?.verifiedStatus ?? null,
+        image_insertable: metadata?.imageInsertable ?? null,
+        tags: metadata?.tags ?? null
       })
     }
   );
@@ -437,17 +515,65 @@ export function getKnowledgeDocumentPreview(documentId: number) {
 export function searchKnowledge(
   query: string,
   topK = 5,
-  filters?: { documentType?: string; specialty?: string; tags?: string[] }
+  filters?: {
+    projectType?: string;
+    documentType?: string;
+    documentCategory?: string;
+    specialty?: string;
+    volume?: string;
+    region?: string;
+    projectYear?: number | null;
+    ownerType?: string;
+    ownerName?: string;
+    certificateType?: string;
+    sensitivity?: string;
+    usageScope?: string;
+    verifiedStatus?: string;
+    tags?: string[];
+  }
 ) {
   const params = new URLSearchParams({
     query,
     top_k: String(topK)
   });
+  if (filters?.projectType) {
+    params.set("project_type", filters.projectType);
+  }
   if (filters?.documentType) {
     params.set("document_type", filters.documentType);
   }
+  if (filters?.documentCategory) {
+    params.set("document_category", filters.documentCategory);
+  }
   if (filters?.specialty) {
     params.set("specialty", filters.specialty);
+  }
+  if (filters?.volume) {
+    params.set("volume", filters.volume);
+  }
+  if (filters?.region) {
+    params.set("region", filters.region);
+  }
+  if (filters?.projectYear) {
+    params.set("project_year", String(filters.projectYear));
+  }
+  if (filters?.ownerType) {
+    params.set("owner_type", filters.ownerType);
+  }
+  if (filters?.ownerName) {
+    params.set("owner_name", filters.ownerName);
+  }
+  if (filters?.certificateType) {
+    params.set("certificate_type", filters.certificateType);
+  }
+  if (filters?.sensitivity) {
+    params.set("sensitivity", filters.sensitivity);
+  }
+  if (filters?.usageScope) {
+    params.set("usage_scope", filters.usageScope);
+  }
+  if (filters?.verifiedStatus) {
+    params.set("verified_status", filters.verifiedStatus);
   }
   filters?.tags?.forEach((tag) => params.append("tags", tag));
   return requestJson<KnowledgeSearchResponse>(

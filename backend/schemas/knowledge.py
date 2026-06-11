@@ -18,9 +18,22 @@ class KnowledgeDocumentSummary(BaseModel):
     file_name: str
     file_path: str | None = None
     file_type: str | None = None
+    project_type: str | None = None
     document_type: str | None = None
+    document_category: str | None = None
     specialty: str | None = None
+    volume: str | None = None
+    region: str | None = None
     project_year: int | None = None
+    owner_type: str | None = None
+    owner_name: str | None = None
+    certificate_type: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    sensitivity: str | None = None
+    usage_scope: str | None = None
+    verified_status: str | None = None
+    image_insertable: bool | None = None
     tags: list[str] = []
     ingestion_mode: str | None = None
     indexing_status: str | None = None
@@ -48,10 +61,23 @@ class KnowledgeDocumentPreviewResponse(BaseModel):
 
 class KnowledgeDocumentUpdateRequest(BaseModel):
     title: str
+    project_type: str | None = None
     document_type: str | None = None
+    document_category: str | None = None
     specialty: str | None = None
+    volume: str | None = None
+    region: str | None = None
     project_year: int | None = None
-    tags: list[str] = []
+    owner_type: str | None = None
+    owner_name: str | None = None
+    certificate_type: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    sensitivity: str | None = None
+    usage_scope: str | None = None
+    verified_status: str | None = None
+    image_insertable: bool | None = None
+    tags: list[str] | None = None
 
 
 class KnowledgeDeleteResponse(BaseModel):
