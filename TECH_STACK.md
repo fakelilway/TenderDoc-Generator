@@ -48,7 +48,7 @@ pnpm --dir frontend build
 主要 service：
 
 - `project_service.py`：项目、下载、权限、最终版本。
-- `workflow_service.py` / `workflow_graph.py`：解析、确认、检索、生成、审查、人工确认。
+- `workflow_service.py`：解析、确认、检索、生成、审查、人工确认（原 `workflow_graph.py` 已合并到此文件）。
 - `generation_service.py`：生成、导出、图片候选、分卷。
 - `knowledge_service.py`：知识库上传、metadata、预览、图片引用。
 - `template_service.py`：模板库 CRUD、推荐、项目绑定。

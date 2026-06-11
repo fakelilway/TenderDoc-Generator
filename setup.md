@@ -8,7 +8,7 @@
 |------|----------|----------|
 | Docker Desktop / Docker Engine | 24+ | `docker --version` |
 | Docker Compose | 2.20+ | `docker compose version` |
-| Python | 3.11+ | `python3.11 --version` |
+| Python | 3.10+ | `python3 --version` |
 | Node.js | 20+ | `node --version` |
 | pnpm | 10.32.0 | `pnpm --version` |
 | Git | 2.30+ | `git --version` |

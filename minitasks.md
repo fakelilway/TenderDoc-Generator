@@ -337,8 +337,8 @@
   - 定义 State 包含 `tender_text`, `parsed`, `retrieved_chunks`, `draft_markdown`, `review_report`
   - 创建图，顺序节点：parse → retrieve → generate → review
 - **测试方法**：运行图，State 按顺序填充，最终有 review_report。
-- **当前实现**：`services/workflow_graph.py` 已基于 LangGraph `StateGraph` 定义 parse → retrieve → generate → review → human_review。
-- **当前验证**：`tests/test_workflow_graph.py` 已运行图并验证最终有 `review_report`。
+- **当前实现**：`services/workflow_service.py` 已基于 LangGraph `StateGraph` 定义 parse → retrieve → generate → review → human_review（原 `workflow_graph.py` 已合并到此文件）。
+- **当前验证**：`tests/test_workflow_service.py` 已运行图并验证最终有 `review_report`（原 `test_workflow_graph.py` 已合并）。
 
 ### M30：实现“修正”节点并添加循环
 - **完成状态**：✅ 已完成

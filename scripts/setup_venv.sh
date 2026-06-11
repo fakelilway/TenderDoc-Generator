@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create a reproducible .venv using Python 3.11 and install backend dependencies.
+# Create a reproducible .venv using Python 3.10+ and install backend dependencies.
 # Usage: run from repository root: ./scripts/setup_venv.sh
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,10 +9,41 @@ VENV_PATH="$REPO_ROOT/.venv"
 
 echo "Using repo root: $REPO_ROOT"
 
-if ! command -v python3.11 >/dev/null 2>&1; then
-  echo "python3.11 not found. Please install Python 3.11 (Homebrew: brew install python@3.11)" >&2
+find_python() {
+  local candidates=()
+  if [ -n "${PYTHON_BIN:-}" ]; then
+    candidates+=("$PYTHON_BIN")
+  fi
+  candidates+=(python3.11 python3.10 python3 python)
+
+  local candidate version major minor
+  for candidate in "${candidates[@]}"; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+
+    version="$($candidate -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
+    major="${version%%.*}"
+    minor="${version#*.}"
+    minor="${minor%%.*}"
+
+    if [ "${major:-0}" -eq 3 ] && [ "${minor:-0}" -ge 10 ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+PYTHON_CMD="$(find_python || true)"
+if [ -z "$PYTHON_CMD" ]; then
+  echo "Python 3.10+ not found. Please install Python 3.10 or 3.11 (Homebrew: brew install python@3.10 or python@3.11)." >&2
   exit 1
 fi
+
+PYTHON_VERSION="$($PYTHON_CMD -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')"
+echo "Using Python interpreter: $PYTHON_CMD ($PYTHON_VERSION)"
 
 if [ "${RESET_VENV:-0}" = "1" ]; then
   echo "Removing existing venv at $VENV_PATH"
@@ -20,8 +51,8 @@ if [ "${RESET_VENV:-0}" = "1" ]; then
 fi
 
 if [ ! -x "$VENV_PATH/bin/python" ]; then
-  echo "Creating venv with python3.11"
-  python3.11 -m venv "$VENV_PATH"
+  echo "Creating venv with $PYTHON_CMD"
+  "$PYTHON_CMD" -m venv "$VENV_PATH"
 fi
 source "$VENV_PATH/bin/activate"
 PYTHON_BIN="$VENV_PATH/bin/python"

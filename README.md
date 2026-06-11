@@ -36,8 +36,7 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 
 最近一次架构验证：
 
-- 后端重点回归：`101 passed`
-- 后端扩展回归：`174 passed`（排除本地已删除 fixture PDF 依赖的 parser/indexer 文件）
+- 后端完整回归：`182 passed, 2 skipped`
 - 知识库批量整理脚本测试：`4 passed`
 - 前端类型检查：通过
 
