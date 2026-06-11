@@ -16,8 +16,8 @@ export function NavLinkButton({
 }: NavLinkButtonProps) {
   const className =
     variant === "primary"
-      ? "inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700"
-      : "inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field";
+      ? "inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700"
+      : "inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field";
 
   return (
     <Link href={href} prefetch={false} className={className}>
