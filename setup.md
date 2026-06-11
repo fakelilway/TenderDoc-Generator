@@ -1,8 +1,6 @@
-# TenderDoc-Generator 本地启动指南
+# TenderDoc-Generator 本地启动与验证指南
 
-本文档说明如何在本地直接启动 TenderDoc-Generator MVP。当前推荐使用仓库内脚本完成环境安装、数据库初始化、后端启动和前端启动。
-
----
+本文档说明如何在本地运行当前 MVP。当前版本仍是 localhost 开发部署，但已经包含完整后端、前端、数据库、对象存储、知识库、模板库和工作流。
 
 ## 1. 前置要求
 
@@ -12,17 +10,15 @@
 | Docker Compose | 2.20+ | `docker compose version` |
 | Python | 3.11+ | `python3.11 --version` |
 | Node.js | 20+ | `node --version` |
-| pnpm | 10+ | `pnpm --version` |
+| pnpm | 10.32.0 | `pnpm --version` |
 | Git | 2.30+ | `git --version` |
 
-如果没有 pnpm，可以先安装：
+如果没有 pnpm：
 
 ```bash
 corepack enable
 corepack prepare pnpm@10.32.0 --activate
 ```
-
----
 
 ## 2. 首次安装
 
@@ -32,16 +28,30 @@ corepack prepare pnpm@10.32.0 --activate
 ./scripts/setup_local.sh
 ```
 
-这个脚本会执行：
+脚本会做这些事：
 
-- 如果 `backend/.env` 不存在，从 `backend/.env.example` 复制一份
-- 创建或复用根目录 `.venv`
-- 安装后端依赖
-- 安装前端依赖
-- 启动 Docker 服务
-- 应用 `backend/init_db.sql`
+- 如果 `backend/.env` 不存在，从 `backend/.env.example` 复制一份。
+- 创建或复用根目录 `.venv`。
+- 安装后端 Python 依赖。
+- 安装前端 pnpm 依赖。
+- 启动 PostgreSQL/Redis/MinIO。
+- 应用 `backend/init_db.sql`。
 
-真实 LLM 解析/生成流程需要编辑 `backend/.env`，至少配置：
+如果遇到旧虚拟环境里 `pip` 损坏或缺失：
+
+```bash
+RESET_VENV=1 ./scripts/setup_venv.sh
+```
+
+然后再运行：
+
+```bash
+./scripts/setup_local.sh
+```
+
+## 3. 环境变量
+
+真实 LLM 解析/生成需要编辑 `backend/.env`。本项目当前通过 OpenAI SDK 兼容 OpenRouter/DeepSeek：
 
 ```env
 OPENROUTER_API_KEY=sk-or-v1-your-key
@@ -49,7 +59,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=deepseek/deepseek-chat
 ```
 
-基础服务默认配置：
+基础服务默认值：
 
 ```env
 DATABASE_URL=postgresql://tenderuser:tenderpwd@localhost:5432/tenderdb
@@ -57,13 +67,18 @@ REDIS_URL=redis://localhost:6379/0
 MINIO_API_URL=http://localhost:9000
 MINIO_CONSOLE_URL=http://localhost:9001
 MINIO_BUCKET=tender-files
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_DIMENSION=1024
+JWT_SECRET=change-me
 ```
 
----
+如果首次运行 embedding 较慢，是在下载本地向量模型。国内网络可临时设置：
 
-## 3. 日常启动
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+```
 
-日常开发只需要：
+## 4. 日常启动
 
 ```bash
 ./scripts/dev_local.sh
@@ -71,10 +86,10 @@ MINIO_BUCKET=tender-files
 
 启动成功后访问：
 
-- 前端工作台：`http://localhost:3000`
-- 后端 API 文档：`http://localhost:8000/docs`
-- 后端健康检查：`http://localhost:8000/health`
-- MinIO Console：`http://localhost:9001`
+- 前端工作台：http://localhost:3000
+- 后端 API 文档：http://localhost:8000/docs
+- 后端健康检查：http://localhost:8000/health
+- MinIO Console：http://localhost:9001
 
 MinIO 默认账号密码：
 
@@ -82,59 +97,55 @@ MinIO 默认账号密码：
 minioadmin / minioadmin
 ```
 
-按 `Ctrl+C` 会停止后端和前端开发服务；Docker 容器会继续在后台运行。
+默认管理员账号：
 
----
+```text
+admin / tenderdoc
+```
 
-## 4. 拆分启动命令
+`Ctrl+C` 会停止后端和前端开发服务，Docker 容器会继续在后台运行。
 
-如果需要单独排查某一层，可以使用下面的脚本。
-
-初始化基础服务和数据库：
+## 5. 拆分启动命令
 
 ```bash
+# 启动 Docker 并应用数据库 schema
 ./scripts/init_db.sh
-```
 
-只启动后端：
-
-```bash
+# 只启动后端
 ./scripts/start_backend.sh
-```
 
-只启动前端：
-
-```bash
+# 只启动前端
 ./scripts/start_frontend.sh
-```
 
-只安装前端依赖：
+# 只安装/更新后端虚拟环境
+./scripts/setup_venv.sh
 
-```bash
+# 只安装前端依赖
 ./scripts/setup_frontend.sh
 ```
 
-只安装后端虚拟环境：
+端口可临时覆盖：
 
 ```bash
-./scripts/setup_venv.sh
+BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
 ```
 
-强制重建 `.venv`：
+## 6. 验证命令
 
-```bash
-RESET_VENV=1 ./scripts/setup_venv.sh
-```
-
----
-
-## 5. 验证命令
-
-后端单元测试：
+后端全量测试：
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
 ```
+
+前端验证：
+
+```bash
+pnpm --dir frontend typecheck
+pnpm --dir frontend build
+```
+
+不要把 `typecheck` 和 `build` 并行跑。Next.js build 会重建 `.next/types`，并行时 typecheck 可能读到临时缺失的类型文件。
 
 基础服务 smoke：
 
@@ -151,14 +162,6 @@ LLM 和 embedding smoke：
 .venv/bin/python backend/test_embedding.py
 ```
 
-前端类型检查和生产构建：
-
-```bash
-cd frontend
-pnpm run typecheck
-pnpm run build
-```
-
 健康检查：
 
 ```bash
@@ -166,33 +169,97 @@ curl -fsS http://localhost:8000/health
 curl -fsSI http://localhost:3000
 ```
 
-当前已验证结果：
+最近一次完整验证：
 
-- `./scripts/init_db.sh` 通过
-- `.venv/bin/python -m pytest backend/tests -q` 通过：49 passed, 2 skipped
-- `pnpm run typecheck` 通过
-- `pnpm run build` 通过
-- `./scripts/dev_local.sh` 可启动前端和后端
+- `.venv/bin/python -m pytest backend/tests -q`：`182 passed, 2 skipped`
+- `pnpm --dir frontend typecheck`：通过
+- `pnpm --dir frontend build`：通过
 
----
+## 7. 本地端到端流程
 
-## 6. 本地 Demo 流程
+1. 运行 `./scripts/dev_local.sh`。
+2. 打开 http://localhost:3000。
+3. 使用 `admin / tenderdoc` 登录。
+4. 进入模板库，确认默认模板或上传脱敏历史投标 PDF。
+5. 进入知识库，上传少量测试资料并填写结构化标签。
+6. 创建项目并上传招标文件 PDF/DOCX/TXT。
+7. 查看并确认解析结果。
+8. 生成并调整投标文件大纲。
+9. 在资料选择面板筛选并勾选 RAG 资料。
+10. 开始生成，查看商务/技术/报价分卷预览。
+11. 查看审查报告、响应矩阵、评分预测和报价策略。
+12. 在线编辑正文，保存后重新审查。
+13. 终审确认后下载 DOCX、Markdown 或审查报告。
 
-1. 运行 `./scripts/dev_local.sh`
-2. 打开 `http://localhost:3000`
-3. 上传真实招标文件（PDF/DOCX/TXT）
-4. 等待系统创建项目、解析、生成、审查
-5. 在页面查看 Markdown 初稿和审查风险项
-6. 点击“批准并继续”或“手动修改”
-7. 点击“下载标书”获取 DOCX
+## 8. 知识库格式与预览
 
-企业历史标书、资质文件、施工方案模板等知识库文件可以放入 `knowledge_base/`，也可以通过 `POST /api/knowledge/upload` 上传索引。
+当前上传接口主要支持：
 
----
+- 文本索引：PDF、DOCX、TXT。
+- 图片资料：JPG、JPEG、PNG。
+- 预览：文本资料显示提取文本，图片显示原图，PDF 提供预览类型，其他文件作为附件记录。
 
-## 7. 常见问题
+知识库不是单纯文件夹。上传时请尽量填写 metadata：
 
-### Q1: 端口被占用
+- 项目类型、资料类别、册别、专业、地区、年份。
+- 人员/公司/项目归属和证书类型。
+- 有效期、敏感级别、使用范围、核验状态。
+- 图片是否允许插入标书。
+
+这些字段会影响：
+
+- 知识库页面筛选。
+- 标书生成前的资料选择。
+- RAG 检索过滤。
+- 图片插入候选。
+- 后续审计、过期提醒和资料治理。
+
+## 9. 模板与离线脚本
+
+导入默认模板：
+
+```bash
+.venv/bin/python backend/scripts/seed_default_template.py
+```
+
+从真实历史投标 PDF 抽取脱敏模板 JSON：
+
+```bash
+.venv/bin/python backend/scripts/extract_bid_template.py "/path/to/投标文件.pdf" \
+  --out backend/templates/bid_templates/my_template.json \
+  --name "某类项目投标模板"
+```
+
+分析真实 PDF 格式特征：
+
+```bash
+.venv/bin/python scripts/analyze_pdf_format.py /path/to/投标文件.pdf \
+  --out-json data/pdf_format_analysis.json
+```
+
+离线生成 demo：
+
+```bash
+.venv/bin/python scripts/generate_bid.py --demo --output-dir data/output/demo
+```
+
+质量评估：
+
+```bash
+.venv/bin/python backend/scripts/run_quality_eval.py
+```
+
+AI 标书与真实模板差距评估：
+
+```bash
+.venv/bin/python backend/scripts/run_bid_gap_eval.py \
+  --ai /path/to/generated.docx \
+  --reference backend/templates/bid_templates/road_first_envelope_template.json
+```
+
+## 10. 常见问题
+
+### 端口被占用
 
 默认端口：
 
@@ -202,7 +269,7 @@ curl -fsSI http://localhost:3000
 - Backend：8000
 - Frontend：3000
 
-如果前后端端口冲突，可以临时指定：
+临时换端口：
 
 ```bash
 BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
@@ -210,71 +277,44 @@ BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
 
 Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `backend/.env`。
 
-### Q2: `python3.11 not found`
+### LLM 返回 401
 
-macOS 推荐：
+检查：
 
-```bash
-brew install python@3.11
-```
+- `OPENROUTER_API_KEY` 是否正确。
+- OpenRouter 账户是否有额度。
+- `OPENROUTER_MODEL` 是否可用。
+- 公司网络是否拦截外部 API。
 
-确认：
+### MinIO 下载链接打不开
 
-```bash
-python3.11 --version
-```
-
-### Q3: 前端依赖安装慢
-
-脚本默认使用 `https://registry.npmmirror.com`。如果想换回官方源：
-
-```bash
-NPM_REGISTRY=https://registry.npmjs.org ./scripts/setup_frontend.sh
-```
-
-### Q4: embedding 第一次很慢
-
-首次运行会下载 `BAAI/bge-large-zh-v1.5`，文件较大。国内网络可以设置 HuggingFace 镜像：
-
-```bash
-export HF_ENDPOINT=https://hf-mirror.com
-```
-
-### Q5: LLM 返回 401
-
-检查 `backend/.env`：
-
-- `OPENROUTER_API_KEY` 是否正确
-- OpenRouter 账户是否有额度
-- `OPENROUTER_MODEL` 是否可用
-
-### Q6: MinIO 下载链接打不开
-
-确认容器运行：
+检查容器状态：
 
 ```bash
 docker compose ps
 ```
 
-确认 bucket 配置一致：
+检查配置：
 
 ```env
 MINIO_API_URL=http://localhost:9000
 MINIO_BUCKET=tender-files
 ```
 
-### Q7: 想重置本地数据
+### 想重置本地数据
 
-这会删除本地 Docker volume 数据：
+这会删除本地数据库和对象存储 volume：
 
 ```bash
 docker compose down -v
 ./scripts/init_db.sh
 ```
 
----
+### Git 提示 gc.log / loose objects
 
-## 8. 脚本清单
+这通常是本地 Git 仓库维护警告，不影响运行、测试或 push。不要在不了解影响时随手删历史或 reset；需要清理时单独处理。
+
+## 11. 脚本清单
 
 | 脚本 | 用途 |
 |------|------|
@@ -285,9 +325,16 @@ docker compose down -v
 | `scripts/setup_frontend.sh` | 安装前端依赖 |
 | `scripts/start_backend.sh` | 只启动 FastAPI |
 | `scripts/start_frontend.sh` | 只启动 Next.js |
+| `scripts/generate_bid.py` | 离线生成脱敏标书 demo |
+| `scripts/analyze_pdf_format.py` | 分析真实 PDF 格式特征 |
+| `scripts/index_bid_templates.sh` | 将模板资料索引到本地知识库 |
+| `backend/scripts/seed_default_template.py` | 导入默认模板到模板库 |
+| `backend/scripts/extract_bid_template.py` | 从历史投标 PDF 抽取模板 JSON |
+| `backend/scripts/run_quality_eval.py` | 运行质量评估集 |
+| `backend/scripts/run_bid_gap_eval.py` | 评估 AI 标书与真实模板差距 |
 
 ---
 
-**文档版本**：2.0  
-**最后更新**：2026-06-03  
+**文档版本**：3.0
+**最后更新**：2026-06-11
 **维护者**：TenderDoc-Generator 团队

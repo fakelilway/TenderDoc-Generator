@@ -1,322 +1,175 @@
 # TenderDoc-Generator
 
-> **当前状态：MVP 已完成 · 下一阶段进入 Workflow 产品化与策略 Agent**
-> 目标交付：2026-08-08
+> 当前状态：本地 MVP 已跑通，已进入“正奇市政/公路专用化 + 知识库结构化 + 生产化准备”阶段
+> 目标交付日期：2026-08-08
 
-## 1. 项目愿景
+TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统。第一版不做泛行业通用投标软件，而是优先服务市政工程、公路工程、交通安全设施养护、公路改建/扩建/维修养护等正奇高频业务。
 
-**TenderDoc-Generator** 第一版定位为 **正奇建设市政/公路投标文件智能生成系统**，不是全行业通用标书软件。  
-系统优先服务正奇建设当前业务范围：市政工程、公路工程、交通安全设施养护、公路改建/扩建/维修养护及道路附属设施相关项目。
+系统从招标文件解析开始，结合真实投标文件模板、企业知识库、人工确认节点和审查 Agent，生成商务文件、技术文件、报价文件三卷草稿，并支持完整合并稿、DOCX 导出、废标风险审查、响应矩阵、评分预测和报价策略建议。
 
-用户上传招标文件（PDF/Word）后，系统将按正奇常用投标口径生成商务文件、技术文件、报价文件和完整合并稿，并提供废标项审查、历史知识库匹配、模板驱动 DOCX 导出等能力，大幅缩短标书编制周期，降低人为废标风险。
+## 当前能力
 
-**当前产品范围**
-- 市政工程：道路、排水、管网、附属设施等
-- 公路工程：改建、扩建、维修、养护等
-- 交通安全设施：标志标线、护栏、防眩、隔离栅、交安设施养护等
-- 商务/技术/报价三卷独立生成，可按招标平台要求单独提交或合并提交
-- 暂不以房建、园林、机电、水利、政府采购服务等泛行业场景作为第一版目标
+已完成并通过测试的主链路：
 
-**核心价值**
-- ⏱️ 标书编制时间从 5–7 天缩短至 **2 小时以内**
-- 🛡️ 通过 AI 审查消除 **90% 以上** 的人为废标疏漏
-- 📚 盘活正奇历史中标文件、企业资质、人员业绩和市政/公路施工方案知识库
+- 用户登录、注册、管理员注册码、普通用户权限控制。
+- 项目创建、历史项目列表、项目属主鉴权、项目恢复和删除。
+- 招标文件上传，支持 PDF/DOCX/TXT 解析。
+- Parser Agent 抽取项目名称、资质要求、评分项、废标项等结构化 JSON。
+- 人工确认解析结果与大纲，生成前不再绕过人工确认。
+- 真实投标模板 JSON 作为章节结构权威，Generator prompt 只负责角色、文风和真实性边界。
+- 商务文件、技术文件、报价文件三卷生成与预览，完整标书作为按需合并稿。
+- Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
+- DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
+- 知识库上传、列表、预览、删除、重命名、结构化 metadata 标签和 RBAC。
+- RAG 检索支持按项目类型、资料类别、册别、专业、地区、年份、证书类型、敏感级别、使用范围、核验状态、标签等过滤。
+- 知识库图片资料可作为生成候选，生成内容可以在合适位置插入图片引用；图片是否可插入由 `image_insertable` 控制。
+- Markdown 和 DOCX 导出支持基础表格，前端预览可渲染 Markdown 表格。
+- 报价策略 Agent：只输出策略、风险和人工确认点，不自动编造清单价格。
+- 评分预测 Agent：按评分项模拟分数、短板和不确定性说明，不替代人工判断。
+- 审查响应矩阵：覆盖资质、废标项、评分项和商务人工字段。
+- 模板库：管理员上传历史投标 PDF，解析为脱敏模板 JSON，按项目类型/专业/信封/地区/年份推荐。
+- 离线脚本：模板解析、格式分析、标书生成 demo、质量评估、AI 与真实投标文件差距评估。
 
-## 2. 当前阶段说明
+最近一次完整验证：
 
-✅ 已完成：
-- 需求调研与痛点分析（废标规避、效率提升、策略优化）
-- MVP 功能范围定义（技术标生成 + 废标审查 + RAG 知识库）
-- 整体架构设计（Multi-Agent 协同 + 知识库检索）
-- 多智能体协同流程设计（审查-修正闭环）
-- 开发环境规范与目录结构规划
-- Docker/PostgreSQL/Redis/MinIO 基础配置
-- 招标文件解析工具（PDF/DOCX/TXT）
-- 招标文件解析 Agent 与真实招标文件准确率测试
-- 项目创建、文件上传、解析落库的后端 service
-- FastAPI 基础路由：创建项目、查询状态、触发 MVP 解析、查看解析结果
-- RAG 知识库上传、向量入库和检索
-- 技术标 Markdown 生成、DOCX 导出和 MinIO 回写
-- 废标规则审查、审查报告定位、修正循环和人工确认
-- 前端基础工作台：上传、状态轮询、标书预览、审查高亮、人工确认、下载入口
-- 登录/注册、管理员账号、注册码、普通用户权限管理
-- 知识库 RBAC：管理员可授权普通用户查看/编辑，支持上传、删除、重命名资料
-- 真实投标文件模板解析：从历史投标 PDF 抽取主目录、施工组织设计目录和附表结构，生成脱敏 JSON 模板
-- Generator Agent 已接入真实模板 JSON：招标 JSON 决定响应内容，模板 JSON 决定章节格式，prompt 只提供角色和约束
-- 报价策略 Agent：抽取付款、保证金、工期和报价约束，只输出策略建议与人工确认点，不自动填写清单价格
-- 评分预测 Agent：按评分项模拟专家打分，展示总分、分项短板、中标概率依据和不确定性
-- 审查响应矩阵：覆盖资质、废标项、评分项和商务人工字段，并在终审清单中引用 Markdown 定位
-- 商务文件、技术文件、报价文件三卷生成与预览：workflow 保存独立 `draft_volumes`，完整标书仅作为按需合并稿
+- 后端全量测试：`182 passed, 2 skipped`
+- 前端类型检查：通过
+- 前端生产构建：通过
 
-🚧 正在进行：
-- 真实招标文件端到端演示调优
-- 从 MVP 直线流程升级为产品化 workflow 后的真实样本试用调优
-- 建立 AI 标书 vs 人工标书差距评估脚本，持续缩小内容质量差距
-- 正奇专用模板库收敛：市政、公路、交通安全设施养护、公路改扩建
+## 产品范围
 
-📋 下一步行动：
-1. 运行 `./scripts/dev_local.sh` 启动本地 MVP
-2. 用真实项目文件做浏览器端到端演示调优
-3. 按 `minitasks.md` 的 M65–M68 推进正奇专用行业模板、知识库标签和项目类型识别
-4. 优先沉淀正奇已中标市政/公路样本，形成可复用模板和质量评估基线
+第一版默认支持：
 
-### 2.1 对照目标 Workflow 的当前覆盖情况
+- 市政工程：道路、排水、管网、附属设施等。
+- 公路工程：改建、扩建、维修、养护等。
+- 交通安全设施：标志标线、护栏、防眩、隔离栅、交安设施养护等。
+- 商务/技术/报价三卷独立生成与完整合并稿。
 
-| Workflow 节点 | 当前状态 | 下一步 |
-|---|---|---|
-| 用户登录/创建项目 | ✅ 已有 | 增加项目列表、项目归属、历史项目恢复 |
-| 上传招标文件 PDF/Word | ✅ 已有 | 补充更明确的文件类型/大小/解析失败提示 |
-| 原始文件存 MinIO | ✅ 已有 | 增加对象版本、删除/归档策略 |
-| Parsing Agent 提取资质/废标项/评分点 | ✅ 已有 | 增加解析过程事件、人工校正写回 |
-| 结构化 JSON 入库 | ✅ 已有 | 增加字段级置信度、来源页码、人工确认版本 |
-| 用户确认大纲 | ✅ 已有 | 用真实项目继续调优确认体验 |
-| 手动编辑大纲 | ✅ 已有 | 后续增加更细的章节模板约束 |
-| RAG 检索企业知识库 | ✅ 已有 | 继续扩充资料标签体系和引用质量 |
-| 生成 Agent 按章节生成技术标 Markdown | ✅ 已有 | 聚焦市政、公路、交安养护和公路改扩建内容质量 |
-| 商务/技术/报价分卷生成 | ✅ 已有 | 继续优化分卷预览、单卷导出和合并稿排版 |
-| 报价 Agent 生成报价策略 | ✅ 已有 | 继续接入真实商务样本做策略口径校准 |
-| 审查 Agent 规则 + LLM 查废标项 | ✅ 已有 | 继续扩充逐条响应矩阵的证据引用 |
-| 修正 Agent 只重写失败章节 | ⚠️ 部分已有 | 当前偏追加修正说明，需要升级为章节级重写 |
-| 评分预测 Agent | ✅ 已有 | 用真实评分表继续校准预测区间 |
-| 用户在线编辑标书内容 | ✅ 已有 | 后续增加更完整的版本对比和撤销 |
-| 人工终审确认 | ✅ 已有 | 后续增加强制勾选确认点 |
-| 整合输出 Markdown -> Word DOCX | ✅ 已有 | 增加封面、目录、页眉页脚、商务/技术分册策略 |
-| 上传最终标书到 MinIO | ✅ 已有 | 增加最终版版本号和审计记录 |
-| 通知用户下载 | ⚠️ 部分已有 | 已有状态消息和下载按钮，后续可加站内通知 |
+暂不作为第一版默认目标：
 
-### 2.2 下一阶段目标
+- 房建、园林、水利、机电、政府采购服务、货物采购等泛行业场景。
+- 自动生成真实工程量清单报价、金额、费率或单价。
+- 替代人工盖章、CA 签章、电子投标文件制作软件最终封装。
 
-下一阶段不再只是“生成一份能下载的 DOCX”，而是把 MVP 升级成可控工作流：
+## 核心原则
 
-1. 用真实商务样本和真实评分表校准报价策略 Agent、评分预测 Agent 和响应矩阵。
-2. 修正 Agent 从追加说明升级为章节级重写。
-3. 建立真实样本质量评估集，持续衡量 AI 标书和人工标书差距。
-4. DOCX 输出升级封面、目录、页眉页脚、分册策略。
-5. 建立正奇专用模板库：市政、公路改扩建、交通安全设施养护。
+系统当前最重要的边界在 [docs/generation_contract.md](docs/generation_contract.md)：
 
-### 2.3 本地工具脚本
+- `TenderRequirements` 只回答“招标文件要求什么”。
+- `BidTemplate JSON` 是唯一章节结构来源。
+- RAG 只提供素材、证据、历史表达和图片候选，不改变结构。
+- Generator prompt 只约束角色、文风、真实性和禁止事项。
+- DOCX 视觉排版统一由 `backend/utils/docx_exporter.py` 负责。
+- 离线脚本只做分析、评估、初始化和调试，不替代线上 API/service 链路。
 
-```bash
-# 分析真实投标 PDF 的字体、字号、颜色等格式特征
-python scripts/analyze_pdf_format.py /path/to/投标文件.pdf --out-json data/pdf_format_analysis.json
+## 本地启动
 
-# 用结构化招标需求 JSON + 已抽取模板生成脱敏标书 Markdown/DOCX
-python scripts/generate_bid.py \
-  --requirements data/sample_requirements.json \
-  --template backend/templates/bid_templates/road_first_envelope_template.json \
-  --output-dir data/output
-
-# 不使用真实项目数据的 smoke demo
-python scripts/generate_bid.py --demo --output-dir data/output/demo
-```
-
-### 2.4 生成边界约定
-
-生成链路的结构权威、RAG 作用、Prompt 作用、DOCX 排版和离线脚本定位见
-[docs/generation_contract.md](docs/generation_contract.md)。核心原则是：
-TenderRequirements 只描述招标要求，BidTemplate JSON 是唯一章节结构来源，
-RAG 只提供素材和措辞，DOCX 视觉排版统一由 exporter 负责。
-
-## 3. 系统架构设计（抽象层）
-
-### 3.1 逻辑架构图
-┌─────────────┐
-│ Web UI │ (用户操作界面)
-└──────┬──────┘
-│
-┌──────▼──────┐
-│ API 网关 │ (统一入口、鉴权、路由)
-└──────┬──────┘
-│
-┌──────▼──────────────────────────┐
-│ 多智能体编排引擎 │
-│ ┌──────────┐ ┌──────────┐ │
-│ │ 解析Agent │ │ 检索Agent │ │
-│ └─────┬────┘ └─────┬────┘ │
-│ ┌─────▼────┐ ┌─────▼────┐ │
-│ │ 生成Agent│◄─┤ 审查Agent │ │
-│ └─────┬────┘ └─────┬────┘ │
-│ ┌─────▼────┐ ┌─────▼────┐ │
-│ │ 整合Agent│ │ 修正循环 │ │
-│ └──────────┘ └──────────┘ │
-└──────┬──────────────────────────┘
-│
-┌──────▼──────┐ ┌───────────────┐
-│ RAG 知识库 │ │ 大模型 API │
-│ (企业文档) │ │ (语言生成) │
-└──────┬──────┘ └───────────────┘
-│
-┌──────▼──────────────────────────┐
-│ 基础设施层 │
-│ 数据库 / 缓存 / 对象存储 │
-└─────────────────────────────────┘
-
-### 3.2 核心数据流
-
-1. **上传招标文件**（PDF/Word） → 系统存储原始文件
-2. **解析 Agent**：自动提取资质要求、技术评分项、废标条款
-3. **检索 Agent**：从企业知识库中匹配历史方案、业绩、资质
-4. **生成 Agent**：结合招标要求、正奇专用模板和检索内容撰写商务/技术/报价分卷
-5. **审查 Agent**：逐条核对废标条款，生成风险清单
-6. **迭代修正**：若发现问题，返回生成 Agent 修正，最多 3 轮
-7. **人工确认**：关键内容由用户审核确认
-8. **输出标书**：生成规范格式的 Word 文档供下载
-
-## 4. 功能列表（MVP）
-
-| 功能模块 | 描述 | 优先级 |
-|---------|------|--------|
-| 招标文件解析 | 自动提取资质、评分点、废标条款 | P0 |
-| 公司知识库（RAG） | 上传并索引企业资质、业绩、技术模板 | P0 |
-| 技术标生成 | 生成市政/公路施工组织、交安养护、公路改扩建等核心章节 | P0 |
-| 废标项审查 | 对标废标条款，标记不满足项 | P0 |
-| 人机协同节点 | 人工确认大纲、修正关键内容 | P0 |
-| 标书导出 | 生成规范 Word 文档（.docx） | P0 |
-| 用户账号与权限 | 管理员/普通账号、注册码、知识库权限 | P0 |
-| 商务标辅助生成 | 生成商务标目录、承诺、资格资料清单，报价数据人工填写 | P0 |
-| 分卷交付 | 商务文件、技术文件、报价文件可独立预览/下载，也可合并为完整标书 | P0 |
-| 报价策略 Agent | 基于招标信息和风险生成报价策略建议，不直接自动定价 | P1 |
-| 模拟评分 Agent | 预演专家评分、短板和中标概率解释 | P2 |
-
-## 5. 项目目录结构
-TenderDoc-Generator/
-├── backend/ # 后端代码
-│ ├── agents/ # 各智能体实现
-│ ├── core/ # 核心配置与工具
-│ ├── rag/ # 知识库检索模块
-│ ├── api/ # API 接口层
-│ ├── utils/ # 辅助函数
-│ └── requirements.txt # 依赖清单
-├── frontend/ # 前端 Next.js 工作台
-├── data/ # 数据持久化目录
-├── knowledge_base/ # 企业知识库原始文档
-├── docker-compose.yml # 容器编排文件
-└── README.md
-
-
-## 6. MVP 路线图（10 周）
-
-| 阶段 | 周期 | 核心交付 | 验收标准 |
-|------|------|----------|----------|
-| 0. 环境搭建 | 第 0–1 周 | 开发环境就绪，服务容器运行 | 数据库、缓存、存储可连通 |
-| 1. 解析 Agent | 第 2 周 | 从招标文件提取关键信息 | 3 份样本提取准确率 ≥ 80% |
-| 2. RAG 索引与检索 | 第 3 周 | 支持知识库上传与语义检索 | 检索结果相关 |
-| 3. 生成 Agent | 第 4 周 | 生成技术标书初稿 | 无事实性错误 |
-| 4. 审查 + 闭环 | 第 5–6 周 | 废标标记、迭代修正 | 能识别 90% 废标条款 |
-| 5. 人机协同 + API | 第 7 周 | 人工确认节点，完整 API | 可通过接口触发全流程 |
-| 6. 前端界面 | 第 8 周 | 上传、生成、预览、导出 | 用户无需命令行 |
-| 7. 测试与调优 | 第 9 周 | 真实招标文件验证 | 总耗时 < 8 分钟 |
-| 8. MVP 交付 | 第 10 周 | 种子用户试用 | 满意度 ≥ 3.5/5 |
-| 9. Workflow 产品化 | MVP 后 | 大纲确认、在线编辑、章节级修正 | 用户可控地完成一份可审阅标书 |
-| 10. 策略 Agent | MVP 后 | 报价策略、评分预测 | 输出可解释建议，不替代人工决策 |
-| 11. 真实模板学习 | MVP 后 | 历史投标文件模板 JSON、模板驱动生成、质量差距评估 | AI 输出章节结构接近真实投标文件 |
-
-
-
-## 7. 设计决策记录（轻量版）
-
-| 决策点 | 选择 | 原因 |
-|--------|------|------|
-| Agent 框架 | 选用支持循环和状态图的框架 | 满足审查→修正的闭环需求 |
-| 知识库方案 | 语义检索 + 向量存储 | 实现精准匹配历史文档 |
-| 大模型接口 | 调用第三方成熟 API | 降低初期成本，快速验证 |
-| 前端策略 | 优先 API，后续 Web UI | MVP 阶段聚焦核心逻辑 |
-
-## 8. 已知风险与应对
-
-| 风险 | 缓解方案 |
-|------|----------|
-| 检索不准确导致内容偏离 | 引入重排序，关键段落由人工确认 |
-| AI 生成虚假信息 | 强制引用知识库原文，增加事实核查 |
-| 成本超预期 | 限制单项目用量，分级调用模型 |
-| 漏检废标项 | 规则引擎 + AI 双重校验，允许自定义规则 |
-| 产品范围发散 | 第一版只支持正奇市政/公路/交安/公路改扩建，其他行业进入 backlog |
-
-## 9. 环境准备清单（MVP 启动前必备）
-
-请在开始编码前完成以下准备：
-
-- [ ] **容器环境**：安装 Docker Desktop（或 Docker Engine + Docker Compose）
-- [ ] **Python 环境**：Python 3.11+，并创建虚拟环境
-- [ ] **代码仓库**：初始化 Git 仓库，配置 `.gitignore`
-- [ ] **测试文件**：准备至少 3 份真实招标文件（PDF）和 2 份企业历史标书（放入 `knowledge_base/`）
-- [ ] **API 密钥**：准备大模型 API 密钥（如 DeepSeek、通义千问等）
-- [ ] **团队工具**：确定协作平台（飞书/钉钉/微信）、文档共享方式
-
-> 详细的环境配置步骤将在 `docs/setup.md` 中提供（后续补充）
-
-## 快速一键本地开发环境（推荐）
-
-首次启动前，确保已安装 Docker Desktop、Python 3.11 和 Node.js/pnpm，然后运行：
+首次安装：
 
 ```bash
 ./scripts/setup_local.sh
 ```
 
-之后日常本地开发只需要：
+日常启动：
 
 ```bash
 ./scripts/dev_local.sh
 ```
 
-启动成功后访问：
+默认入口：
 
-- 前端工作台：`http://localhost:3000`
-- 后端 API 文档：`http://localhost:8000/docs`
-- MinIO Console：`http://localhost:9001`（默认 `minioadmin` / `minioadmin`）
+- 前端工作台：http://localhost:3000
+- 后端 API 文档：http://localhost:8000/docs
+- MinIO Console：http://localhost:9001
 
-如果只需要重建后端虚拟环境，可以单独运行：
+更完整的本地安装、端口冲突、验证命令和常见问题见 [setup.md](setup.md)。
 
-```bash
-# 运行前请先确保已安装 Python 3.11
-./scripts/setup_venv.sh
-source .venv/bin/activate
-python -m pytest backend/tests/ -q
-```
-
-说明：`setup_local.sh` 会安装后端依赖、安装前端依赖、启动 Docker 服务并应用 `backend/init_db.sql`。如果 `backend/.env` 不存在，脚本会从 `backend/.env.example` 复制一份；真实 LLM 流程需要在 `backend/.env` 中配置 `OPENROUTER_API_KEY`。
-
-已验证的本地检查命令：
+## 常用验证
 
 ```bash
-./scripts/init_db.sh
 .venv/bin/python -m pytest backend/tests -q
-cd frontend && pnpm run typecheck && pnpm run build
+pnpm --dir frontend typecheck
+pnpm --dir frontend build
 ```
 
-## 后端 API 本地运行
+注意：不要把 `pnpm --dir frontend typecheck` 和 `pnpm --dir frontend build` 并行执行。Next.js build 会重建 `.next/types`，并行时可能导致 typecheck 读到临时缺失文件。
 
-```bash
-docker compose up -d
-./scripts/start_backend.sh
+## 主要页面
+
+- `/login`：登录/注册。
+- `/projects`：历史项目。
+- `/project/{projectId}`：标书工作台。
+- `/knowledge`：知识库资料管理。
+- `/templates`：模板库管理，管理员可写，普通用户只读或按权限查看。
+- `/admin/users`：管理员用户与权限管理。
+
+## 主要 API
+
+- `POST /api/project/create`：创建项目并上传招标文件。
+- `PATCH /api/project/{id}/parsed`：保存人工确认版解析 JSON。
+- `POST /api/project/{id}/outline`：生成默认大纲。
+- `PATCH /api/project/{id}/outline`：保存人工调整后的大纲。
+- `PATCH /api/project/{id}/knowledge-selection`：保存生成采用的知识片段。
+- `POST /api/project/{id}/workflow/run`：运行工作流。
+- `POST /api/project/{id}/confirm`：人工确认或提交修正意见。
+- `PATCH /api/project/{id}/draft`：保存在线编辑正文。
+- `GET /api/project/{id}/download?artifact=docx|markdown|review`：下载产物。
+- `POST /api/knowledge/upload`：上传知识库资料并索引。
+- `GET /api/knowledge/documents`：列出知识库资料。
+- `GET /api/knowledge/documents/{id}/preview`：预览文本、图片、PDF 或文件。
+- `PATCH /api/knowledge/documents/{id}`：编辑资料标题和 metadata。
+- `GET /api/knowledge/search`：按语义和 metadata 检索知识库。
+- `POST /api/templates`：上传历史投标 PDF 并解析为模板。
+- `GET /api/templates/recommend`：按项目上下文推荐模板。
+
+## 知识库资料标签
+
+知识库资料已从“只有 tags 的素材库”升级为结构化资料库。建议上传时尽量填写：
+
+- `project_type`：市政工程、公路工程、交通安全设施养护、公路改建/扩建/维修养护。
+- `document_category`：人员证件、公司证件、业绩、施工方案、历史投标文件、表格附件、图片资料等。
+- `volume`：商务文件、技术文件、报价文件、资格文件、完整投标文件。
+- `specialty`：道路、排水、桥梁、交安、养护、管网等。
+- `region` / `project_year`：地区和年份。
+- `owner_type` / `owner_name`：公司、人员、项目、设备等归属。
+- `certificate_type`：建造师证、身份证、毕业证、建安证、交安证、职称证书、社保、营业执照、资质证书、安全生产许可证、开户许可证等。
+- `valid_from` / `valid_to`：证件有效期。
+- `sensitivity`：公开、内部、敏感、严格受限。
+- `usage_scope`：可用于投标、仅参考、仅归档等。
+- `verified_status`：已核验、待核验、已过期、需更新。
+- `image_insertable`：图片是否允许作为标书插图候选。
+
+## 项目结构
+
+```text
+TenderDoc-Generator/
+├── backend/
+│   ├── agents/              # parser/generator/reviewer/pricing/scoring/response matrix
+│   ├── api/                 # FastAPI 路由
+│   ├── rag/                 # embedding、pgvector 检索和过滤
+│   ├── schemas/             # Pydantic schema
+│   ├── services/            # workflow、project、knowledge、template、quality eval
+│   ├── templates/           # 内置投标模板 JSON
+│   ├── utils/               # file parser、DOCX exporter、MinIO、template parser
+│   └── tests/
+├── frontend/
+│   ├── app/                 # Next.js App Router 页面
+│   ├── components/          # 工作台、知识库、模板库、预览和编辑组件
+│   └── lib/                 # API client、类型、Markdown 解析
+├── docs/
+├── scripts/                 # 本地启动、离线生成、格式分析、模板索引
+├── docker-compose.yml
+├── setup.md
+├── TECH_STACK.md
+└── minitasks.md
 ```
 
-前端单独运行：
+## 下一步
 
-```bash
-./scripts/start_frontend.sh
-```
+短期下一步不是继续堆 Agent，而是把本地 MVP 推向公司可用：
 
-当前可用接口：
-
-- `POST /api/auth/login`：管理员/普通用户登录。
-- `POST /api/auth/register`：普通用户使用管理员注册码注册。
-- `GET /api/auth/me`：读取当前登录用户。
-- `GET /api/admin/users`：管理员查看用户列表。
-- `POST /api/admin/registration-codes`：管理员生成普通用户注册码。
-- `PATCH /api/admin/users/{id}/permissions`：管理员授权知识库查看/编辑权限。
-- `DELETE /api/admin/users/{id}`：管理员注销普通用户。
-- `POST /api/project/create`：上传招标文件并创建项目。
-- `GET /api/project/{id}/status`：查询项目状态。
-- `POST /api/project/{id}/parse`：触发 MVP 解析并写入 `projects.parsed_json`。
-- `POST /api/project/{id}/generate`：生成技术标 Markdown，导出 DOCX，保存到 MinIO。
-- `GET /api/project/{id}/result`：读取解析 JSON。
-- `GET /api/project/{id}/review`：返回解析出的废标条款。
-- `GET /api/project/{id}/review-report`：返回审查报告和 workflow state。
-- `POST /api/project/{id}/workflow/run`：运行解析、检索、生成、审查、修正闭环并暂停人工确认。
-- `POST /api/project/{id}/confirm`：提交人工确认或修正意见。
-- `POST /api/knowledge/upload`：上传企业知识库文档，保存到 MinIO 并写入 pgvector。
-- `GET /api/knowledge/documents`：列出知识库文档。
-- `PATCH /api/knowledge/documents/{id}`：编辑知识库文档标题。
-- `DELETE /api/knowledge/documents/{id}`：删除知识库文档和对应 chunks。
-- `GET /api/knowledge/search`：检索知识库 chunks，返回相似内容。
+1. 用少量真实脱敏资料填充知识库，验证资料预览、标签筛选、RAG 引用和图片插入效果。
+2. 建立正奇真实模板库最小集合：市政、公路改扩建、交安养护各至少一类。
+3. 用 3 个脱敏真实项目跑通端到端质量评估和 gap 评估。
+4. 补生产化方案：部署、备份、权限、审计、对象存储加密、内网访问、NAS/资料库导入策略。
+5. 明确和新点投标文件制作软件的边界：本系统生成 Word/Markdown 和资料包，新点负责最终电子投标文件制作、签章、加密和上传。
