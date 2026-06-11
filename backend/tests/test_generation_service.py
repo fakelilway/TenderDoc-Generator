@@ -120,8 +120,10 @@ def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> No
         bid_template=None,
         pricing_strategy=None,
         knowledge_images=None,
+        bid_plan=None,
     ):
         captured["knowledge_images"] = knowledge_images
+        captured["bid_plan"] = bid_plan
         return "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。"
 
     monkeypatch.setattr(
@@ -136,6 +138,7 @@ def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> No
     assert result.generated_docx_path == "projects/7/generated/bid.docx"
     assert result.quality_report["usable_rate"] == 1.0
     assert captured["knowledge_images"][0]["document_id"] == 36
+    assert captured["bid_plan"].sections
     assert [upload[2] for upload in fake_minio.uploads] == [
         "projects/7/generated/bid.md",
         "projects/7/generated/bid.docx",

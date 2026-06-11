@@ -281,6 +281,7 @@ export function TemplatesView() {
                   {template.region ? <span>{template.region}</span> : null}
                   {template.project_year ? <span>{template.project_year}年</span> : null}
                   {template.page_count ? <span>{template.page_count}页</span> : null}
+                  {template.has_profile ? <span>已生成案例画像</span> : null}
                 </div>
                 {template.tags?.length ? (
                   <div className="mt-1 flex flex-wrap gap-1">

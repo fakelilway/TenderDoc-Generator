@@ -17,6 +17,9 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - Parser Agent 抽取项目名称、资质要求、评分项、废标项等结构化 JSON。
 - 人工确认解析结果与大纲，生成前不再绕过人工确认。
 - 真实投标模板 JSON 作为章节结构权威，Generator prompt 只负责角色、文风和真实性边界。
+- 模板上传/默认模板会生成模板画像，记录分卷、章节顺序、附表、图片位、表格位和禁用语气。
+- 生成前会构建 `EvidencePack`，把公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据分开。
+- 生成时会构建 `BidPlan`，统一决定章节顺序、每章可用知识片段、可插入图片、表格需求和文风边界。
 - 商务文件、技术文件、报价文件三卷生成与预览，完整标书作为按需合并稿。
 - Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
 - DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
@@ -30,11 +33,11 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 模板库：管理员上传历史投标 PDF，解析为脱敏模板 JSON，按项目类型/专业/信封/地区/年份推荐。
 - 离线脚本：模板解析、格式分析、标书生成 demo、质量评估、AI 与真实投标文件差距评估。
 
-最近一次完整验证：
+最近一次架构验证：
 
-- 后端全量测试：`182 passed, 2 skipped`
+- 后端重点回归：`101 passed`
+- 后端扩展回归：`174 passed`（排除本地已删除 fixture PDF 依赖的 parser/indexer 文件）
 - 前端类型检查：通过
-- 前端生产构建：通过
 
 ## 产品范围
 
@@ -57,6 +60,9 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 
 - `TenderRequirements` 只回答“招标文件要求什么”。
 - `BidTemplate JSON` 是唯一章节结构来源。
+- `TemplateProfile` 是模板画像，负责把真实案例模板总结为可执行的章节、表格和图片插入规则。
+- `EvidencePack` 是知识库资料的分类层，证件/图片/表格/技术素材不能混作同一种 RAG 文本。
+- `BidPlan` 是生成阶段唯一计划层，负责把模板画像、招标要求和证据包落到每个章节。
 - RAG 只提供素材、证据、历史表达和图片候选，不改变结构。
 - Generator prompt 只约束角色、文风、真实性和禁止事项。
 - DOCX 视觉排版统一由 `backend/utils/docx_exporter.py` 负责。
@@ -148,7 +154,7 @@ TenderDoc-Generator/
 │   ├── api/                 # FastAPI 路由
 │   ├── rag/                 # embedding、pgvector 检索和过滤
 │   ├── schemas/             # Pydantic schema
-│   ├── services/            # workflow、project、knowledge、template、quality eval
+│   ├── services/            # workflow、project、knowledge、template、evidence pack、bid plan
 │   ├── templates/           # 内置投标模板 JSON
 │   ├── utils/               # file parser、DOCX exporter、MinIO、template parser
 │   └── tests/

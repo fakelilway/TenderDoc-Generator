@@ -179,6 +179,29 @@ def run_bid_workflow(
     retrieved_by_section = _retrieve_for_outline(
         requirements, outline, state.selected_chunk_ids
     )
+    knowledge_images = _knowledge_images_for_requirements(requirements)
+    selected_references = (
+        get_knowledge_references(state.selected_chunk_ids)
+        if state.selected_chunk_ids
+        else []
+    )
+    from services import bid_plan_service, evidence_pack_service
+
+    template_profile = _template_profile_for_project(project_id)
+    evidence_pack = evidence_pack_service.build_evidence_pack(
+        requirements,
+        selected_references=selected_references,
+        image_references=knowledge_images,
+        retrieved_results=retrieved_by_section,
+    )
+    bid_plan = bid_plan_service.build_bid_plan(
+        requirements,
+        template_profile=template_profile,
+        evidence_pack=evidence_pack,
+        document_outline=state.document_outline,
+    )
+    state.evidence_pack = evidence_pack.model_dump(mode="json")
+    state.bid_plan = bid_plan.model_dump(mode="json")
     state.retrieved_chunks = {
         title: [chunk.content for chunk in chunks]
         for title, chunks in retrieved_by_section.items()
@@ -202,7 +225,10 @@ def run_bid_workflow(
         state,
         "generate",
         "running",
-        f"RAG 检索完成，匹配到 {retrieved_count} 个知识片段，开始生成 Markdown 初稿。",
+        (
+            f"RAG 检索完成，匹配到 {retrieved_count} 个知识片段；"
+            f"证据包包含 {sum(evidence_pack.counts().values())} 项资料，开始生成 Markdown 初稿。"
+        ),
         project_status="generating",
     )
     bid_package = generate_bid_package(
@@ -210,7 +236,8 @@ def run_bid_workflow(
         retrieved_by_section,
         bid_template,
         pricing_strategy=pricing_strategy,
-        knowledge_images=_knowledge_images_for_requirements(requirements),
+        knowledge_images=knowledge_images,
+        bid_plan=bid_plan,
     )
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown
@@ -549,6 +576,15 @@ def _knowledge_images_for_requirements(
         )
     except Exception:
         return []
+
+
+def _template_profile_for_project(project_id: int):
+    from services import template_service
+
+    try:
+        return template_service.template_profile_for_project(project_id)
+    except Exception:
+        return None
 
 
 def _fetch_project(project_id: int) -> dict:

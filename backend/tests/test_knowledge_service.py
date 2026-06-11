@@ -29,7 +29,7 @@ def test_image_upload_defaults_to_structured_evidence_without_ocr(monkeypatch) -
     monkeypatch.setattr(
         knowledge_service,
         "store_knowledge_chunks",
-        lambda **kwargs: stored.update(kwargs) or {"document_id": 7, "chunk_ids": []},
+        lambda **kwargs: stored.update(kwargs) or {"document_id": 7, "chunk_ids": [71]},
     )
 
     result = knowledge_service.index_uploaded_knowledge(
@@ -50,9 +50,12 @@ def test_image_upload_defaults_to_structured_evidence_without_ocr(monkeypatch) -
     )
 
     assert result["document_id"] == 7
-    assert result["chunk_ids"] == []
+    assert result["chunk_ids"] == [71]
     assert result["indexing_status"] == "structured_evidence"
-    assert stored["chunks"] == []
+    assert len(stored["chunks"]) == 1
+    assert "资料名称：人员_张三_身份证" in stored["chunks"][0].content
+    assert "证件/证明：身份证" in stored["chunks"][0].content
+    assert "图片用途：允许作为标书插图候选" in stored["chunks"][0].content
     assert stored["metadata"]["ingestion_mode"] == "structured_evidence"
     assert stored["metadata"]["project_type"] == "公路工程"
     assert stored["metadata"]["document_category"] == "人员证件"
@@ -77,7 +80,7 @@ def test_doc_upload_in_rag_mode_falls_back_to_evidence_only_when_conversion_miss
     monkeypatch.setattr(
         knowledge_service,
         "store_knowledge_chunks",
-        lambda **kwargs: stored.update(kwargs) or {"document_id": 8, "chunk_ids": []},
+        lambda **kwargs: stored.update(kwargs) or {"document_id": 8, "chunk_ids": [81]},
     )
 
     result = knowledge_service.index_uploaded_knowledge(
@@ -88,8 +91,11 @@ def test_doc_upload_in_rag_mode_falls_back_to_evidence_only_when_conversion_miss
     )
 
     assert result["document_id"] == 8
+    assert result["chunk_ids"] == [81]
     assert result["indexing_status"] == "evidence_only"
     assert "LibreOffice" in result["extraction_message"]
+    assert len(stored["chunks"]) == 1
+    assert "资料名称：历史投标文件" in stored["chunks"][0].content
     assert stored["metadata"]["ingestion_mode"] == "evidence_only"
 
 

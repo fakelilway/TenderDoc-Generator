@@ -135,6 +135,11 @@ def index_uploaded_knowledge(
         "indexing_status": indexing_status,
         "extraction_message": extraction_message,
     }
+    raw_chunks = split_text(text)
+    if not raw_chunks and indexing_status in {"structured_evidence", "evidence_only"}:
+        summary_text = _evidence_summary_text(safe_name, metadata)
+        raw_chunks = [summary_text] if summary_text else []
+
     chunks = [
         KnowledgeChunk(
             content=content,
@@ -146,7 +151,7 @@ def index_uploaded_knowledge(
                 **metadata,
             },
         )
-        for index, content in enumerate(split_text(text))
+        for index, content in enumerate(raw_chunks)
     ]
     stored = store_knowledge_chunks(
         file_name=safe_name,
@@ -428,6 +433,37 @@ def _image_reference_score(query: str, file_name: str, metadata: dict) -> int:
     )
     score += sum(3 for keyword in priority_keywords if keyword in haystack)
     return score
+
+
+def _evidence_summary_text(file_name: str, metadata: dict) -> str:
+    labels = {
+        "document_category": "资料类别",
+        "document_type": "细分类型",
+        "project_type": "项目类型",
+        "specialty": "专业",
+        "volume": "所属卷册",
+        "region": "地区",
+        "project_year": "年份",
+        "owner_type": "归属类型",
+        "owner_name": "归属名称",
+        "certificate_type": "证件/证明",
+        "valid_from": "有效期起",
+        "valid_to": "有效期止",
+        "sensitivity": "敏感级别",
+        "usage_scope": "使用范围",
+        "verified_status": "核验状态",
+    }
+    lines = [f"资料名称：{Path(file_name).stem}"]
+    for key, label in labels.items():
+        value = metadata.get(key)
+        if value:
+            lines.append(f"{label}：{value}")
+    tags = metadata.get("tags") or []
+    if isinstance(tags, list) and tags:
+        lines.append("标签：" + "、".join(str(tag) for tag in tags if str(tag).strip()))
+    if metadata.get("image_insertable") is True:
+        lines.append("图片用途：允许作为标书插图候选")
+    return "\n".join(lines)
 
 
 def rename_knowledge_document(

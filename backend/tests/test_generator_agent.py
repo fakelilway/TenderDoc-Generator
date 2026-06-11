@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from agents import generator_agent
 from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT, build_document_prompt
+from schemas.bid_plan import BidPlan, BidPlanSection
 from schemas.bid_template import BidTemplate, BidTemplateSection
 from schemas.tender import RequirementItem, TenderRequirements
 
@@ -174,7 +175,7 @@ def test_build_bid_document_outline_includes_business_technical_and_price_gap() 
         if section.section_type == "price_missing_template"
     )
     assert price.required is False
-    assert "系统不自动编造" in price.focus_points[0]
+    assert "正式报价文件" in price.focus_points[0]
 
 
 def test_generate_bid_section_fallback_has_markdown_and_no_placeholder(monkeypatch):
@@ -193,6 +194,111 @@ def test_generate_bid_section_fallback_has_markdown_and_no_placeholder(monkeypat
     assert markdown.startswith("## 第一章、总体施工组织布置及规划")
     assert "星河湾二期" in markdown
     assert "待补充" not in markdown
+
+
+def test_structured_evidence_chunks_do_not_render_as_text(monkeypatch):
+    _enable_llm_generation(monkeypatch)
+    monkeypatch.setattr(
+        generator_agent,
+        "generate_bid_section",
+        lambda section_title, requirements, chunks, knowledge_images=None: generator_agent._generate_section_fallback(
+            section_title,
+            requirements,
+            chunks,
+        ),
+    )
+    evidence = generator_agent.RetrievalResult(
+        chunk_id=541,
+        document_id=36,
+        content="资料名称：3.江舟建安B\n资料类别：人员证件\n证件/证明：安全生产许可证\n图片用途：允许作为标书插图候选",
+        metadata={
+            "file_name": "3.江舟建安B.jpeg",
+            "file_type": "jpeg",
+            "ingestion_mode": "structured_evidence",
+            "indexing_status": "structured_evidence",
+        },
+        distance=0.1,
+        score=0.9,
+    )
+
+    package = generator_agent.generate_bid_package(
+        _requirements(),
+        {"第一章、总体施工组织布置及规划": [evidence]},
+        knowledge_images=[
+            {
+                "document_id": 36,
+                "file_name": "3.江舟建安B.jpeg",
+                "caption": "江舟建安B证",
+                "document_category": "人员证件",
+                "certificate_type": "安全生产许可证",
+                "tags": [],
+            }
+        ],
+    )
+
+    assert "资料名称：3.江舟建安B" not in package.combined_markdown
+    assert "证件/证明：安全生产许可证" not in package.combined_markdown
+    assert "{{knowledge_image:document_id=36" in package.combined_markdown
+    assert "江舟建安B证" in package.combined_markdown
+
+
+def test_bid_plan_filters_section_chunks_and_images(monkeypatch):
+    _enable_llm_generation(monkeypatch)
+    captured = {}
+
+    def fake_generate_section(
+        section_title, requirements, chunks, knowledge_images=None
+    ):
+        captured[section_title] = {
+            "chunks": list(chunks),
+            "knowledge_images": knowledge_images or [],
+        }
+        return f"## {section_title}\n\n" + "\n".join(chunks or ["无资料"])
+
+    monkeypatch.setattr(generator_agent, "generate_bid_section", fake_generate_section)
+    template = _bid_template()
+    useful = generator_agent.RetrievalResult(
+        chunk_id=22,
+        document_id=102,
+        content="施工组织设计有效素材",
+        metadata={"file_name": "技术方案.docx"},
+        distance=0.1,
+        score=0.9,
+    )
+    unrelated = generator_agent.RetrievalResult(
+        chunk_id=99,
+        document_id=199,
+        content="不属于本章节的商务资料",
+        metadata={"file_name": "商务资料.docx"},
+        distance=0.2,
+        score=0.8,
+    )
+    plan = BidPlan(
+        sections=[
+            BidPlanSection(
+                title="第一章、总体施工组织布置及规划",
+                evidence_chunk_ids=[22],
+                image_document_ids=[36],
+            )
+        ]
+    )
+
+    package = generator_agent.generate_bid_package(
+        _requirements(),
+        {"第一章、总体施工组织布置及规划": [useful, unrelated]},
+        bid_template=template,
+        knowledge_images=[
+            {"document_id": 36, "caption": "施工平面图", "tags": ["施工平面图"]},
+            {"document_id": 77, "caption": "无关图片", "tags": ["无关"]},
+        ],
+        bid_plan=plan,
+    )
+
+    assert captured["第一章、总体施工组织布置及规划"]["chunks"] == ["施工组织设计有效素材"]
+    assert captured["第一章、总体施工组织布置及规划"]["knowledge_images"] == [
+        {"document_id": 36, "caption": "施工平面图", "tags": ["施工平面图"]}
+    ]
+    assert "不属于本章节的商务资料" not in package.technical_markdown
 
 
 def test_generate_bid_document_uses_complete_bid_file_shell(monkeypatch):
@@ -307,6 +413,8 @@ def test_sanitize_bid_markdown_removes_meta_and_rag_noise() -> None:
         "……\n"
         "## 三、废标风险逐条响应自查表\n"
         "| 序号 | 风险条款 | 人工确认点 |\n"
+        "本部分仅生成报价文件目录和编制说明，系统不自动生成任何报价数值。\n"
+        "本附表按招标文件和真实投标模板要求设置，用于支撑施工组织设计。\n"
     )
 
     cleaned = generator_agent.sanitize_bid_markdown(raw)
@@ -315,10 +423,36 @@ def test_sanitize_bid_markdown_removes_meta_and_rag_noise() -> None:
     assert "待补充" not in cleaned
     assert "本章响应度自查" not in cleaned
     assert "废标风险逐条响应自查表" not in cleaned
+    assert "本部分仅生成" not in cleaned
+    assert "真实投标模板" not in cleaned
+    assert "系统不自动" not in cleaned
     assert "第13页/共892页" not in cleaned
     # Real content is preserved; the fill-in blank replaces the marker.
     assert "我单位承诺严格响应招标文件要求。" in cleaned
     assert "________" in cleaned
+
+
+def test_generated_fallback_uses_formal_bid_tone(monkeypatch):
+    _enable_llm_generation(monkeypatch)
+    package = generator_agent.generate_bid_package(
+        _requirements(),
+        {},
+        bid_template=_bid_template(),
+    )
+
+    markdown = package.combined_markdown
+    forbidden = [
+        "本附表按招标文件和真实投标模板要求设置",
+        "填报要求",
+        "由项目技术负责人按最终施工部署复核填写",
+        "本部分仅生成",
+        "系统不自动",
+        "由造价人员",
+    ]
+    for phrase in forbidden:
+        assert phrase not in markdown
+    assert "本附表依据招标文件、施工图纸、工程量清单及施工组织设计编制" in markdown
+    assert "本报价文件依据招标文件、工程量清单、施工图纸" in markdown
 
 
 def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:

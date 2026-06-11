@@ -15,7 +15,9 @@ from typing import Any
 
 from psycopg2.extras import Json, RealDictCursor
 
+from agents.template_profile_agent import build_template_profile
 from schemas.bid_template import BidTemplate
+from schemas.template_profile import TemplateProfile
 from services.project_service import ProjectNotFoundError, _connect
 from utils.bid_template_parser import parse_bid_template_bytes
 
@@ -45,6 +47,7 @@ def _parse_template(file_bytes: bytes, filename: str, name: str) -> BidTemplate:
 
 def _template_summary(row: dict[str, Any]) -> dict[str, Any]:
     template_json = row.get("template_json") or {}
+    profile_json = row.get("template_profile_json") or {}
     return {
         "id": int(row["id"]),
         "name": row["name"],
@@ -57,6 +60,8 @@ def _template_summary(row: dict[str, Any]) -> dict[str, Any]:
         "tags": row.get("tags") or [],
         "project_name": template_json.get("project_name"),
         "page_count": template_json.get("page_count"),
+        "has_profile": bool(profile_json),
+        "profile_generated_by": profile_json.get("generated_by"),
         "created_by": row.get("created_by"),
         "created_at": row.get("created_at"),
     }
@@ -78,6 +83,11 @@ def create_template(
     template = _parse_template(file_bytes, filename, clean_name)
     # Fall back to structure detected from the document when tags are absent.
     envelope_type = envelope_type or template.envelope_type or None
+    profile = build_template_profile(
+        template,
+        project_type=project_type,
+        specialty=specialty,
+    )
 
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -93,12 +103,13 @@ def create_template(
                     project_year,
                     tags,
                     template_json,
+                    template_profile_json,
                     created_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, name, source_filename, project_type, specialty,
                           envelope_type, region, project_year, tags,
-                          template_json, created_by, created_at
+                          template_json, template_profile_json, created_by, created_at
                 """,
                 (
                     clean_name,
@@ -110,6 +121,7 @@ def create_template(
                     project_year,
                     Json(tags or []),
                     Json(template.model_dump(mode="json")),
+                    Json(profile.model_dump(mode="json")),
                     created_by,
                 ),
             )
@@ -135,6 +147,11 @@ def seed_template_from_json(
     source_filename = template.source_file or path.name
     clean_tags = tags if tags is not None else ["默认模板", "公路", "第一信封"]
     clean_envelope = envelope_type or template.envelope_type or None
+    profile = build_template_profile(
+        template,
+        project_type=project_type,
+        specialty=specialty,
+    )
 
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -142,7 +159,7 @@ def seed_template_from_json(
                 """
                 SELECT id, name, source_filename, project_type, specialty,
                        envelope_type, region, project_year, tags,
-                       template_json, created_by, created_at
+                       template_json, template_profile_json, created_by, created_at
                 FROM bid_templates
                 WHERE source_filename = %s OR name = %s
                 ORDER BY id ASC
@@ -152,7 +169,22 @@ def seed_template_from_json(
             )
             row = cursor.fetchone()
             if row:
-                return {**_template_summary(dict(row)), "seeded": False}
+                existing = dict(row)
+                if not existing.get("template_profile_json"):
+                    cursor.execute(
+                        """
+                        UPDATE bid_templates
+                        SET template_profile_json = %s
+                        WHERE id = %s
+                        RETURNING id, name, source_filename, project_type, specialty,
+                                  envelope_type, region, project_year, tags,
+                                  template_json, template_profile_json,
+                                  created_by, created_at
+                        """,
+                        (Json(profile.model_dump(mode="json")), existing["id"]),
+                    )
+                    existing = dict(cursor.fetchone())
+                return {**_template_summary(existing), "seeded": False}
 
             cursor.execute(
                 """
@@ -166,12 +198,13 @@ def seed_template_from_json(
                     project_year,
                     tags,
                     template_json,
+                    template_profile_json,
                     created_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, name, source_filename, project_type, specialty,
                           envelope_type, region, project_year, tags,
-                          template_json, created_by, created_at
+                          template_json, template_profile_json, created_by, created_at
                 """,
                 (
                     clean_name,
@@ -183,6 +216,7 @@ def seed_template_from_json(
                     project_year,
                     Json(clean_tags),
                     Json(template.model_dump(mode="json")),
+                    Json(profile.model_dump(mode="json")),
                     created_by,
                 ),
             )
@@ -197,7 +231,7 @@ def list_templates() -> list[dict[str, Any]]:
                 """
                 SELECT id, name, source_filename, project_type, specialty,
                        envelope_type, region, project_year, tags,
-                       template_json, created_by, created_at
+                       template_json, template_profile_json, created_by, created_at
                 FROM bid_templates
                 ORDER BY created_at DESC, id DESC
                 """
@@ -213,7 +247,7 @@ def _fetch_template_row(template_id: int) -> dict[str, Any]:
                 """
                 SELECT id, name, source_filename, project_type, specialty,
                        envelope_type, region, project_year, tags,
-                       template_json, created_by, created_at
+                       template_json, template_profile_json, created_by, created_at
                 FROM bid_templates
                 WHERE id = %s
                 """,
@@ -241,6 +275,20 @@ def update_template(
 ) -> dict[str, Any]:
     current = _fetch_template_row(template_id)
     new_name = (name or "").strip() or current["name"]
+    new_project_type = (
+        project_type if project_type is not None else current.get("project_type")
+    )
+    new_specialty = specialty if specialty is not None else current.get("specialty")
+    profile_json = current.get("template_profile_json")
+    if current.get("template_json"):
+        try:
+            profile_json = build_template_profile(
+                BidTemplate.model_validate(current["template_json"]),
+                project_type=new_project_type,
+                specialty=new_specialty,
+            ).model_dump(mode="json")
+        except Exception:
+            profile_json = current.get("template_profile_json")
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
@@ -252,18 +300,17 @@ def update_template(
                     envelope_type = %s,
                     region = %s,
                     project_year = %s,
-                    tags = %s
+                    tags = %s,
+                    template_profile_json = %s
                 WHERE id = %s
                 RETURNING id, name, source_filename, project_type, specialty,
                           envelope_type, region, project_year, tags,
-                          template_json, created_by, created_at
+                          template_json, template_profile_json, created_by, created_at
                 """,
                 (
                     new_name,
-                    project_type
-                    if project_type is not None
-                    else current.get("project_type"),
-                    specialty if specialty is not None else current.get("specialty"),
+                    new_project_type,
+                    new_specialty,
                     envelope_type
                     if envelope_type is not None
                     else current.get("envelope_type"),
@@ -272,6 +319,7 @@ def update_template(
                     if project_year is not None
                     else current.get("project_year"),
                     Json(tags if tags is not None else (current.get("tags") or [])),
+                    Json(profile_json) if profile_json else None,
                     template_id,
                 ),
             )
@@ -394,6 +442,39 @@ def bid_template_for_project(project_id: int) -> BidTemplate | None:
         return BidTemplate.model_validate(row["template_json"])
     except Exception:
         return None
+
+
+def template_profile_for_project(project_id: int) -> TemplateProfile | None:
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT t.template_profile_json AS template_profile_json,
+                       t.template_json AS template_json,
+                       t.project_type,
+                       t.specialty
+                FROM projects p
+                JOIN bid_templates t ON t.id = p.template_id
+                WHERE p.id = %s
+                """,
+                (project_id,),
+            )
+            row = cursor.fetchone()
+    if not row:
+        return None
+    try:
+        if row.get("template_profile_json"):
+            return TemplateProfile.model_validate(row["template_profile_json"])
+        if row.get("template_json"):
+            template = BidTemplate.model_validate(row["template_json"])
+            return build_template_profile(
+                template,
+                project_type=row.get("project_type"),
+                specialty=row.get("specialty"),
+            )
+    except Exception:
+        return None
+    return None
 
 
 def set_project_template(project_id: int, template_id: int | None) -> dict[str, Any]:

@@ -67,10 +67,12 @@ CREATE TABLE IF NOT EXISTS bid_templates (
     project_year INT,
     tags JSONB,
     template_json JSONB NOT NULL,
+    template_profile_json JSONB,
     created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE bid_templates ADD COLUMN IF NOT EXISTS template_profile_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS template_id BIGINT REFERENCES bid_templates(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_knowledge BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_knowledge BOOLEAN NOT NULL DEFAULT FALSE;

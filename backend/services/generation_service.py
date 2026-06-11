@@ -48,6 +48,19 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
         _image_reference_query(requirements),
         limit=12,
     )
+    from services import bid_plan_service, evidence_pack_service
+
+    template_profile = _template_profile_for_project(project_id)
+    evidence_pack = evidence_pack_service.build_evidence_pack(
+        requirements,
+        image_references=knowledge_images,
+        retrieved_results=retrieved_chunks_by_section,
+    )
+    bid_plan = bid_plan_service.build_bid_plan(
+        requirements,
+        template_profile=template_profile,
+        evidence_pack=evidence_pack,
+    )
 
     with _status(project_id, "generating"):
         markdown = generate_bid_document(
@@ -55,6 +68,7 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
             retrieved_chunks_by_section,
             bid_template,
             knowledge_images=knowledge_images,
+            bid_plan=bid_plan,
         )
         quality_report = evaluate_generation_quality(markdown)
         markdown_object, docx_object = export_markdown_for_project(
@@ -260,6 +274,15 @@ def _image_reference_query(requirements: TenderRequirements) -> str:
         f"{requirements.project_name} 营业执照 资质证书 安全生产许可证 "
         "建造师 身份证 建安证 交安证 职称证 社保 业绩 施工平面图 " + " ".join(descriptions)
     )
+
+
+def _template_profile_for_project(project_id: int):
+    from services import template_service
+
+    try:
+        return template_service.template_profile_for_project(project_id)
+    except Exception:
+        return None
 
 
 def _resolve_knowledge_image(document_id: int) -> bytes | None:

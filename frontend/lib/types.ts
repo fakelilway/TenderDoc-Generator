@@ -333,6 +333,8 @@ export type TemplateSummary = {
   tags?: string[];
   project_name?: string | null;
   page_count?: number | null;
+  has_profile?: boolean;
+  profile_generated_by?: string | null;
   created_by?: number | null;
   created_at?: string | null;
 };

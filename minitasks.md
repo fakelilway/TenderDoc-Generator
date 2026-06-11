@@ -1077,10 +1077,28 @@
 
 ---
 
+### M75：生成架构收敛为 TemplateProfile + EvidencePack + BidPlan
+
+- **状态**：已完成
+- **依赖**：M49、M50、M64、M67
+- **目标**：解决模板库、知识库 RAG、Generator prompt 和离线脚本对格式/资料职责边界不清的问题。
+- **完成标准**：
+  - 模板入库时生成 `TemplateProfile`，记录分卷、章节顺序、固定表单、附表、图片位、表格位和禁用语气。
+  - 生成前构建 `EvidencePack`，把公司证件、人员证件、业绩、技术方案、报价附件、表格附件、图片证据分开。
+  - 生成前构建 `BidPlan`，把模板画像、招标要求和证据包分配到每个章节。
+  - Generator Agent 按 `BidPlan` 过滤章节素材和图片候选；结构化证件摘要不再作为普通正文输出。
+  - workflow state 保存 `evidence_pack` 和 `bid_plan`，方便后续审计和调试。
+- **测试方法**：
+  - `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/test_evidence_pack_service.py backend/tests/test_bid_plan_service.py backend/tests/test_generator_agent.py backend/tests/test_generation_service.py backend/tests/test_workflow_service.py -q`
+  - `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q --ignore=backend/tests/test_parser_agent.py --ignore=backend/tests/test_parser_accuracy.py --ignore=backend/tests/test_rag_indexer.py --ignore=backend/tests/test_m13_fixtures.py`
+  - `pnpm --dir frontend typecheck`
+
+---
+
 ## 总结
 
-- 共 **74 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习，M65 到 M68 覆盖正奇市政/公路专用化，M69 到 M74 覆盖公司 production-ready 落地。
-- **M1–M67 已完成**：MVP、workflow、策略 Agent、真实模板学习、模板库和知识库结构化标签均已实现并通过测试。
+- 共 **75 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习，M65 到 M68 覆盖正奇市政/公路专用化，M69 到 M74 覆盖公司 production-ready 落地，M75 覆盖生成架构收敛。
+- **M1–M67、M75 已完成**：MVP、workflow、策略 Agent、真实模板学习、模板库、知识库结构化标签和生成计划中枢均已实现并通过测试。
 - **M68 部分完成**：评估框架和脱敏样例已完成；还缺正奇真实脱敏样本入库与人工验收。
 - **下一步优先级**：先做 M69–M72，把本地 MVP 变成公司内网可控试用版本；同时由业务侧准备 M68/M73 所需真实脱敏资料。
 

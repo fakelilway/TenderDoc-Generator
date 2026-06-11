@@ -18,6 +18,8 @@ class TemplateSummary(BaseModel):
     tags: list[str] = []
     project_name: str | None = None
     page_count: int | None = None
+    has_profile: bool = False
+    profile_generated_by: str | None = None
     created_by: int | None = None
     created_at: datetime | None = None
 

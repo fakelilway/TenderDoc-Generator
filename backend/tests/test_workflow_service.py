@@ -170,7 +170,7 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     monkeypatch.setattr(
         workflow_service,
         "generate_bid_package",
-        lambda requirements, chunks, bid_template=None, pricing_strategy=None, knowledge_images=None: BidPackage(
+        lambda requirements, chunks, bid_template=None, pricing_strategy=None, knowledge_images=None, bid_plan=None: BidPackage(
             commercial_markdown="# 商务文件\n\n项目经理具备一级建造师。\n\n投标保证金已响应。",
             technical_markdown="# 技术文件\n\n## 施工组织设计\n\n项目经理具备一级建造师。",
             pricing_markdown="# 报价文件\n\n投标保证金已响应。",
@@ -185,6 +185,8 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     assert state.draft_volumes["commercial"].startswith("# 商务文件")
     assert 0 <= state.iteration_count <= workflow_service.MAX_CORRECTION_ITERATIONS
     assert state.review_report["fail_count"] == 0
+    assert state.evidence_pack
+    assert state.bid_plan
     event_stages = [event.stage for event in state.trace_events]
     assert event_stages[0] == "generate"
     assert "review" in event_stages

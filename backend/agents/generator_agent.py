@@ -10,9 +10,11 @@ from core.config import get_settings
 from prompts.generator_prompt import build_document_prompt, build_section_prompt
 from rag.retriever import RetrievalResult
 from schemas.bid import BidDocumentOutlineSection, BidPackage, BidSectionOutline
+from schemas.bid_plan import BidPlan
 from schemas.bid_template import BidTemplate
 from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
+from services.bid_tone_checker import line_has_forbidden_tone
 
 
 class GeneratorAgentError(RuntimeError):
@@ -42,6 +44,8 @@ def sanitize_bid_markdown(markdown: str) -> str:
         line = raw.rstrip()
         stripped = line.strip()
         if any(keyword in stripped for keyword in _META_LINE_KEYWORDS):
+            continue
+        if line_has_forbidden_tone(stripped):
             continue
         if stripped and _PAGE_FOOTER_RE.fullmatch(stripped):
             continue
@@ -208,7 +212,7 @@ def build_bid_document_outline(
                 title="报价文件",
                 volume="报价/经济标",
                 section_type="price",
-                focus_points=["具体报价金额和工程量清单必须由造价人员或清单数据填报。"],
+                focus_points=["报价金额、工程量清单和综合单价以正式清单数据为准。"],
             ),
         ]
 
@@ -258,7 +262,7 @@ def build_bid_document_outline(
                 section_type="price_missing_template",
                 required=False,
                 source_item="当前模板未包含报价卷；如招标文件要求第二信封，需绑定报价模板或接入工程量清单。",
-                focus_points=["系统不自动编造投标总价、综合单价或清单合价。"],
+                focus_points=["投标总价、综合单价和清单合价以正式报价文件为准。"],
             )
         )
     return document_outline
@@ -270,6 +274,7 @@ def generate_bid_document(
     bid_template: BidTemplate | None = None,
     pricing_strategy: PricingStrategy | None = None,
     knowledge_images: list[dict[str, object]] | None = None,
+    bid_plan: BidPlan | None = None,
 ) -> str:
     return generate_bid_package(
         requirements,
@@ -277,6 +282,7 @@ def generate_bid_document(
         bid_template,
         pricing_strategy,
         knowledge_images,
+        bid_plan,
     ).combined_markdown
 
 
@@ -286,8 +292,10 @@ def generate_bid_package(
     bid_template: BidTemplate | None = None,
     pricing_strategy: PricingStrategy | None = None,
     knowledge_images: list[dict[str, object]] | None = None,
+    bid_plan: BidPlan | None = None,
 ) -> BidPackage:
     bid_template = bid_template or load_bid_template()
+    knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
     outline = build_bid_outline(requirements, bid_template)
     settings = get_settings()
     use_local_section_fallback = False
@@ -314,6 +322,7 @@ def generate_bid_package(
         use_local_section_fallback,
         settings.company_name,
         knowledge_images,
+        bid_plan,
     )
     pricing = _generate_pricing_volume(
         requirements,
@@ -408,6 +417,7 @@ def _generate_technical_volume(
     use_local_section_fallback: bool,
     company_name: str,
     knowledge_images: list[dict[str, object]] | None = None,
+    bid_plan: BidPlan | None = None,
 ) -> str:
     parts = _document_preface(requirements, company_name)
     parts[0] = f"# {_project_title(requirements)} 技术文件"
@@ -420,6 +430,7 @@ def _generate_technical_volume(
             retrieved_chunks_by_section,
             use_local_section_fallback,
             knowledge_images,
+            bid_plan,
         )
     )
     if bid_template and bid_template.appendix_sections:
@@ -589,14 +600,19 @@ def _technical_volume_from_outline(
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     use_local_section_fallback: bool,
     knowledge_images: list[dict[str, object]] | None = None,
+    bid_plan: BidPlan | None = None,
 ) -> list[str]:
     parts = ["## 五、施工组织设计", "", "### 施工组织设计目录", ""]
     for section in outline:
         parts.append(f"- {section.title}")
     parts.append("")
     for section in outline:
-        chunks = retrieved_chunks_by_section.get(section.title, [])
-        chunk_text = [_chunk_content(chunk) for chunk in chunks]
+        chunks = _filter_chunks_for_bid_plan(
+            retrieved_chunks_by_section.get(section.title, []),
+            bid_plan,
+            section.title,
+        )
+        chunk_text = _bid_text_chunks(chunks)
         if use_local_section_fallback:
             section_markdown = _generate_section_fallback(
                 section.title,
@@ -650,7 +666,7 @@ def _price_bid_fallback(
     lines = [
         heading,
         "",
-        "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报，系统不自动生成任何报价数值。",
+        "本报价文件依据招标文件、工程量清单、施工图纸、补遗澄清文件、现行计价规范及企业施工组织安排编制。投标报价包括完成本项目招标范围内全部工程内容所需的人工、材料、机械、管理、利润、规费、税金、风险及合同约定的其他费用。",
         "",
         "报价文件目录如下：",
         "- 投标总价",
@@ -753,7 +769,7 @@ def _business_bid_fallback(
         "致：________（招标人名称）",
         "",
         f"1. 我方经详细研究{project_name}招标文件及相关资料，决定参加本项目投标，并承诺按招标文件、合同条款、技术标准和工程量清单要求完成全部工作内容。",
-        "2. 本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准，由造价人员核定后填写。",
+        "2. 本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准。",
         "3. 我方承诺的工期严格响应招标文件要求（________日历天）；工程质量标准达到招标文件规定的合格及以上等级。",
         "4. 我方承诺在投标有效期内不撤销投标文件，不修改投标实质性内容；如中标，将按招标文件规定的时限和方式提交履约担保并签订合同。",
     ]
@@ -791,7 +807,7 @@ def _business_bid_fallback(
         "",
         "### 4. 报价文件",
         "",
-        "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报，系统不自动生成任何报价数值。",
+        "本报价文件依据招标文件、工程量清单、施工图纸、补遗澄清文件、现行计价规范及企业施工组织安排编制。投标报价包括完成本项目招标范围内全部工程内容所需的人工、材料、机械、管理、利润、规费、税金、风险及合同约定的其他费用。",
         "",
         "报价文件目录如下：",
         "",
@@ -805,7 +821,7 @@ def _business_bid_fallback(
         "8. 其他项目清单与计价汇总表。",
         "9. 规费、税金项目计价表。",
         "",
-        "报价编制说明：本次投标报价依据招标工程量清单、招标文件、施工图纸、相关规范及企业自有成本测算编制，所有清单数量以招标文件提供为准，综合单价含完成该清单项目所需的全部费用。具体报价金额、工程量及单价由造价人员核定后填写。",
+        "报价编制说明：本次投标报价依据招标工程量清单、招标文件、施工图纸、相关规范及企业自有成本测算编制，所有清单数量以招标文件提供为准，综合单价含完成该清单项目所需的全部费用。",
         "",
         "### 5. 投标保证金",
         "",
@@ -884,7 +900,7 @@ def _business_bid_from_template(
             [
                 "### 报价文件",
                 "",
-                "本部分仅生成报价文件目录和编制说明，具体工程量、综合单价、合价、措施项目费、规费、税金及投标总价须由造价人员依据招标工程量清单、图纸、补遗文件和企业成本测算填报，系统不自动生成任何报价数值。",
+                "本报价文件依据招标文件、工程量清单、施工图纸、补遗澄清文件、现行计价规范及企业施工组织安排编制，投标报价包括完成本项目招标范围内全部工程内容所需的相关费用。",
                 "",
             ]
         )
@@ -904,7 +920,7 @@ def _template_business_section_body(
     if "投标函" in title:
         body = [
             f"我方经详细研究{project_name}招标文件及相关资料，决定参加本项目投标，并承诺按招标文件、合同条款、技术标准和工程量清单要求完成全部工作内容。",
-            "本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准，由造价人员核定后填写。",
+            "本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准。",
             "我方承诺工期、质量、安全、投标有效期、履约担保和合同义务均实质性响应招标文件要求。",
         ]
         if payment_note:
@@ -961,7 +977,7 @@ def _template_business_section_body(
             invalid_bid_text,
         ]
     return [
-        "本章节按真实投标模板固定表单保留，具体企业事实信息、证书编号、金额、人员姓名、日期和签章页由投标人依据真实资料填写。",
+        "本章节按招标文件规定格式编制，企业事实信息、证书编号、金额、人员姓名、日期和签章页均以投标人真实资料为准。",
         "我单位承诺本章节内容与招标文件实质性要求一致，并在最终提交前逐项复核附件、签章和上传格式。",
     ]
 
@@ -1118,6 +1134,61 @@ def _generate_section_with_llm(
     return content
 
 
+def _filter_knowledge_images_by_plan(
+    knowledge_images: list[dict[str, object]] | None,
+    bid_plan: BidPlan | dict | None,
+) -> list[dict[str, object]] | None:
+    if not knowledge_images:
+        return knowledge_images
+    plan = _coerce_bid_plan(bid_plan)
+    if not plan:
+        return knowledge_images
+    planned_ids = {
+        int(document_id)
+        for section in plan.sections
+        for document_id in section.image_document_ids
+        if document_id is not None
+    }
+    if not planned_ids:
+        return knowledge_images
+    return [
+        image
+        for image in knowledge_images
+        if _int_or_none(image.get("document_id")) in planned_ids
+    ]
+
+
+def _filter_chunks_for_bid_plan(
+    chunks: list[RetrievalResult | str],
+    bid_plan: BidPlan | dict | None,
+    section_title: str,
+) -> list[RetrievalResult | str]:
+    plan = _coerce_bid_plan(bid_plan)
+    if not plan:
+        return chunks
+    section_plan = plan.section_for_title(section_title)
+    if not section_plan or not section_plan.evidence_chunk_ids:
+        return chunks
+    allowed_ids = {int(chunk_id) for chunk_id in section_plan.evidence_chunk_ids}
+    filtered = [
+        chunk
+        for chunk in chunks
+        if isinstance(chunk, str) or _chunk_id(chunk) in allowed_ids
+    ]
+    return filtered
+
+
+def _coerce_bid_plan(bid_plan: BidPlan | dict | None) -> BidPlan | None:
+    if bid_plan is None:
+        return None
+    if isinstance(bid_plan, BidPlan):
+        return bid_plan
+    try:
+        return BidPlan.model_validate(bid_plan)
+    except Exception:
+        return None
+
+
 def _generate_section_fallback(
     section_title: str,
     requirements: TenderRequirements,
@@ -1162,6 +1233,45 @@ def _generate_section_fallback(
 #### 三、风险与合规控制
 针对招标文件列明的否决投标、重大偏差和实质性响应要求，我单位将在投标文件编制、施工准备、过程实施和交验收尾各阶段逐项复核，确保工期、质量、安全、资质、人员、设备、保证金及其他承诺均实质性响应招标文件。
 """
+
+
+def _bid_text_chunks(chunks: list[RetrievalResult | str]) -> list[str]:
+    return [
+        content
+        for chunk in chunks
+        if (content := _chunk_content(chunk).strip())
+        and not _is_structured_evidence_chunk(chunk, content)
+    ]
+
+
+def _chunk_id(chunk: RetrievalResult | str) -> int | None:
+    if isinstance(chunk, str):
+        return None
+    return _int_or_none(chunk.chunk_id)
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_structured_evidence_chunk(chunk: RetrievalResult | str, content: str) -> bool:
+    if content.startswith("资料名称："):
+        return True
+    if isinstance(chunk, RetrievalResult):
+        metadata = chunk.metadata or {}
+        if metadata.get("ingestion_mode") in {"structured_evidence", "evidence_only"}:
+            return True
+        if metadata.get("indexing_status") in {"structured_evidence", "evidence_only"}:
+            return True
+        file_type = str(metadata.get("file_type") or "").lower()
+        if file_type in {"jpg", "jpeg", "png", "gif", "webp"}:
+            return True
+    return False
 
 
 def _fallback_subsections(section_title: str) -> tuple[str, str]:
@@ -1329,14 +1439,14 @@ def _appendix_fallback(bid_template: BidTemplate) -> list[str]:
             [
                 f"### {section.title}",
                 "",
-                "本附表按招标文件和真实投标模板要求设置，用于支撑施工组织设计、进度安排、资源配置和现场布置等内容。",
+                "本附表依据招标文件、施工图纸、工程量清单及施工组织设计编制，作为施工进度安排、资源投入、临时设施布置和现场组织管理的组成部分。",
                 "",
-                "| 序号 | 附表内容 | 编制依据 | 填报要求 |",
+                "| 序号 | 附表内容 | 编制依据 | 响应说明 |",
                 "| --- | --- | --- | --- |",
-                "| 1 | 计划、资源或现场布置数据 | 招标文件、施工图纸、企业施工组织安排 | 由项目技术负责人按最终施工部署复核填写 |",
-                "| 2 | 关键节点和投入数量 | 工期要求、工程量清单、机械人员调配计划 | 与商务报价和技术方案保持一致 |",
+                "| 1 | 施工计划、资源投入或现场布置数据 | 招标文件、施工图纸、施工组织设计 | 满足招标文件工期、质量、安全和现场管理要求 |",
+                "| 2 | 关键节点、劳动力、机械设备及临时设施 | 工期要求、工程量清单、资源配置计划 | 与施工组织设计、报价文件及合同履约安排保持一致 |",
                 "",
-                "我单位将在最终投标文件提交前，对本附表所列时间节点、工程量、劳动力、机械设备、临时用地及外供电力等数据进行逐项复核，确保附表内容与施工组织设计、报价文件和招标文件要求一致。",
+                "我单位承诺本附表所列时间节点、工程量、劳动力、机械设备、临时用地及外供电力等内容与施工组织设计、报价文件和招标文件要求保持一致，并在项目实施过程中按合同约定和现场实际组织落实。",
                 "",
             ]
         )

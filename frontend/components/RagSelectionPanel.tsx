@@ -83,6 +83,7 @@ export function RagSelectionPanel({
       <div className="mt-3 grid gap-2">
         <input
           value={query}
+          placeholder="输入关键词，例如：营业执照、建造师证、施工方案"
           onChange={(event) => onQueryChange(event.target.value)}
           className="h-9 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-brand"
         />
@@ -159,6 +160,21 @@ export function RagSelectionPanel({
         </button>
       </div>
       <div className="mt-3 max-h-72 space-y-2 overflow-auto">
+        {busy ? (
+          <div className="rounded-md border border-line bg-field p-3 text-xs text-muted">
+            正在检索资料...
+          </div>
+        ) : null}
+        {!busy && query.trim() && results.length === 0 ? (
+          <div className="rounded-md border border-line bg-field p-3 text-xs text-muted">
+            没有检索到资料。可以先清空筛选条件再试；图片/证件资料需要重新上传或重新索引后才会进入资料选择检索。
+          </div>
+        ) : null}
+        {!busy && !query.trim() ? (
+          <div className="rounded-md border border-line bg-field p-3 text-xs text-muted">
+            输入关键词后点击检索。筛选条件会精确匹配资料标签，填太多可能没有结果。
+          </div>
+        ) : null}
         {results.map((result) => (
           <label
             key={result.chunk_id}
