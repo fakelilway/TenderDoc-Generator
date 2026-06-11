@@ -1041,16 +1041,18 @@
   - 模拟 LLM timeout 或 MinIO 临时失败，任务可记录失败并重试或提示人工处理。
 
 ### M72：真实知识库导入规则与批量入库
-- **完成状态**：⬜ 未开始
+- **完成状态**：🟨 部分完成
 - **依赖**：M67, M70
 - **完成标准**：
-  - 制定公司资料命名规则、标签规则和敏感级别规则。
-  - 支持从本地目录/NAS 导入 PDF/DOCX/TXT/JPG/JPEG/PNG，并保留原始文件预览。
-  - 对 `.doc`、扫描件、Excel/清单等暂不直接索引的格式，给出转换或附件策略。
-  - 导入前可 dry-run，输出将导入的文件、标签、风险和失败原因。
+  - 已制定公司资料命名规则、标签规则和敏感级别规则，并落到 manifest 字段。
+  - 已支持从本地目录扫描 JPG/JPEG/PNG/XLSX 等样本，生成 CSV/JSON manifest 和整理后副本；任意 NAS 挂载目录也可按路径扫描。
+  - 已支持 `--import-to-kb` 复用现有知识库入库 service，将 manifest 资料写入本地 Postgres/MinIO。
+  - 已支持默认 dry-run；默认跳过 `review_required=true`，除非显式加 `--include-review-required`。
+  - 仍需补齐正式去重/更新策略、OCR 提取、`.doc` 转换策略和更大样本人工验收。
 - **测试方法**：
-  - 用一批脱敏资料 dry-run 后再正式导入。
-  - 随机抽查人员证件、公司证件、业绩、图片资料可预览且标签正确。
+  - 已用 `/Users/mingbai/Desktop/TenderDoc_M68_Test/03_知识库资料` 生成 manifest、整理后副本并导入本地知识库。
+  - 已导入 9 条样本资料，结果 `9 imported, 0 skipped, 0 failed`。
+  - `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/test_prepare_knowledge_manifest.py -q`
 
 ### M73：真实项目试运行与质量门槛
 - **完成状态**：⬜ 未开始
@@ -1095,11 +1097,29 @@
 
 ---
 
+### M76：知识库批量命名、标签 manifest 与本地导入脚本
+
+- **状态**：已完成
+- **依赖**：M67、M72
+- **目标**：降低公司资料批量整理成本，避免人工逐个改名和填标签。
+- **完成标准**：
+  - 新增 `backend/scripts/prepare_knowledge_manifest.py`，可扫描本地资料目录并生成建议文件名、metadata 标签、置信度和人工复核标记。
+  - 支持输出 `knowledge_import_manifest.csv`、`knowledge_import_manifest.json` 和整理后副本目录。
+  - 支持从已编辑 CSV manifest 读取并导入知识库。
+  - 导入默认安全：不加 `--import-to-kb` 不写库；不加 `--include-review-required` 会跳过待复核资料。
+  - 导入复用 `knowledge_service.index_uploaded_knowledge()`，不绕过现有 MinIO/Postgres/metadata 逻辑。
+- **测试方法**：
+  - `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests/test_prepare_knowledge_manifest.py -q`
+  - 对 M68 样本资料实测生成 manifest，并导入本地知识库成功。
+
+---
+
 ## 总结
 
-- 共 **75 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习，M65 到 M68 覆盖正奇市政/公路专用化，M69 到 M74 覆盖公司 production-ready 落地，M75 覆盖生成架构收敛。
-- **M1–M67、M75 已完成**：MVP、workflow、策略 Agent、真实模板学习、模板库、知识库结构化标签和生成计划中枢均已实现并通过测试。
+- 共 **76 个 Minitasks**，从 M1 到 M44 覆盖 MVP，M45 到 M52 覆盖 workflow 产品化第一阶段，M53 到 M60 覆盖策略 Agent、项目管理和输出体验，M61 到 M64 覆盖真实投标模板学习，M65 到 M68 覆盖正奇市政/公路专用化，M69 到 M74 覆盖公司 production-ready 落地，M75 覆盖生成架构收敛，M76 覆盖知识库批量整理和导入。
+- **M1–M67、M75、M76 已完成**：MVP、workflow、策略 Agent、真实模板学习、模板库、知识库结构化标签、生成计划中枢和批量知识库 manifest/导入脚本均已实现并通过测试。
 - **M68 部分完成**：评估框架和脱敏样例已完成；还缺正奇真实脱敏样本入库与人工验收。
-- **下一步优先级**：先做 M69–M72，把本地 MVP 变成公司内网可控试用版本；同时由业务侧准备 M68/M73 所需真实脱敏资料。
+- **M72 部分完成**：已有 manifest 和本地导入脚本；还需去重/更新策略、OCR、`.doc` 转换和批量样本验收。
+- **下一步优先级**：补 M72 的去重/更新策略，然后继续 M69–M71，把本地 MVP 变成公司内网可控试用版本。
 
 **最后更新**：2026-06-11

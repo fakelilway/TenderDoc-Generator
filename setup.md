@@ -216,6 +216,28 @@ curl -fsSI http://localhost:3000
 - `BidPlan` 分配：每个章节可用哪些知识片段、哪些图片候选、是否需要表格。
 - 后续审计、过期提醒和资料治理。
 
+批量整理和导入建议先走 manifest：
+
+```bash
+.venv/bin/python backend/scripts/prepare_knowledge_manifest.py \
+  "/path/to/原始知识库资料" \
+  --out "/path/to/knowledge_import_manifest.csv" \
+  --json-out "/path/to/knowledge_import_manifest.json" \
+  --copy-to "/path/to/04_知识库_整理后"
+```
+
+确认 manifest 后再导入本地知识库：
+
+```bash
+.venv/bin/python backend/scripts/prepare_knowledge_manifest.py \
+  --manifest "/path/to/knowledge_import_manifest.csv" \
+  --out "/path/to/knowledge_import_manifest.csv" \
+  --import-to-kb \
+  --import-report "/path/to/knowledge_import_report.csv"
+```
+
+默认会跳过 `review_required=true` 的资料；样本试导或已人工确认时才加 `--include-review-required`。脚本不会改动原始资料目录，`--copy-to` 只生成整理后的副本。
+
 ## 9. 模板与离线脚本
 
 导入默认模板：
@@ -332,6 +354,7 @@ docker compose down -v
 | `scripts/index_bid_templates.sh` | 将模板资料索引到本地知识库 |
 | `backend/scripts/seed_default_template.py` | 导入默认模板到模板库 |
 | `backend/scripts/extract_bid_template.py` | 从历史投标 PDF 抽取模板 JSON |
+| `backend/scripts/prepare_knowledge_manifest.py` | 批量生成知识库命名/标签 manifest，并可导入本地知识库 |
 | `backend/scripts/run_quality_eval.py` | 运行质量评估集 |
 | `backend/scripts/run_bid_gap_eval.py` | 评估 AI 标书与真实模板差距 |
 

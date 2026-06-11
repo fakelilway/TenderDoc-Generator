@@ -24,6 +24,7 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
 - DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
 - 知识库上传、列表、预览、删除、重命名、结构化 metadata 标签和 RBAC。
+- 知识库资料批量整理脚本：扫描本地/NAS 目录，生成建议文件名、metadata 标签、CSV/JSON manifest、整理后副本，并可按 manifest 导入本地知识库。
 - RAG 检索支持按项目类型、资料类别、册别、专业、地区、年份、证书类型、敏感级别、使用范围、核验状态、标签等过滤。
 - 知识库图片资料可作为生成候选，生成内容可以在合适位置插入图片引用；图片是否可插入由 `image_insertable` 控制。
 - Markdown 和 DOCX 导出支持基础表格，前端预览可渲染 Markdown 表格。
@@ -37,6 +38,7 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 
 - 后端重点回归：`101 passed`
 - 后端扩展回归：`174 passed`（排除本地已删除 fixture PDF 依赖的 parser/indexer 文件）
+- 知识库批量整理脚本测试：`4 passed`
 - 前端类型检查：通过
 
 ## 产品范围
@@ -145,6 +147,12 @@ pnpm --dir frontend build
 - `verified_status`：已核验、待核验、已过期、需更新。
 - `image_insertable`：图片是否允许作为标书插图候选。
 
+批量整理时优先使用 manifest 流程：
+
+1. 扫描原始资料目录，只生成 `knowledge_import_manifest.csv` 和整理后副本，不改原文件。
+2. 人工抽查或编辑 manifest 中的 `suggested_filename`、`certificate_type`、`valid_to`、`image_insertable`、`review_required`。
+3. 确认后再加 `--import-to-kb` 导入本地知识库；默认会跳过 `review_required=true` 的资料，除非显式加 `--include-review-required`。
+
 ## 项目结构
 
 ```text
@@ -153,6 +161,7 @@ TenderDoc-Generator/
 │   ├── agents/              # parser/generator/reviewer/pricing/scoring/response matrix
 │   ├── api/                 # FastAPI 路由
 │   ├── rag/                 # embedding、pgvector 检索和过滤
+│   ├── scripts/             # 模板导入、质量评估、知识库 manifest/批量入库
 │   ├── schemas/             # Pydantic schema
 │   ├── services/            # workflow、project、knowledge、template、evidence pack、bid plan
 │   ├── templates/           # 内置投标模板 JSON
