@@ -269,12 +269,14 @@ def generate_bid_document(
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     bid_template: BidTemplate | None = None,
     pricing_strategy: PricingStrategy | None = None,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     return generate_bid_package(
         requirements,
         retrieved_chunks_by_section,
         bid_template,
         pricing_strategy,
+        knowledge_images,
     ).combined_markdown
 
 
@@ -283,6 +285,7 @@ def generate_bid_package(
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     bid_template: BidTemplate | None = None,
     pricing_strategy: PricingStrategy | None = None,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> BidPackage:
     bid_template = bid_template or load_bid_template()
     outline = build_bid_outline(requirements, bid_template)
@@ -301,6 +304,7 @@ def generate_bid_package(
         bid_template,
         pricing_strategy,
         settings.company_name,
+        knowledge_images,
     )
     technical = _generate_technical_volume(
         requirements,
@@ -309,6 +313,7 @@ def generate_bid_package(
         bid_template,
         use_local_section_fallback,
         settings.company_name,
+        knowledge_images,
     )
     pricing = _generate_pricing_volume(
         requirements,
@@ -361,6 +366,7 @@ def _generate_commercial_volume(
     bid_template: BidTemplate | None,
     pricing_strategy: PricingStrategy | None,
     company_name: str,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     parts = [
         f"# {_project_title(requirements)} 商务文件",
@@ -382,11 +388,14 @@ def _generate_commercial_volume(
                         requirements,
                         section,
                         pricing_strategy,
+                        knowledge_images,
                     )
                 )
                 emitted = True
     if not emitted:
-        fallback = _business_bid_fallback(requirements, pricing_strategy, bid_template)
+        fallback = _business_bid_fallback(
+            requirements, pricing_strategy, bid_template, knowledge_images
+        )
         parts.extend(fallback)
     return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
@@ -398,6 +407,7 @@ def _generate_technical_volume(
     bid_template: BidTemplate | None,
     use_local_section_fallback: bool,
     company_name: str,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     parts = _document_preface(requirements, company_name)
     parts[0] = f"# {_project_title(requirements)} 技术文件"
@@ -409,6 +419,7 @@ def _generate_technical_volume(
             outline,
             retrieved_chunks_by_section,
             use_local_section_fallback,
+            knowledge_images,
         )
     )
     if bid_template and bid_template.appendix_sections:
@@ -440,8 +451,7 @@ def _template_has_price_section(bid_template: BidTemplate | None) -> bool:
     if not bid_template:
         return False
     return any(
-        _document_volume_for_section(section.title, section.section_type)
-        == "报价/经济标"
+        _document_volume_for_section(section.title, section.section_type) == "报价/经济标"
         for section in bid_template.main_sections
     )
 
@@ -578,6 +588,7 @@ def _technical_volume_from_outline(
     outline: list[BidSectionOutline],
     retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
     use_local_section_fallback: bool,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> list[str]:
     parts = ["## 五、施工组织设计", "", "### 施工组织设计目录", ""]
     for section in outline:
@@ -593,11 +604,19 @@ def _technical_volume_from_outline(
                 chunk_text,
             )
         else:
-            section_markdown = generate_bid_section(
-                section.title,
-                requirements,
-                chunk_text,
-            )
+            if knowledge_images:
+                section_markdown = generate_bid_section(
+                    section.title,
+                    requirements,
+                    chunk_text,
+                    knowledge_images,
+                )
+            else:
+                section_markdown = generate_bid_section(
+                    section.title,
+                    requirements,
+                    chunk_text,
+                )
         parts.extend([section_markdown, ""])
     return parts
 
@@ -606,6 +625,7 @@ def _business_section_from_template(
     requirements: TenderRequirements,
     section,
     pricing_strategy: PricingStrategy | None,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> list[str]:
     payment_note, guarantee_note = _pricing_context_notes(pricing_strategy)
     body = _template_business_section_body(
@@ -615,6 +635,7 @@ def _business_section_from_template(
         _format_requirement_items(requirements.invalid_bid_items),
         payment_note,
         guarantee_note,
+        knowledge_images,
     )
     return [f"## {section.title}", "", *body, ""]
 
@@ -687,6 +708,7 @@ def _business_bid_fallback(
     requirements: TenderRequirements,
     pricing_strategy: PricingStrategy | None = None,
     bid_template: BidTemplate | None = None,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> list[str]:
     project_name = _project_title(requirements)
     qualification_text = _format_requirement_items(requirements.qualification_list)
@@ -718,6 +740,7 @@ def _business_bid_fallback(
             bid_template,
             payment_note=payment_note,
             guarantee_note=guarantee_note,
+            knowledge_images=knowledge_images,
         )
 
     parts: list[str] = [
@@ -760,6 +783,11 @@ def _business_bid_fallback(
         qualification_text,
         "",
         "注：企业资质证书编号（________）、人员证书编号（________）、社保证明、类似业绩项目名称（________）及合同金额（________元）须使用企业真实资料，并附扫描件或复印件。",
+        "",
+        *_knowledge_image_block(
+            knowledge_images,
+            keywords=("营业执照", "资质", "安全生产", "建造师", "身份证", "建安", "交安", "职称", "社保", "业绩"),
+        ),
         "",
         "### 4. 报价文件",
         "",
@@ -808,6 +836,7 @@ def _business_bid_from_template(
     *,
     payment_note: str = "",
     guarantee_note: str = "",
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> list[str]:
     project_name = _project_title(requirements)
     qualification_text = _format_requirement_items(requirements.qualification_list)
@@ -824,8 +853,27 @@ def _business_bid_from_template(
             invalid_bid_text,
             payment_note,
             guarantee_note,
+            knowledge_images,
         )
         lines.extend(section_text)
+        if "资格" in title or "证" in title or "业绩" in title:
+            lines.extend(
+                _knowledge_image_block(
+                    knowledge_images,
+                    keywords=(
+                        "营业执照",
+                        "资质",
+                        "安全生产",
+                        "建造师",
+                        "身份证",
+                        "建安",
+                        "交安",
+                        "职称",
+                        "社保",
+                        "业绩",
+                    ),
+                )
+            )
         lines.append("")
 
     if not any(
@@ -851,6 +899,7 @@ def _template_business_section_body(
     invalid_bid_text: str,
     payment_note: str,
     guarantee_note: str,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> list[str]:
     if "投标函" in title:
         body = [
@@ -865,6 +914,8 @@ def _template_business_section_body(
         return [
             "法定代表人身份证明及授权委托书按招标文件固定格式填写，载明投标人名称、统一社会信用代码、法定代表人、授权代理人、授权范围和授权期限。",
             "法定代表人姓名（________）、身份证号（________）、授权代理人姓名（________）、身份证号（________）及签章页须使用企业真实资料。",
+            "",
+            *_knowledge_image_block(knowledge_images, keywords=("身份证", "授权", "法定代表人")),
         ]
     if "联合体" in title:
         return [
@@ -885,6 +936,22 @@ def _template_business_section_body(
             "招标文件资格要求响应如下：",
             qualification_text,
             "企业资质证书编号（________）、人员证书编号（________）、社保证明、类似业绩项目名称（________）及合同金额（________元）须使用企业真实资料，并附扫描件或复印件。",
+            "",
+            *_knowledge_image_block(
+                knowledge_images,
+                keywords=(
+                    "营业执照",
+                    "资质",
+                    "安全生产",
+                    "建造师",
+                    "身份证",
+                    "建安",
+                    "交安",
+                    "职称",
+                    "社保",
+                    "业绩",
+                ),
+            ),
         ]
     if "声明" in title or "承诺" in title:
         return [
@@ -899,6 +966,61 @@ def _template_business_section_body(
     ]
 
 
+def _knowledge_image_block(
+    knowledge_images: list[dict[str, object]] | None,
+    *,
+    keywords: tuple[str, ...] = (),
+    limit: int = 6,
+) -> list[str]:
+    selected = _select_knowledge_images(knowledge_images, keywords, limit)
+    if not selected:
+        return []
+    lines = ["相关证明材料扫描件如下：", ""]
+    for image in selected:
+        document_id = image.get("document_id")
+        if not document_id:
+            continue
+        caption = str(image.get("caption") or image.get("file_name") or "知识库图片资料")
+        lines.append(
+            f'{{{{knowledge_image:document_id={int(document_id)} caption="{_escape_marker_caption(caption)}"}}}}'
+        )
+        lines.append("")
+    return lines
+
+
+def _select_knowledge_images(
+    knowledge_images: list[dict[str, object]] | None,
+    keywords: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, object]]:
+    if not knowledge_images:
+        return []
+    if not keywords:
+        return knowledge_images[:limit]
+    selected: list[dict[str, object]] = []
+    for image in knowledge_images:
+        text = " ".join(
+            str(value)
+            for value in (
+                image.get("file_name"),
+                image.get("caption"),
+                image.get("document_type"),
+                image.get("specialty"),
+                " ".join(str(tag) for tag in image.get("tags", []) or []),
+            )
+            if value
+        )
+        if any(keyword in text for keyword in keywords):
+            selected.append(image)
+            if len(selected) >= limit:
+                break
+    return selected
+
+
+def _escape_marker_caption(caption: str) -> str:
+    return caption.replace('"', "'").strip()
+
+
 def _generate_document_with_llm(
     requirements: TenderRequirements,
     outline: list[BidSectionOutline],
@@ -906,6 +1028,7 @@ def _generate_document_with_llm(
     company_name: str,
     bid_template: BidTemplate | None = None,
     pricing_strategy: PricingStrategy | None = None,
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     settings = get_settings()
     if _has_real_key(settings.openrouter_api_key):
@@ -930,6 +1053,7 @@ def _generate_document_with_llm(
             company_name=company_name,
             bid_template=bid_template,
             pricing_strategy=pricing_strategy,
+            knowledge_images=knowledge_images,
         ),
         temperature=0.2,
         max_tokens=9000,
@@ -947,9 +1071,12 @@ def generate_bid_section(
     section_title: str,
     requirements: TenderRequirements,
     retrieved_chunks: list[str],
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     try:
-        return _generate_section_with_llm(section_title, requirements, retrieved_chunks)
+        return _generate_section_with_llm(
+            section_title, requirements, retrieved_chunks, knowledge_images
+        )
     except Exception:
         return _generate_section_fallback(section_title, requirements, retrieved_chunks)
 
@@ -958,6 +1085,7 @@ def _generate_section_with_llm(
     section_title: str,
     requirements: TenderRequirements,
     retrieved_chunks: list[str],
+    knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     settings = get_settings()
     if _has_real_key(settings.openrouter_api_key):
@@ -974,7 +1102,9 @@ def _generate_section_with_llm(
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=25.0)
     response = client.chat.completions.create(
         model=model,
-        messages=build_section_prompt(section_title, requirements, retrieved_chunks),
+        messages=build_section_prompt(
+            section_title, requirements, retrieved_chunks, knowledge_images
+        ),
         temperature=0.2,
         max_tokens=1800,
     )
@@ -1023,10 +1153,14 @@ def _generate_section_fallback(
 #### 二、过程控制措施
 施工过程中严格执行技术交底、样板引路、过程检查、隐蔽验收、资料同步归档等管理制度。对涉及工期、质量、安全、环保和文明施工的关键节点，项目部实行日检查、周调度、月总结，发现偏差及时纠偏，确保各项承诺满足招标文件要求。
 
+| 控制项目 | 主要措施 | 责任岗位 | 形成资料 |
+| --- | --- | --- | --- |
+| 技术交底 | 分部分项工程开工前完成书面交底，明确工艺、质量、安全和环保要求 | 技术负责人、施工员 | 技术交底记录 |
+| 过程检查 | 对关键工序实行旁站、巡检和隐蔽验收，发现偏差及时整改闭合 | 质量员、安全员 | 检查记录、整改闭合单 |
+| 资料归档 | 施工记录、试验检测、验收资料与现场进度同步形成 | 资料员、专业工程师 | 施工资料台账 |
+
 #### 三、风险与合规控制
 针对招标文件列明的否决投标、重大偏差和实质性响应要求，我单位将在投标文件编制、施工准备、过程实施和交验收尾各阶段逐项复核，确保工期、质量、安全、资质、人员、设备、保证金及其他承诺均实质性响应招标文件。
-
-本章响应度自查：完全满足
 """
 
 
@@ -1197,9 +1331,12 @@ def _appendix_fallback(bid_template: BidTemplate) -> list[str]:
                 "",
                 "本附表按招标文件和真实投标模板要求设置，用于支撑施工组织设计、进度安排、资源配置和现场布置等内容。",
                 "",
-                "⚠️人工确认点：【待补充】本表涉及的时间节点、工程量、劳动力、机械设备、临时用地、外供电力等数据须由项目技术负责人和造价人员依据真实施工组织安排填写。",
+                "| 序号 | 附表内容 | 编制依据 | 填报要求 |",
+                "| --- | --- | --- | --- |",
+                "| 1 | 计划、资源或现场布置数据 | 招标文件、施工图纸、企业施工组织安排 | 由项目技术负责人按最终施工部署复核填写 |",
+                "| 2 | 关键节点和投入数量 | 工期要求、工程量清单、机械人员调配计划 | 与商务报价和技术方案保持一致 |",
                 "",
-                "本章响应度自查：完全满足",
+                "我单位将在最终投标文件提交前，对本附表所列时间节点、工程量、劳动力、机械设备、临时用地及外供电力等数据进行逐项复核，确保附表内容与施工组织设计、报价文件和招标文件要求一致。",
                 "",
             ]
         )

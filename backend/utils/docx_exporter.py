@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import textwrap
+from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 
 import fitz
@@ -22,6 +24,11 @@ HEADING_SIZES_PT = {"Heading 1": 16, "Heading 2": 14, "Heading 3": 12}  # 三号
 # 2-character first-line indent at the body font size.
 FIRST_LINE_INDENT_PT = BODY_SIZE_PT * 2
 ZHENGQI_PROFILE = "zhengqi"
+KNOWLEDGE_IMAGE_MARKER_RE = re.compile(r"^\{\{knowledge_image:(?P<body>.+)\}\}$")
+_IMAGE_MARKER_ATTR_RE = re.compile(
+    r"(?P<key>[A-Za-z_][\w-]*)=(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
+)
+ImageResolver = Callable[[int], bytes | bytearray | str | Path | None]
 
 
 # Headings whose title contains any of these keywords are routed to the
@@ -64,6 +71,7 @@ def markdown_to_docx(
     page_numbers: bool = False,
     metadata: dict[str, str] | None = None,
     style_profile: str | None = None,
+    image_resolver: ImageResolver | None = None,
 ) -> str:
     """Render markdown into a styled DOCX file.
 
@@ -92,7 +100,7 @@ def markdown_to_docx(
     if toc:
         _add_table_of_contents(document)
 
-    _render_markdown_body(document, markdown_text, style_profile)
+    _render_markdown_body(document, markdown_text, style_profile, image_resolver)
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,12 +183,19 @@ def _render_markdown_body(
     document: Document,
     markdown_text: str,
     style_profile: str | None,
+    image_resolver: ImageResolver | None = None,
 ) -> None:
     lines = markdown_text.splitlines()
     index = 0
     while index < len(lines):
         line = lines[index].rstrip()
         if not line:
+            index += 1
+            continue
+
+        image_marker = _parse_knowledge_image_marker(line)
+        if image_marker:
+            _add_knowledge_image(document, image_marker, image_resolver, style_profile)
             index += 1
             continue
 
@@ -208,6 +223,78 @@ def _render_markdown_body(
                 _body_size_pt(style_profile) * 2
             )
         index += 1
+
+
+def _parse_knowledge_image_marker(line: str) -> dict[str, object] | None:
+    match = KNOWLEDGE_IMAGE_MARKER_RE.match(line.strip())
+    if not match:
+        return None
+    attrs = {
+        attr.group("key"): _strip_attr_quotes(attr.group("value"))
+        for attr in _IMAGE_MARKER_ATTR_RE.finditer(match.group("body"))
+    }
+    document_id = attrs.get("document_id") or attrs.get("id")
+    if not document_id:
+        legacy_match = re.search(r"\b(\d+)\b", match.group("body"))
+        document_id = legacy_match.group(1) if legacy_match else None
+    if not document_id:
+        return None
+    try:
+        image_id = int(str(document_id))
+    except ValueError:
+        return None
+    width_cm = _parse_marker_float(attrs.get("width_cm"), default=14.0)
+    return {
+        "document_id": image_id,
+        "caption": str(attrs.get("caption") or "").strip(),
+        "width_cm": max(4.0, min(width_cm, 16.0)),
+    }
+
+
+def _strip_attr_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _parse_marker_float(value: object, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _add_knowledge_image(
+    document: Document,
+    marker: dict[str, object],
+    image_resolver: ImageResolver | None,
+    style_profile: str | None,
+) -> None:
+    document_id = int(marker["document_id"])
+    caption = str(marker.get("caption") or f"知识库图片资料 {document_id}")
+    image_source = image_resolver(document_id) if image_resolver else None
+    if not image_source:
+        paragraph = document.add_paragraph(f"（图片资料未能插入：{caption}）")
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        return
+
+    image_stream = (
+        BytesIO(bytes(image_source))
+        if isinstance(image_source, (bytes, bytearray))
+        else str(image_source)
+    )
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run()
+    run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+    if caption:
+        caption_paragraph = document.add_paragraph(caption)
+        caption_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _style_paragraph_runs(
+            caption_paragraph,
+            BODY_CJK_FONT,
+            12 if style_profile == ZHENGQI_PROFILE else BODY_SIZE_PT,
+        )
 
 
 def _body_size_pt(style_profile: str | None) -> float:
@@ -270,7 +357,9 @@ def _configure_styles(document: Document, style_profile: str | None) -> None:
         _set_fonts(style, BODY_CJK_FONT if is_zhengqi else HEADING_CJK_FONT)
         style.font.bold = True
         style.font.size = Pt(size)
-        style.font.color.rgb = RGBColor(0, 0, 0)  # avoid the default blue heading colour
+        style.font.color.rgb = RGBColor(
+            0, 0, 0
+        )  # avoid the default blue heading colour
         style.paragraph_format.space_before = Pt(18 if is_zhengqi else 6)
         style.paragraph_format.space_after = Pt(12 if is_zhengqi else 6)
         if is_zhengqi and style_name == "Heading 1":
@@ -310,7 +399,9 @@ def _configure_header_footer(
             header_paragraph = section.header.paragraphs[0]
             header_paragraph.text = header_text
             header_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            _style_paragraph_runs(header_paragraph, BODY_CJK_FONT, 12 if is_zhengqi else None)
+            _style_paragraph_runs(
+                header_paragraph, BODY_CJK_FONT, 12 if is_zhengqi else None
+            )
 
         if page_numbers:
             footer_paragraph = section.footer.paragraphs[0]
@@ -561,9 +652,7 @@ def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
             "pricing": "报价文件",
         }[label]
         prefix = (
-            f"# {doc_title}（{title_label}）\n\n"
-            if doc_title
-            else f"# {title_label}\n\n"
+            f"# {doc_title}（{title_label}）\n\n" if doc_title else f"# {title_label}\n\n"
         )
         volumes[label] = prefix + (text or "（本卷暂无自动归类内容，请人工补充。）")
     return volumes

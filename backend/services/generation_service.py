@@ -42,10 +42,19 @@ def generate_and_export(project_id: int) -> BidGenerationResult:
         )
         for section in outline
     }
+    from services import knowledge_service
+
+    knowledge_images = knowledge_service.list_knowledge_image_references(
+        _image_reference_query(requirements),
+        limit=12,
+    )
 
     with _status(project_id, "generating"):
         markdown = generate_bid_document(
-            requirements, retrieved_chunks_by_section, bid_template
+            requirements,
+            retrieved_chunks_by_section,
+            bid_template,
+            knowledge_images=knowledge_images,
         )
         quality_report = evaluate_generation_quality(markdown)
         markdown_object, docx_object = export_markdown_for_project(
@@ -84,6 +93,7 @@ def export_markdown_for_project(
             header_text=title,
             page_numbers=True,
             style_profile="zhengqi",
+            image_resolver=_resolve_knowledge_image,
         )
 
         markdown_object = f"projects/{project_id}/generated/bid.md"
@@ -104,7 +114,10 @@ def evaluate_generation_quality(markdown_text: str) -> dict[str, float | int]:
     paragraphs = [
         line.strip()
         for line in markdown_text.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not _is_markdown_table_control_line(line)
+        and not line.strip().startswith("{{knowledge_image:")
     ]
     total = len(paragraphs)
     needs_revision = 0
@@ -232,3 +245,35 @@ def _section_query(section_title: str, requirements: TenderRequirements) -> str:
         "历史投标文件 施工组织设计 技术措施 正式标书措辞 素材参考 "
         f"{requirements.project_name} {section_title} {' '.join(descriptions)}"
     )
+
+
+def _image_reference_query(requirements: TenderRequirements) -> str:
+    descriptions = [
+        item.description
+        for item in [
+            *requirements.qualification_list,
+            *requirements.technical_score_items,
+            *requirements.invalid_bid_items,
+        ]
+    ]
+    return (
+        f"{requirements.project_name} 营业执照 资质证书 安全生产许可证 "
+        "建造师 身份证 建安证 交安证 职称证 社保 业绩 施工平面图 " + " ".join(descriptions)
+    )
+
+
+def _resolve_knowledge_image(document_id: int) -> bytes | None:
+    from services import knowledge_service
+
+    try:
+        return knowledge_service.get_knowledge_document_file_bytes(document_id)
+    except Exception:
+        return None
+
+
+def _is_markdown_table_control_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return False
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    return all(cell and set(cell) <= {"-", ":"} for cell in cells)

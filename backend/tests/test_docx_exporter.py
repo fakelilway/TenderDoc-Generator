@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 from docx import Document
@@ -39,6 +40,29 @@ def test_markdown_to_docx_exports_headings_paragraphs_bullets_and_table(
     assert "本章节说明施工部署。" in texts
     assert len(document.tables) == 1
     assert document.tables[0].cell(1, 1).text == "三检制"
+
+
+def test_markdown_to_docx_inserts_knowledge_image_marker(tmp_path: Path) -> None:
+    output_path = tmp_path / "bid_with_image.docx"
+    tiny_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+    )
+    markdown = """# 资格文件
+
+## 资格审查资料
+
+{{knowledge_image:document_id=36 caption="一级建造师证书" width_cm=6}}
+"""
+
+    markdown_to_docx(
+        markdown,
+        output_path,
+        image_resolver=lambda document_id: tiny_png if document_id == 36 else None,
+    )
+
+    document = Document(output_path)
+    assert len(document.inline_shapes) == 1
+    assert "一级建造师证书" in [paragraph.text for paragraph in document.paragraphs]
 
 
 def test_markdown_to_docx_adds_cover_toc_header_and_page_numbers(
@@ -153,9 +177,7 @@ def test_markdown_to_docx_uses_chinese_production_typography(tmp_path: Path) -> 
     assert heading1.font.bold is True
 
     # Body paragraphs carry a 2-character first-line indent.
-    body = next(
-        p for p in document.paragraphs if p.text.startswith("本工程采用分段流水施工")
-    )
+    body = next(p for p in document.paragraphs if p.text.startswith("本工程采用分段流水施工"))
     assert body.paragraph_format.first_line_indent is not None
     assert body.paragraph_format.first_line_indent.pt == 24
 
@@ -206,7 +228,9 @@ def test_markdown_to_docx_can_apply_zhengqi_bid_style_profile(
     assert cover_title.runs[0].font.size.pt == 36
 
     body = next(
-        paragraph for paragraph in document.paragraphs if paragraph.text.startswith("本工程采用")
+        paragraph
+        for paragraph in document.paragraphs
+        if paragraph.text.startswith("本工程采用")
     )
     assert body.paragraph_format.first_line_indent.pt == 28
 

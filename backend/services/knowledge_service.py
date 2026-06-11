@@ -15,6 +15,7 @@ from utils.minio_client import minio_client
 
 PREVIEW_EXPIRY_SECONDS = 900
 PREVIEW_TEXT_LIMIT = 20000
+IMAGE_FILE_TYPES = {"jpg", "jpeg", "png", "gif", "webp"}
 
 
 def _safe_filename(filename: str) -> str:
@@ -220,6 +221,66 @@ def get_knowledge_document_preview(document_id: int) -> dict[str, object]:
     }
 
 
+def get_knowledge_document_file_bytes(document_id: int) -> bytes:
+    row = _fetch_knowledge_document_row(document_id)
+    file_name = str(row["file_name"])
+    file_type = str(row.get("file_type") or "").lower()
+    file_path = str(row.get("file_path") or "")
+    if _preview_type(file_type, file_name, has_text=False) != "image":
+        raise ValueError(f"Knowledge document {document_id} is not an image")
+    if not file_path:
+        raise ValueError(f"Knowledge document {document_id} has no stored file")
+    return minio_client.download_bytes(settings.minio_bucket, file_path)
+
+
+def list_knowledge_image_references(
+    query: str = "",
+    limit: int = 12,
+) -> list[dict[str, object]]:
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, file_name, file_path, file_type, metadata_json
+                FROM documents
+                WHERE project_id IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 200
+                """
+            )
+            rows = cursor.fetchall()
+
+    candidates: list[dict[str, object]] = []
+    for row in rows:
+        metadata = row[4] or {}
+        file_type = str(row[3] or "").lower()
+        file_name = str(row[1] or "")
+        if _preview_type(file_type, file_name, has_text=False) != "image":
+            continue
+        candidates.append(
+            {
+                "document_id": int(row[0]),
+                "file_name": file_name,
+                "file_path": row[2],
+                "file_type": file_type,
+                "document_type": metadata.get("document_type"),
+                "specialty": metadata.get("specialty"),
+                "project_year": metadata.get("project_year"),
+                "tags": metadata.get("tags", []),
+                "caption": _image_caption(file_name, metadata),
+                "match_score": _image_reference_score(query, file_name, metadata),
+            }
+        )
+
+    return sorted(
+        candidates,
+        key=lambda item: (int(item["match_score"]), int(item["document_id"])),
+        reverse=True,
+    )[:limit]
+
+
 def _fetch_knowledge_document_row(document_id: int) -> dict[str, object]:
     with _connect() as conn:
         with conn.cursor() as cursor:
@@ -271,13 +332,55 @@ def _preview_type(file_type: str, file_name: str, has_text: bool) -> str:
     mime_major = normalized.split("/", 1)[0] if "/" in normalized else ""
     subtype = normalized.rsplit("/", 1)[-1]
     candidates = {normalized, subtype, suffix}
-    if mime_major == "image" or candidates & {"jpg", "jpeg", "png", "gif", "webp"}:
+    if mime_major == "image" or candidates & IMAGE_FILE_TYPES:
         return "image"
     if has_text or mime_major == "text" or candidates & {"txt", "md", "markdown"}:
         return "text"
     if "pdf" in candidates:
         return "pdf"
     return "file"
+
+
+def _image_caption(file_name: str, metadata: dict) -> str:
+    parts = [
+        str(metadata.get("document_type") or "").strip(),
+        str(metadata.get("specialty") or "").strip(),
+        str(metadata.get("project_year") or "").strip(),
+    ]
+    tags = metadata.get("tags") or []
+    if isinstance(tags, list):
+        parts.extend(str(tag).strip() for tag in tags[:3])
+    meaningful = [part for part in parts if part]
+    stem = Path(file_name).stem
+    return " / ".join(meaningful) if meaningful else stem
+
+
+def _image_reference_score(query: str, file_name: str, metadata: dict) -> int:
+    haystack_parts = [file_name]
+    for key in ("document_type", "specialty", "project_year"):
+        value = metadata.get(key)
+        if value:
+            haystack_parts.append(str(value))
+    tags = metadata.get("tags") or []
+    if isinstance(tags, list):
+        haystack_parts.extend(str(tag) for tag in tags)
+    haystack = " ".join(haystack_parts)
+    tokens = set(re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", query.lower()))
+    score = sum(1 for token in tokens if token in haystack.lower())
+    priority_keywords = (
+        "营业执照",
+        "资质证书",
+        "安全生产许可证",
+        "建造师",
+        "身份证",
+        "建安",
+        "交安",
+        "职称",
+        "社保",
+        "业绩",
+    )
+    score += sum(3 for keyword in priority_keywords if keyword in haystack)
+    return score
 
 
 def rename_knowledge_document(

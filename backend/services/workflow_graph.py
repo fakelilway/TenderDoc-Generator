@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from agents.generator_agent import build_bid_outline, generate_bid_document, load_bid_template
+from agents.generator_agent import (
+    build_bid_outline,
+    generate_bid_document,
+    load_bid_template,
+)
 from agents.parser_agent import parse_tender
 from agents.reviewer_agent import review
 from rag import retriever
@@ -74,11 +79,32 @@ def retrieve_node(state: BidGraphState) -> BidGraphState:
 
 def generate_node(state: BidGraphState) -> BidGraphState:
     requirements = TenderRequirements.model_validate(state["parsed"])
-    markdown = generate_bid_document(
-        requirements,
-        state.get("retrieved_chunks", {}),
-        load_bid_template(),
-    )
+    knowledge_images = []
+    try:
+        from services import generation_service, knowledge_service
+
+        knowledge_images = knowledge_service.list_knowledge_image_references(
+            generation_service._image_reference_query(requirements),
+            limit=12,
+        )
+    except Exception:
+        knowledge_images = []
+    if (
+        knowledge_images
+        and "knowledge_images" in inspect.signature(generate_bid_document).parameters
+    ):
+        markdown = generate_bid_document(
+            requirements,
+            state.get("retrieved_chunks", {}),
+            load_bid_template(),
+            knowledge_images=knowledge_images,
+        )
+    else:
+        markdown = generate_bid_document(
+            requirements,
+            state.get("retrieved_chunks", {}),
+            load_bid_template(),
+        )
     return {**state, "draft_markdown": markdown}
 
 

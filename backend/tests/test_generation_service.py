@@ -92,14 +92,42 @@ def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> No
         lambda project_id: None,
     )
     monkeypatch.setattr(
+        "services.knowledge_service.list_knowledge_image_references",
+        lambda query, limit=12: [
+            {
+                "document_id": 36,
+                "file_name": "人员_王兴祥_一级建造师证.jpg",
+                "caption": "一级建造师证",
+                "tags": ["一级建造师证"],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "services.knowledge_service.get_knowledge_document_file_bytes",
+        lambda document_id: b"",
+    )
+    monkeypatch.setattr(
         generation_service.retriever,
         "retrieve",
         lambda query, top_k=3: ["高层住宅施工组织设计知识片段"],
     )
+
+    captured = {}
+
+    def fake_generate_bid_document(
+        requirements,
+        chunks,
+        bid_template=None,
+        pricing_strategy=None,
+        knowledge_images=None,
+    ):
+        captured["knowledge_images"] = knowledge_images
+        return "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。"
+
     monkeypatch.setattr(
         generation_service,
         "generate_bid_document",
-        lambda requirements, chunks, bid_template=None: "# 项目\n\n## 施工组织设计\n\n这是完整生成段落，描述施工部署、质量、安全和进度。",
+        fake_generate_bid_document,
     )
 
     result = generation_service.generate_and_export(7)
@@ -107,6 +135,7 @@ def test_generate_and_export_stores_markdown_docx_and_quality(monkeypatch) -> No
     assert result.generated_markdown_path == "projects/7/generated/bid.md"
     assert result.generated_docx_path == "projects/7/generated/bid.docx"
     assert result.quality_report["usable_rate"] == 1.0
+    assert captured["knowledge_images"][0]["document_id"] == 36
     assert [upload[2] for upload in fake_minio.uploads] == [
         "projects/7/generated/bid.md",
         "projects/7/generated/bid.docx",

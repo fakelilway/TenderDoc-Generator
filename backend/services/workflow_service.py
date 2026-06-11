@@ -210,6 +210,7 @@ def run_bid_workflow(
         retrieved_by_section,
         bid_template,
         pricing_strategy=pricing_strategy,
+        knowledge_images=_knowledge_images_for_requirements(requirements),
     )
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown
@@ -534,6 +535,20 @@ def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
     except Exception:
         shared_chunks = []
     return {section.title: shared_chunks[:3] for section in outline}
+
+
+def _knowledge_images_for_requirements(
+    requirements: TenderRequirements,
+) -> list[dict[str, object]]:
+    from services import knowledge_service
+
+    try:
+        return knowledge_service.list_knowledge_image_references(
+            generation_service._image_reference_query(requirements),
+            limit=12,
+        )
+    except Exception:
+        return []
 
 
 def _fetch_project(project_id: int) -> dict:

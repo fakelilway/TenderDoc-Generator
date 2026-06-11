@@ -132,3 +132,66 @@ def test_preview_text_document_returns_indexed_chunk_content(monkeypatch) -> Non
     assert preview["preview_type"] == "text"
     assert preview["content"] == "第一章 编制说明\n\n第二章 施工部署"
     assert preview["indexing_status"] == "indexed"
+
+
+def test_list_knowledge_image_references_prioritizes_matching_image_docs(
+    monkeypatch,
+) -> None:
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            self.statement = statement
+
+        def fetchall(self):
+            return [
+                (
+                    1,
+                    "人员_王兴祥_一级建造师证_公路工程.jpg",
+                    "knowledge/builder.jpg",
+                    "jpg",
+                    {
+                        "document_type": "人员",
+                        "specialty": "公路工程",
+                        "tags": ["一级建造师证"],
+                    },
+                ),
+                (
+                    2,
+                    "历史投标文件.docx",
+                    "knowledge/bid.docx",
+                    "docx",
+                    {"tags": ["历史标书"]},
+                ),
+                (
+                    3,
+                    "公司_营业执照.png",
+                    "knowledge/license.png",
+                    "png",
+                    {"document_type": "公司", "tags": ["营业执照"]},
+                ),
+            ]
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    monkeypatch.setattr(knowledge_service, "_connect", lambda: FakeConnection())
+
+    references = knowledge_service.list_knowledge_image_references(
+        "项目经理 一级建造师 公路工程",
+        limit=2,
+    )
+
+    assert [reference["document_id"] for reference in references] == [1, 3]
+    assert references[0]["caption"] == "人员 / 公路工程 / 一级建造师证"
