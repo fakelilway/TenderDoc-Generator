@@ -56,7 +56,7 @@ RESET_VENV=1 ./scripts/setup_venv.sh
 ```env
 OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=deepseek/deepseek-chat
+OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 ```
 
 基础服务默认值：

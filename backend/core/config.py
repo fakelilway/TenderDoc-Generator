@@ -42,14 +42,14 @@ class Settings(BaseSettings):
     deepseek_base_url: str = Field(
         "https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL"
     )
-    deepseek_model: str = Field("deepseek-chat", alias="DEEPSEEK_MODEL")
+    deepseek_model: str = Field("deepseek-v4-pro", alias="DEEPSEEK_MODEL")
     qianwen_api_key: str = Field("", alias="QIANWEN_API_KEY")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(
         "https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
     )
-    openrouter_model: str = Field("deepseek/deepseek-chat", alias="OPENROUTER_MODEL")
+    openrouter_model: str = Field("deepseek/deepseek-v4-pro", alias="OPENROUTER_MODEL")
     parser_llm_timeout_seconds: float = Field(
         45.0, alias="PARSER_LLM_TIMEOUT_SECONDS"
     )
