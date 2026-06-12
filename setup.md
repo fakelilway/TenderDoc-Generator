@@ -57,6 +57,9 @@ RESET_VENV=1 ./scripts/setup_venv.sh
 OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=deepseek/deepseek-v4-pro
+BID_GENERATION_MODE=long_context
+BID_LONG_CONTEXT_TIMEOUT_SECONDS=180
+BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
 
 基础服务默认值：
@@ -185,8 +188,8 @@ curl -fsSI http://localhost:3000
 6. 创建项目并上传招标文件 PDF/DOCX/TXT。
 7. 查看并确认解析结果。
 8. 生成并调整投标文件大纲。
-9. 在资料选择面板筛选并勾选 RAG 资料。
-10. 开始生成，后端会构建 `EvidencePack` 和 `BidPlan`，再查看商务/技术/报价分卷预览。
+9. 在资料选择面板筛选并勾选需要进入本次投标的企业资料。
+10. 开始生成，后端会构建 `EvidencePack` 和 `BidPlan`，默认用长上下文模式一次性生成商务/技术/报价三卷；旧分章节生成仅作为失败 fallback。
 11. 查看审查报告、响应矩阵、评分预测和报价策略。
 12. 在线编辑正文，保存后重新审查。
 13. 终审确认后下载 DOCX、Markdown 或审查报告。
@@ -214,6 +217,7 @@ curl -fsSI http://localhost:3000
 - 图片插入候选。
 - `EvidencePack` 分类：公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据。
 - `BidPlan` 分配：每个章节可用哪些知识片段、哪些图片候选、是否需要表格。
+- 长上下文生成：已选资料、关键文本片段和可插入图片清单会进入同一个生成 prompt，减少分章节链路造成的上下文损失。
 - 后续审计、过期提醒和资料治理。
 
 批量整理和导入建议先走 manifest：
@@ -308,6 +312,7 @@ Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `ba
 - `OPENROUTER_API_KEY` 是否正确。
 - OpenRouter 账户是否有额度。
 - `OPENROUTER_MODEL` 是否可用。
+- `BID_GENERATION_MODE` 是否为 `long_context`；如需临时回旧链路可改为 `section`。
 - 公司网络是否拦截外部 API。
 
 ### MinIO 下载链接打不开

@@ -33,6 +33,8 @@ class BidPackage(BaseModel):
     technical_markdown: str = ""
     pricing_markdown: str = ""
     combined_markdown: str = ""
+    generation_mode: str = "unknown"
+    fallback_reason: str | None = None
 
     def volume_map(self) -> dict[str, str]:
         return {

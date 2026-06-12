@@ -238,6 +238,11 @@ def run_bid_workflow(
     )
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown
+    generation_mode = bid_package.generation_mode
+    fallback_reason = bid_package.fallback_reason
+    mode_note = f"生成模式：{generation_mode}"
+    if fallback_reason:
+        mode_note += f"；fallback 原因：{fallback_reason[:160]}"
     _append_trace(
         state,
         "generate",
@@ -247,10 +252,11 @@ def run_bid_workflow(
             f"商务 {len(state.draft_volumes.get('commercial', ''))} 字，"
             f"技术 {len(state.draft_volumes.get('technical', ''))} 字，"
             f"报价 {len(state.draft_volumes.get('pricing', ''))} 字。"
+            f"{mode_note}。"
         ),
         project_status="reviewing",
         model_name=settings.openrouter_model,
-        fallback=not settings.enable_llm_generation,
+        fallback=bool(fallback_reason) or not settings.enable_llm_generation,
     )
 
     _append_trace(
@@ -682,9 +688,7 @@ def _distribute_selected_chunks(selected_results, outline):
             scores_by_title[section.title],
             key=lambda item: (-item[0], item[1]),
         )
-        assigned[section.title] = [
-            index for score, index in ranked[:3] if score > 0
-        ]
+        assigned[section.title] = [index for score, index in ranked[:3] if score > 0]
 
     placed = {index for indices in assigned.values() for index in indices}
     fallback_title = outline[0].title

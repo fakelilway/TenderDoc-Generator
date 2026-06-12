@@ -998,6 +998,21 @@
 - **未完成原因**：
   - 代码能力已具备，但还缺正奇公司真实脱敏样本本身。这个不是代码问题，需要业务资料整理。
 
+### 生成架构调整记录：长上下文默认生成内核
+- **完成状态**：✅ 已完成（默认生成内核已切换，旧链路保留为 fallback）
+- **背景**：
+  - 真实对比发现，简单长上下文方案比“解析 JSON + RAG 分片 + 分章节多次生成”更接近真实投标文件语气和完整性。
+  - 当前产品底座仍保留 FastAPI、Next.js、PostgreSQL、MinIO、知识库、模板库、权限、DOCX 导出和审查能力；调整的是生成内核，不是推倒产品架构。
+- **当前实现**：
+  - 新增 `BID_GENERATION_MODE=long_context`，默认一次性把确认目录、招标要求、模板约束、BidPlan、精选知识库文本和可插入图片清单交给 LLM。
+  - `Generator Agent` 新增长上下文 prompt，要求输出商务/技术/报价三卷 Markdown，并保留 `tdg:volume` 内部标记供 DOCX/exporter 拆分。
+  - RAG/知识库从“碎片化生成来源”降级为资料治理和资料选择层；用户选择的资料优先进入长上下文。
+  - 旧 section-by-section 技术标生成保留为模型失败、无 API key 或显式切换时的 fallback。
+  - 图片仍使用 `{{knowledge_image:document_id=... caption="..."}}` 协议，由 DOCX exporter 解析并插入真实知识库图片。
+- **当前验证**：
+  - `tests/test_generator_agent.py` 覆盖长上下文 prompt 合同、长上下文优先生成、失败 fallback。
+  - `tests/test_workflow_service.py` 仍覆盖 workflow、审查、人工确认和导出闭环。
+
 ---
 
 ## 阶段 12：Production Ready 与公司落地（M69–M74）

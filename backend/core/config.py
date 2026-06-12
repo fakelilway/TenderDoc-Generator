@@ -50,9 +50,12 @@ class Settings(BaseSettings):
         "https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
     )
     openrouter_model: str = Field("deepseek/deepseek-v4-pro", alias="OPENROUTER_MODEL")
-    parser_llm_timeout_seconds: float = Field(
-        45.0, alias="PARSER_LLM_TIMEOUT_SECONDS"
+    parser_llm_timeout_seconds: float = Field(45.0, alias="PARSER_LLM_TIMEOUT_SECONDS")
+    bid_generation_mode: str = Field("long_context", alias="BID_GENERATION_MODE")
+    bid_long_context_timeout_seconds: float = Field(
+        180.0, alias="BID_LONG_CONTEXT_TIMEOUT_SECONDS"
     )
+    bid_long_context_max_tokens: int = Field(12000, alias="BID_LONG_CONTEXT_MAX_TOKENS")
 
     embedding_model: str = Field("BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_device: str = Field("cpu", alias="EMBEDDING_DEVICE")

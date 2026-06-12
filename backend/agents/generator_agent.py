@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -8,7 +9,7 @@ from openai import OpenAI
 
 from agents.parser_agent import _has_real_key, _is_placeholder_project_name
 from core.config import get_settings
-from prompts.generator_prompt import build_section_prompt
+from prompts.generator_prompt import build_long_context_prompt, build_section_prompt
 from rag.retriever import RetrievalResult
 from schemas.bid import BidDocumentOutlineSection, BidPackage, BidSectionOutline
 from schemas.bid_plan import BidPlan
@@ -16,14 +17,16 @@ from schemas.bid_template import BidTemplate
 from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
 from services.bid_tone_checker import line_has_forbidden_tone
-from utils.docx_exporter import combine_delivery_volumes
+from utils.docx_exporter import combine_delivery_volumes, split_delivery_markdown
 
 
 class GeneratorAgentError(RuntimeError):
     pass
 
 
+logger = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+LONG_CONTEXT_MAX_CONTINUATIONS = 2
 
 
 # --- Output hygiene -------------------------------------------------------
@@ -282,6 +285,34 @@ def generate_bid_package(
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
     outline = build_bid_outline(requirements, bid_template)
     settings = get_settings()
+    generation_mode = str(
+        getattr(settings, "bid_generation_mode", "long_context") or "long_context"
+    ).lower()
+    if settings.enable_llm_generation and generation_mode in {
+        "long_context",
+        "simple",
+        "auto",
+    }:
+        try:
+            return generate_bid_package_long_context(
+                requirements,
+                retrieved_chunks_by_section,
+                bid_template=bid_template,
+                pricing_strategy=pricing_strategy,
+                knowledge_images=knowledge_images,
+                bid_plan=bid_plan,
+                company_name=settings.company_name,
+            )
+        except Exception as error:
+            # Keep the product usable when the long-context model call fails:
+            # fall back to the established section pipeline and deterministic
+            # business/pricing shells.
+            logger.warning(
+                "Long-context generation failed; falling back", exc_info=True
+            )
+            fallback_reason = str(error)
+    else:
+        fallback_reason = None
     use_local_section_fallback = False
     if not settings.enable_llm_generation:
         use_local_section_fallback = True
@@ -329,6 +360,63 @@ def generate_bid_package(
         technical_markdown=technical,
         pricing_markdown=pricing,
         combined_markdown=combined,
+        generation_mode="local_fallback" if use_local_section_fallback else "section",
+        fallback_reason=fallback_reason,
+    )
+
+
+def generate_bid_package_long_context(
+    requirements: TenderRequirements,
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    *,
+    bid_template: BidTemplate | None = None,
+    pricing_strategy: PricingStrategy | None = None,
+    knowledge_images: list[dict[str, object]] | None = None,
+    bid_plan: BidPlan | None = None,
+    company_name: str | None = None,
+) -> BidPackage:
+    """Generate the whole bid in one model call.
+
+    This is the primary generation kernel for long-context models. Existing
+    template/evidence/DOCX infrastructure remains the product shell around it.
+    """
+    bid_template = bid_template or load_bid_template()
+    settings = get_settings()
+    company_name = company_name or settings.company_name
+    document_outline = [
+        section.model_dump()
+        for section in build_bid_document_outline(requirements, bid_template)
+    ]
+    knowledge_chunks = _long_context_chunks(retrieved_chunks_by_section)
+    raw_markdown = _generate_long_context_with_llm(
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        bid_plan=bid_plan,
+        template_name=bid_template.template_name if bid_template else "",
+        pricing_strategy=pricing_strategy,
+        knowledge_chunks=knowledge_chunks,
+        knowledge_images=knowledge_images,
+    )
+    raw_markdown = sanitize_bid_markdown(raw_markdown)
+    volumes = split_delivery_markdown(raw_markdown)
+    commercial = sanitize_bid_markdown(volumes.get("commercial", ""))
+    technical = sanitize_bid_markdown(volumes.get("technical", ""))
+    pricing = sanitize_bid_markdown(volumes.get("pricing", ""))
+    combined = combine_delivery_volumes(
+        f"{_project_title(requirements)} 投标文件",
+        {
+            "commercial": commercial,
+            "technical": technical,
+            "pricing": pricing,
+        },
+    )
+    return BidPackage(
+        commercial_markdown=commercial,
+        technical_markdown=technical,
+        pricing_markdown=pricing,
+        combined_markdown=combined,
+        generation_mode="long_context",
     )
 
 
@@ -919,6 +1007,94 @@ def generate_bid_section(
         return _generate_section_fallback(section_title, requirements, retrieved_chunks)
 
 
+def _generate_long_context_with_llm(
+    *,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, object]],
+    bid_plan: BidPlan | None,
+    template_name: str,
+    pricing_strategy: PricingStrategy | None,
+    knowledge_chunks: list[dict[str, object]],
+    knowledge_images: list[dict[str, object]] | None = None,
+) -> str:
+    settings = get_settings()
+    if _has_real_key(getattr(settings, "openrouter_api_key", "")):
+        api_key = settings.openrouter_api_key
+        base_url = settings.openrouter_base_url
+        model = settings.openrouter_model
+    elif _has_real_key(getattr(settings, "deepseek_api_key", "")):
+        api_key = settings.deepseek_api_key
+        base_url = settings.deepseek_base_url
+        model = settings.deepseek_model
+    else:
+        raise GeneratorAgentError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
+
+    timeout_seconds = float(
+        getattr(settings, "bid_long_context_timeout_seconds", 180.0)
+    )
+    max_tokens = int(getattr(settings, "bid_long_context_max_tokens", 12000))
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    messages = build_long_context_prompt(
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        bid_plan=bid_plan.model_dump(mode="json") if bid_plan else None,
+        template_name=template_name,
+        pricing_strategy=pricing_strategy.model_dump(mode="json")
+        if pricing_strategy
+        else None,
+        knowledge_chunks=knowledge_chunks,
+        knowledge_images=knowledge_images,
+    )
+
+    # 整本标书很容易超过单次输出上限。被截断（finish_reason=length）时先续写
+    # 最多 LONG_CONTEXT_MAX_CONTINUATIONS 轮，保住长上下文路径的质量；仍然
+    # 截断才抛错，让调用方回退到分章管线，避免静默交付半本标书。
+    parts: list[str] = []
+    finish_reason = None
+    for round_index in range(1 + LONG_CONTEXT_MAX_CONTINUATIONS):
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.18,
+            max_tokens=max_tokens,
+            timeout=timeout_seconds,
+        )
+        if not response.choices:
+            raise GeneratorAgentError("LLM response did not contain choices")
+        choice = response.choices[0]
+        content = (choice.message.content or "").strip("\n")
+        if not content.strip() and not parts:
+            raise GeneratorAgentError("LLM response was empty")
+        parts.append(content)
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason != "length":
+            break
+        logger.warning(
+            "Long-context output truncated (round %s); requesting continuation",
+            round_index + 1,
+        )
+        messages = [
+            *messages,
+            {"role": "assistant", "content": content},
+            {
+                "role": "user",
+                "content": "继续输出，从上次中断处继续，不要重复已输出内容，不要重复卷册标记之前的章节。",
+            },
+        ]
+
+    if finish_reason == "length":
+        raise GeneratorAgentError(
+            f"长上下文输出在 {1 + LONG_CONTEXT_MAX_CONTINUATIONS} 轮后仍被截断"
+            f"（max_tokens={max_tokens}），回退到分章生成。"
+        )
+    combined = "".join(parts).strip()
+    if not combined:
+        raise GeneratorAgentError("LLM response was empty")
+    return combined
+
+
 def _generate_section_with_llm(
     section_title: str,
     requirements: TenderRequirements,
@@ -954,6 +1130,37 @@ def _generate_section_with_llm(
     if not content.startswith("##"):
         content = f"## {section_title}\n\n{content}"
     return content
+
+
+def _long_context_chunks(
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+) -> list[dict[str, object]]:
+    packed: list[dict[str, object]] = []
+    seen: set[tuple[str, int | None, str]] = set()
+    for section_title, chunks in retrieved_chunks_by_section.items():
+        for chunk in chunks:
+            content = _chunk_content(chunk).strip()
+            if not content or _is_structured_evidence_chunk(chunk, content):
+                continue
+            chunk_id = _chunk_id(chunk)
+            key = (section_title, chunk_id, content[:160])
+            if key in seen:
+                continue
+            seen.add(key)
+            metadata = chunk.metadata if isinstance(chunk, RetrievalResult) else {}
+            packed.append(
+                {
+                    "section_title": section_title,
+                    "chunk_id": chunk_id,
+                    "document_id": _int_or_none(getattr(chunk, "document_id", None))
+                    if not isinstance(chunk, str)
+                    else None,
+                    "title": metadata.get("file_name", "") if metadata else "",
+                    "content": content,
+                    "metadata": metadata or {},
+                }
+            )
+    return packed[:24]
 
 
 def _filter_knowledge_images_by_plan(

@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 
+import pytest
+
 from agents import generator_agent
 from prompts.generator_prompt import (
     GENERATOR_SYSTEM_PROMPT,
+    build_long_context_prompt,
     build_section_prompt,
     redact_pii,
 )
@@ -10,6 +13,25 @@ from schemas.bid_plan import BidPlan, BidPlanSection
 from schemas.bid_template import BidTemplate, BidTemplateSection
 from schemas.tender import RequirementItem, TenderRequirements
 from utils.docx_exporter import VOLUME_MARKERS, split_delivery_markdown
+
+
+def _test_settings(
+    *,
+    enable_llm_generation: bool = False,
+    bid_generation_mode: str = "section",
+    bid_template_path: str = "templates/bid_templates/road_first_envelope_template.json",
+):
+    return SimpleNamespace(
+        company_name="安徽正奇建设有限公司",
+        enable_llm_generation=enable_llm_generation,
+        bid_generation_mode=bid_generation_mode,
+        bid_template_path=bid_template_path,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _default_no_real_llm(monkeypatch):
+    monkeypatch.setattr(generator_agent, "get_settings", lambda: _test_settings())
 
 
 def _requirements() -> TenderRequirements:
@@ -51,13 +73,20 @@ def _bid_template() -> BidTemplate:
     )
 
 
-def _enable_llm_generation(monkeypatch) -> None:
+def _disable_real_llm(monkeypatch) -> None:
+    monkeypatch.setattr(generator_agent, "get_settings", lambda: _test_settings())
+
+
+def _enable_llm_generation(monkeypatch, mode: str = "section") -> None:
     monkeypatch.setattr(
         generator_agent,
         "get_settings",
-        lambda: SimpleNamespace(
-            company_name="安徽正奇建设有限公司",
+        lambda: _test_settings(
             enable_llm_generation=True,
+            bid_generation_mode=mode,
+            bid_template_path=""
+            if mode == "section"
+            else "templates/bid_templates/road_first_envelope_template.json",
         ),
     )
 
@@ -510,3 +539,244 @@ def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:
     # Leaked RAG page footers / dot leaders are cleaned out of injected chunks.
     assert "第13页/共892页" not in user_prompt
     assert "施工总体部署说明。" in user_prompt
+
+
+def test_long_context_prompt_uses_volume_contract_and_selected_materials() -> None:
+    messages = build_long_context_prompt(
+        requirements=_requirements(),
+        company_name="安徽正奇建设有限公司",
+        document_outline=[
+            {
+                "title": "五、施工组织设计",
+                "volume": "技术标",
+                "section_type": "construction_design",
+                "children": [{"title": "第一章、总体施工组织布置及规划"}],
+            }
+        ],
+        knowledge_chunks=[
+            {
+                "section_title": "第一章、总体施工组织布置及规划",
+                "title": "类似工程施工方案.docx",
+                "content": "第13页/共892页\n施工总体部署经验。\n13812345678",
+            }
+        ],
+        knowledge_images=[{"document_id": 36, "caption": "营业执照", "tags": ["公司证件"]}],
+    )
+    prompt = messages[1]["content"]
+
+    assert "<!-- tdg:volume:commercial -->" in prompt
+    assert "<!-- tdg:volume:technical -->" in prompt
+    assert "<!-- tdg:volume:pricing -->" in prompt
+    assert "五、施工组织设计" in prompt
+    assert "类似工程施工方案.docx" in prompt
+    assert "施工总体部署经验。" in prompt
+    assert "第13页/共892页" not in prompt
+    assert "13812345678" not in prompt
+    assert "{{knowledge_image:document_id=36" in prompt
+
+
+def test_long_context_prompt_includes_extracted_conditions_and_manual_fields() -> None:
+    messages = build_long_context_prompt(
+        requirements=_requirements(),
+        company_name="安徽正奇建设有限公司",
+        document_outline=[],
+        pricing_strategy={
+            "payment_terms": [
+                {"name": "付款条件", "source_text": "工程进度款按月支付80%"}
+            ],
+            "guarantee_requirements": [],
+            "extracted_conditions": [
+                {"name": "工期约束", "source_text": "计划工期300日历天"},
+                {"name": "报价/评标价约束", "source_text": "最高限价5000万元"},
+            ],
+            "manual_fields": [
+                {"label": "投标总价", "reason": "必须由人工根据成本测算确认"},
+            ],
+        },
+        knowledge_chunks=[],
+    )
+    prompt = messages[1]["content"]
+
+    assert "工程进度款按月支付80%" in prompt
+    assert "计划工期300日历天" in prompt
+    assert "最高限价5000万元" in prompt
+    assert "投标总价" in prompt
+
+
+def test_long_context_llm_continues_on_truncation(monkeypatch) -> None:
+    from agents import generator_agent
+
+    class FakeChoice:
+        def __init__(self, content: str, finish_reason: str) -> None:
+            class Message:
+                pass
+
+            self.message = Message()
+            self.message.content = content
+            self.finish_reason = finish_reason
+
+    class FakeResponse:
+        def __init__(self, content: str, finish_reason: str) -> None:
+            self.choices = [FakeChoice(content, finish_reason)]
+
+    calls: list[list[dict]] = []
+    responses = [
+        FakeResponse("# 前半部分\n\n商务内容", "length"),
+        FakeResponse("后半部分内容", "stop"),
+    ]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs["messages"])
+            return responses[len(calls) - 1]
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr(generator_agent, "OpenAI", FakeClient)
+    monkeypatch.setattr(generator_agent, "_has_real_key", lambda value: bool(value))
+    monkeypatch.setattr(
+        generator_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-test",
+            openrouter_base_url="https://example.test/v1",
+            openrouter_model="test-model",
+            bid_long_context_timeout_seconds=10.0,
+            bid_long_context_max_tokens=100,
+        ),
+    )
+
+    content = generator_agent._generate_long_context_with_llm(
+        requirements=_requirements(),
+        company_name="测试公司",
+        document_outline=[],
+        bid_plan=None,
+        template_name="",
+        pricing_strategy=None,
+        knowledge_chunks=[],
+    )
+
+    assert "前半部分" in content and "后半部分内容" in content
+    assert len(calls) == 2
+    # 续写请求必须带上已生成内容和继续指令
+    assert calls[1][-2]["role"] == "assistant"
+    assert calls[1][-1]["role"] == "user"
+    assert "继续输出" in calls[1][-1]["content"]
+
+
+def test_long_context_llm_raises_when_still_truncated(monkeypatch) -> None:
+    from agents import generator_agent
+
+    class FakeChoice:
+        def __init__(self) -> None:
+            class Message:
+                pass
+
+            self.message = Message()
+            self.message.content = "永远截断的内容"
+            self.finish_reason = "length"
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.choices = [FakeChoice()]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr(generator_agent, "OpenAI", FakeClient)
+    monkeypatch.setattr(generator_agent, "_has_real_key", lambda value: bool(value))
+    monkeypatch.setattr(
+        generator_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-test",
+            openrouter_base_url="https://example.test/v1",
+            openrouter_model="test-model",
+            bid_long_context_timeout_seconds=10.0,
+            bid_long_context_max_tokens=100,
+        ),
+    )
+
+    with pytest.raises(generator_agent.GeneratorAgentError, match="截断"):
+        generator_agent._generate_long_context_with_llm(
+            requirements=_requirements(),
+            company_name="测试公司",
+            document_outline=[],
+            bid_plan=None,
+            template_name="",
+            pricing_strategy=None,
+            knowledge_chunks=[],
+        )
+
+
+def test_generate_bid_package_prefers_long_context_kernel(monkeypatch) -> None:
+    _enable_llm_generation(monkeypatch, mode="long_context")
+
+    def fake_long_context(**kwargs):
+        return f"""# 星河湾二期高层住宅施工总承包项目 投标文件
+
+{VOLUME_MARKERS["commercial"]}
+
+# 星河湾二期高层住宅施工总承包项目 商务文件
+
+## 一、投标函
+
+我单位承诺响应招标文件商务要求。
+
+{VOLUME_MARKERS["technical"]}
+
+# 星河湾二期高层住宅施工总承包项目 技术文件
+
+## 五、施工组织设计
+
+长上下文生成的施工组织设计正文。
+
+{VOLUME_MARKERS["pricing"]}
+
+# 星河湾二期高层住宅施工总承包项目 报价文件
+
+## 报价文件
+
+投标报价详见已标价工程量清单。
+"""
+
+    monkeypatch.setattr(
+        generator_agent,
+        "_generate_long_context_with_llm",
+        fake_long_context,
+    )
+
+    package = generator_agent.generate_bid_package(_requirements(), {})
+
+    assert "长上下文生成的施工组织设计正文" in package.technical_markdown
+    assert "我单位承诺响应招标文件商务要求" in package.commercial_markdown
+    assert "投标报价详见已标价工程量清单" in package.pricing_markdown
+    assert VOLUME_MARKERS["commercial"] in package.combined_markdown
+
+
+def test_generate_bid_package_falls_back_when_long_context_fails(monkeypatch) -> None:
+    _enable_llm_generation(monkeypatch, mode="long_context")
+    monkeypatch.setattr(
+        generator_agent,
+        "_generate_long_context_with_llm",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("model timeout")),
+    )
+    monkeypatch.setattr(
+        generator_agent,
+        "generate_bid_section",
+        lambda section_title, requirements, chunks, knowledge_images=None: f"## {section_title}\n\n分章节兜底正文。",
+    )
+
+    package = generator_agent.generate_bid_package(_requirements(), {})
+
+    assert "分章节兜底正文" in package.technical_markdown
+    assert "商务文件" in package.commercial_markdown
+    assert package.generation_mode == "section"
+    assert package.fallback_reason == "model timeout"
