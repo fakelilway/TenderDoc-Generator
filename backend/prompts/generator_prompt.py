@@ -140,6 +140,7 @@ def build_long_context_prompt(
     pricing_strategy: dict[str, Any] | None = None,
     knowledge_chunks: list[dict[str, Any]] | None = None,
     knowledge_images: list[dict[str, Any]] | None = None,
+    tender_text: str = "",
 ) -> list[dict[str, str]]:
     """Build the simple long-context generation prompt.
 
@@ -154,6 +155,15 @@ def build_long_context_prompt(
 项目名称：{requirements.project_name or "投标项目"}
 投标人：{company_name}
 模板名称：{template_name or "未绑定真实模板，使用系统确认目录"}
+
+【项目核心字段】
+- 招标人/采购人：{requirements.tenderer_name or "________"}
+- 建设地点：{requirements.project_location or "________"}
+- 招标范围/工程内容：{requirements.tender_scope or "________"}
+- 计划工期：{requirements.planned_duration or "________"}
+- 质量标准：{requirements.quality_standard or "________"}
+- 安全目标：{requirements.safety_target or "________"}
+- 投标截止时间：{requirements.bid_deadline or "________"}
 
 【必须输出的卷册】
 请严格按下面三个内部卷册标记输出，标记本身必须原样保留，便于系统拆分 DOCX：
@@ -182,6 +192,9 @@ def build_long_context_prompt(
 废标/否决风险：
 {_format_items([item.description for item in requirements.invalid_bid_items])}
 
+【招标文件全文关键内容】
+{_format_tender_text(tender_text)}
+
 【商务/报价约束】
 {_format_pricing_strategy(pricing_strategy)}
 
@@ -195,7 +208,10 @@ def build_long_context_prompt(
 - 必须同时覆盖商务/资格资料、技术标/施工组织设计、附图附表、报价/经济标说明。
 - 必须优先沿用【完整标书目录/模板结构】中的章节名称和顺序；不要自行发明大目录。
 - 商务标写成真实投标文件语气，包含投标函、授权/法人证明、资格审查、保证金、承诺函等需要的正式内容。
-- 技术标写成施工组织设计成稿，不要写评分点摘要；每章要有连贯段落，天然表格内容必须用 Markdown 表格。
+- 技术标必须写成可交付的施工组织设计成稿，不要写评分点摘要或空泛原则；必须吸收招标文件全文中的工程范围、施工内容、工期、质量标准、安全环保、交通组织、材料/机械/人员、关键节点和验收要求。
+- 每个施工组织设计主章至少包含 3 个有项目针对性的小节；每个小节至少 2 段连贯论述，不能只写一两句。
+- 进度计划、劳动力/机械设备投入、项目管理机构、资格响应、主要施工工序、质量/安全责任分工等天然表格内容必须输出 Markdown 表格，表格数据无依据时用“________”，不要省略表格。
+- 正文必须出现具体项目名称、工程类别、施工范围和招标文件要求的响应内容；禁止只输出通用格式壳。
 - 报价文件只写真实报价文件目录、编制依据和响应说明；具体金额、清单单价、合价、税金等没有依据时留“________”，不得编造。
 - 需要插入知识库图片时，单独一行使用 `{{{{knowledge_image:document_id=数字 caption="说明"}}}}`，只能使用【可插入知识库图片资料】列出的 document_id。
 - 缺少人员姓名、证书编号、业绩金额、保证金金额、报价金额等事实依据时，使用“________”或“详见已标价工程量清单”，禁止写“人工确认点/待补充/系统不自动生成”等提示语。
@@ -280,6 +296,52 @@ def _format_bid_plan(bid_plan: dict[str, Any] | None) -> str:
     return "\n".join(lines) if lines else "- BidPlan 未包含可读章节计划。"
 
 
+def _format_tender_text(tender_text: str) -> str:
+    text = _clean_chunk(tender_text or "")
+    if not text:
+        return "- 当前项目未保存招标全文；只能依据解析 JSON 和已选资料生成。"
+
+    keywords = (
+        "项目名称",
+        "工程名称",
+        "招标范围",
+        "建设地点",
+        "计划工期",
+        "工期",
+        "质量",
+        "安全",
+        "环保",
+        "文明施工",
+        "施工组织",
+        "评分",
+        "技术",
+        "资格",
+        "否决",
+        "废标",
+        "工程量",
+        "清单",
+        "图纸",
+        "公路",
+        "道路",
+        "桥梁",
+        "管网",
+        "交通",
+    )
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    selected: list[str] = []
+    selected_length = 0
+    for line in lines:
+        if any(keyword in line for keyword in keywords):
+            selected.append(line)
+            selected_length += len(line) + 1
+        if selected_length >= 14000:
+            break
+    if not selected:
+        selected = lines[:220]
+    excerpt = "\n".join(selected)
+    return excerpt[:18000]
+
+
 def _format_pricing_strategy(pricing_strategy: dict[str, Any] | None) -> str:
     if not pricing_strategy:
         return "- 未提取到明确商务/报价约束；报价数值均留空白，按招标文件和工程量清单人工复核。"
@@ -303,9 +365,7 @@ def _format_pricing_strategy(pricing_strategy: dict[str, Any] | None) -> str:
         if isinstance(item, dict)
     ]
     append_conditions("付款条件", pricing_strategy.get("payment_terms") or [])
-    append_conditions(
-        "保证金/担保要求", pricing_strategy.get("guarantee_requirements") or []
-    )
+    append_conditions("保证金/担保要求", pricing_strategy.get("guarantee_requirements") or [])
     append_conditions(
         "工期要求",
         [item for item in extracted if "工期" in str(item.get("name", ""))],

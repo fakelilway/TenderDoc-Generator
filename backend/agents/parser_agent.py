@@ -59,6 +59,27 @@ def _has_real_key(value: str) -> bool:
 
 def _get_llm_client_config() -> tuple[str, str, str]:
     settings = get_settings()
+    provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
+    if provider == "deepseek":
+        if _has_real_key(settings.deepseek_api_key):
+            return (
+                settings.deepseek_api_key,
+                settings.deepseek_base_url,
+                settings.deepseek_model,
+            )
+        raise ParserAgentError(
+            "DEEPSEEK_API_KEY is required when BID_LLM_PROVIDER=deepseek"
+        )
+    if provider == "openrouter":
+        if _has_real_key(settings.openrouter_api_key):
+            return (
+                settings.openrouter_api_key,
+                settings.openrouter_base_url,
+                settings.openrouter_model,
+            )
+        raise ParserAgentError(
+            "OPENROUTER_API_KEY is required when BID_LLM_PROVIDER=openrouter"
+        )
     if _has_real_key(settings.openrouter_api_key):
         return (
             settings.openrouter_api_key,
@@ -249,9 +270,109 @@ def _extract_project_name(text: str) -> str:
     return ""
 
 
+def _extract_first_match(text: str, patterns: tuple[str, ...]) -> str:
+    head = "\n".join([line.strip() for line in text.splitlines() if line.strip()][:320])
+    for source in (head, text[:60000]):
+        for pattern in patterns:
+            match = re.search(pattern, source, flags=re.MULTILINE)
+            if match:
+                value = _normalize_candidate_text(match.group(1))
+                if not _is_placeholder_field_value(value):
+                    return value
+    return ""
+
+
+def _extract_core_project_fields(text: str) -> dict[str, str]:
+    tenderer_name = _extract_first_match(
+        text,
+        (
+            r"(?:招标人|采购人|发包人)\s*[:：]\s*([^\n；;，,]+)",
+            r"^([^\n]{2,40}(?:局|公司|中心|政府|委员会|管理处|管理站|集团))[（(]招标人名称[）)]",
+        ),
+    )
+    project_location = _extract_first_match(
+        text,
+        (
+            r"(?:建设地点|实施地点|项目地点|工程地点)\s*[:：]\s*([^\n；;]+)",
+            r"(?:建设地点|实施地点|项目地点|工程地点)\s+([^\n；;]+)",
+        ),
+    )
+    planned_duration = _extract_first_match(
+        text,
+        (
+            r"(?:计划工期|工期要求|工期)\s*[:：]\s*([^\n；;。]*?\d+\s*日历天)",
+            r"(?:计划工期|工期要求|工期)\s*[:：]\s*([^\n；;。]{2,80})",
+            r"工期\s*[:：]\s*(\d+\s*日历天)",
+        ),
+    )
+    quality_standard = _extract_first_match(
+        text,
+        (
+            r"(?:质量标准|质量要求|工程质量)\s*[:：]\s*([^\n；;。]{2,100})",
+            r"工程质量\s*[:：]\s*([^\n；;。]{2,100})",
+        ),
+    )
+    safety_target = _extract_first_match(
+        text,
+        (
+            r"(?:安全目标|安全要求)\s*[:：]\s*([^\n；;。]{2,100})",
+            r"安全目标\s*[:：]\s*([^\n；;。]{2,100})",
+        ),
+    )
+    bid_deadline = _extract_first_match(
+        text,
+        (r"(?:投标截止时间|递交截止时间|开标时间)\s*[:：]\s*([^\n；;。]{6,80})",),
+    )
+    tender_scope = _extract_first_match(
+        text,
+        (
+            r"(?:招标范围|工程内容|建设规模及内容|项目概况)\s*[:：]\s*([^\n]{6,240})",
+            r"(?:招标范围|工程内容|建设规模及内容|项目概况)\s+([^\n]{6,240})",
+        ),
+    )
+    return {
+        "tenderer_name": tenderer_name,
+        "project_location": project_location,
+        "tender_scope": tender_scope,
+        "planned_duration": planned_duration,
+        "quality_standard": quality_standard,
+        "safety_target": safety_target,
+        "bid_deadline": bid_deadline,
+    }
+
+
+def _prefer_text(primary: str, secondary: str) -> str:
+    primary = _normalize_candidate_text(primary or "")
+    if primary and not _is_placeholder_field_value(primary):
+        return primary
+    secondary = _normalize_candidate_text(secondary or "")
+    return "" if _is_placeholder_field_value(secondary) else secondary
+
+
+def _is_placeholder_field_value(value: str) -> bool:
+    normalized = _normalize_candidate_text(value)
+    if not normalized:
+        return True
+    exact_placeholders = {"无", "/", "本项目"}
+    if normalized in exact_placeholders:
+        return True
+    return any(
+        placeholder in normalized
+        for placeholder in (
+            "见投标人须知前附表",
+            "见招标公告",
+            "详见招标公告",
+            "详见投标人须知前附表",
+            "见前附表",
+            "详见前附表",
+        )
+    )
+
+
 def _extract_rule_based_requirements(text: str) -> TenderRequirements:
     """Extract high-confidence tender clauses with deterministic MVP rules."""
     project_name = _extract_project_name(text)
+    core_fields = _extract_core_project_fields(text)
     qualification_items: list[RequirementItem] = []
     score_items: list[RequirementItem] = []
     invalid_items: list[RequirementItem] = []
@@ -481,6 +602,7 @@ def _extract_rule_based_requirements(text: str) -> TenderRequirements:
 
     return TenderRequirements(
         project_name=project_name,
+        **core_fields,
         qualification_list=_dedupe_items(qualification_items),
         technical_score_items=_dedupe_items(score_items),
         invalid_bid_items=_dedupe_items(invalid_items),
@@ -498,6 +620,19 @@ def _merge_requirements(
 
     return TenderRequirements(
         project_name=project_name,
+        tenderer_name=_prefer_text(rule_based.tenderer_name, llm_based.tenderer_name),
+        project_location=_prefer_text(
+            rule_based.project_location, llm_based.project_location
+        ),
+        tender_scope=_prefer_text(rule_based.tender_scope, llm_based.tender_scope),
+        planned_duration=_prefer_text(
+            rule_based.planned_duration, llm_based.planned_duration
+        ),
+        quality_standard=_prefer_text(
+            rule_based.quality_standard, llm_based.quality_standard
+        ),
+        safety_target=_prefer_text(rule_based.safety_target, llm_based.safety_target),
+        bid_deadline=_prefer_text(rule_based.bid_deadline, llm_based.bid_deadline),
         qualification_list=_dedupe_items(
             [*rule_based.qualification_list, *llm_based.qualification_list]
         ),

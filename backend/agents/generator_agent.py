@@ -280,6 +280,7 @@ def generate_bid_package(
     pricing_strategy: PricingStrategy | None = None,
     knowledge_images: list[dict[str, object]] | None = None,
     bid_plan: BidPlan | None = None,
+    tender_text: str = "",
 ) -> BidPackage:
     bid_template = bid_template or load_bid_template()
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
@@ -302,8 +303,11 @@ def generate_bid_package(
                 knowledge_images=knowledge_images,
                 bid_plan=bid_plan,
                 company_name=settings.company_name,
+                tender_text=tender_text,
             )
         except Exception as error:
+            if not getattr(settings, "bid_generation_fallback_enabled", True):
+                raise
             # Keep the product usable when the long-context model call fails:
             # fall back to the established section pipeline and deterministic
             # business/pricing shells.
@@ -374,6 +378,7 @@ def generate_bid_package_long_context(
     knowledge_images: list[dict[str, object]] | None = None,
     bid_plan: BidPlan | None = None,
     company_name: str | None = None,
+    tender_text: str = "",
 ) -> BidPackage:
     """Generate the whole bid in one model call.
 
@@ -397,6 +402,7 @@ def generate_bid_package_long_context(
         pricing_strategy=pricing_strategy,
         knowledge_chunks=knowledge_chunks,
         knowledge_images=knowledge_images,
+        tender_text=tender_text,
     )
     raw_markdown = sanitize_bid_markdown(raw_markdown)
     volumes = split_delivery_markdown(raw_markdown)
@@ -530,6 +536,7 @@ def _document_preface(
     company_name: str,
 ) -> list[str]:
     project_name = _project_title(requirements)
+    core_lines = _project_core_lines(requirements)
     return [
         f"# {project_name} 投标文件",
         "",
@@ -539,7 +546,25 @@ def _document_preface(
         "",
         f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照招标文件和模板目录顺序编制，做到资格、商务、技术、报价及附表资料逐项响应，并对所提交资料的真实性负责。",
         "",
+        *core_lines,
+        "",
     ]
+
+
+def _project_core_lines(requirements: TenderRequirements) -> list[str]:
+    fields = [
+        ("招标人", requirements.tenderer_name),
+        ("建设地点", requirements.project_location),
+        ("招标范围", requirements.tender_scope),
+        ("计划工期", requirements.planned_duration),
+        ("质量标准", requirements.quality_standard),
+        ("安全目标", requirements.safety_target),
+    ]
+    lines = ["| 项目要素 | 响应内容 |", "| --- | --- |"]
+    for label, value in fields:
+        if value:
+            lines.append(f"| {label} | {value} |")
+    return lines if len(lines) > 2 else []
 
 
 def _technical_volume_from_outline(
@@ -608,6 +633,7 @@ def _business_section_from_template(
         payment_note,
         guarantee_note,
         knowledge_images,
+        requirements,
     )
     return [f"## {section.title}", "", *body, ""]
 
@@ -722,11 +748,11 @@ def _business_bid_fallback(
         "",
         "### 1. 投标函及投标函附录",
         "",
-        "致：________（招标人名称）",
+        f"致：{requirements.tenderer_name or '________'}（招标人名称）",
         "",
         f"1. 我方经详细研究{project_name}招标文件及相关资料，决定参加本项目投标，并承诺按招标文件、合同条款、技术标准和工程量清单要求完成全部工作内容。",
         "2. 本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准。",
-        "3. 我方承诺的工期严格响应招标文件要求（________日历天）；工程质量标准达到招标文件规定的合格及以上等级。",
+        f"3. 我方承诺的工期严格响应招标文件要求（{requirements.planned_duration or '________'}）；工程质量标准达到招标文件规定的{requirements.quality_standard or '合格及以上等级'}。",
         "4. 我方承诺在投标有效期内不撤销投标文件，不修改投标实质性内容；如中标，将按招标文件规定的时限和方式提交履约担保并签订合同。",
     ]
     if payment_note:
@@ -826,6 +852,7 @@ def _business_bid_from_template(
             payment_note,
             guarantee_note,
             knowledge_images,
+            requirements,
         )
         lines.extend(section_text)
         if "资格" in title or "证" in title or "业绩" in title:
@@ -872,12 +899,18 @@ def _template_business_section_body(
     payment_note: str,
     guarantee_note: str,
     knowledge_images: list[dict[str, object]] | None = None,
+    requirements: TenderRequirements | None = None,
 ) -> list[str]:
     if "投标函" in title:
+        tenderer = requirements.tenderer_name if requirements else ""
+        duration = requirements.planned_duration if requirements else ""
+        quality = requirements.quality_standard if requirements else ""
+        safety = requirements.safety_target if requirements else ""
         body = [
+            f"致：{tenderer or '________'}（招标人名称）",
             f"我方经详细研究{project_name}招标文件及相关资料，决定参加本项目投标，并承诺按招标文件、合同条款、技术标准和工程量清单要求完成全部工作内容。",
             "本次投标总报价为________元（大写：________整），具体金额以已标价工程量清单为准。",
-            "我方承诺工期、质量、安全、投标有效期、履约担保和合同义务均实质性响应招标文件要求。",
+            f"我方承诺计划工期为{duration or '________'}，工程质量达到{quality or '招标文件规定标准'}，安全目标为{safety or '满足招标文件及现行安全生产要求'}，投标有效期、履约担保和合同义务均实质性响应招标文件要求。",
         ]
         if payment_note:
             body.append(payment_note)
@@ -1017,18 +1050,10 @@ def _generate_long_context_with_llm(
     pricing_strategy: PricingStrategy | None,
     knowledge_chunks: list[dict[str, object]],
     knowledge_images: list[dict[str, object]] | None = None,
+    tender_text: str = "",
 ) -> str:
     settings = get_settings()
-    if _has_real_key(getattr(settings, "openrouter_api_key", "")):
-        api_key = settings.openrouter_api_key
-        base_url = settings.openrouter_base_url
-        model = settings.openrouter_model
-    elif _has_real_key(getattr(settings, "deepseek_api_key", "")):
-        api_key = settings.deepseek_api_key
-        base_url = settings.deepseek_base_url
-        model = settings.deepseek_model
-    else:
-        raise GeneratorAgentError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
+    api_key, base_url, model = _llm_client_config(settings)
 
     timeout_seconds = float(
         getattr(settings, "bid_long_context_timeout_seconds", 180.0)
@@ -1046,6 +1071,7 @@ def _generate_long_context_with_llm(
         else None,
         knowledge_chunks=knowledge_chunks,
         knowledge_images=knowledge_images,
+        tender_text=tender_text,
     )
 
     # 整本标书很容易超过单次输出上限。被截断（finish_reason=length）时先续写
@@ -1095,6 +1121,41 @@ def _generate_long_context_with_llm(
     return combined
 
 
+def _llm_client_config(settings) -> tuple[str, str, str]:
+    provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
+    if provider == "deepseek":
+        if not _has_real_key(getattr(settings, "deepseek_api_key", "")):
+            raise GeneratorAgentError(
+                "DEEPSEEK_API_KEY is required when BID_LLM_PROVIDER=deepseek"
+            )
+        return (
+            settings.deepseek_api_key,
+            settings.deepseek_base_url,
+            settings.deepseek_model,
+        )
+    if provider == "openrouter":
+        if not _has_real_key(getattr(settings, "openrouter_api_key", "")):
+            raise GeneratorAgentError(
+                "OPENROUTER_API_KEY is required when BID_LLM_PROVIDER=openrouter"
+            )
+        return (
+            settings.openrouter_api_key,
+            settings.openrouter_base_url,
+            settings.openrouter_model,
+        )
+    if _has_real_key(getattr(settings, "openrouter_api_key", "")):
+        api_key = settings.openrouter_api_key
+        base_url = settings.openrouter_base_url
+        model = settings.openrouter_model
+    elif _has_real_key(getattr(settings, "deepseek_api_key", "")):
+        api_key = settings.deepseek_api_key
+        base_url = settings.deepseek_base_url
+        model = settings.deepseek_model
+    else:
+        raise GeneratorAgentError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
+    return api_key, base_url, model
+
+
 def _generate_section_with_llm(
     section_title: str,
     requirements: TenderRequirements,
@@ -1102,16 +1163,7 @@ def _generate_section_with_llm(
     knowledge_images: list[dict[str, object]] | None = None,
 ) -> str:
     settings = get_settings()
-    if _has_real_key(settings.openrouter_api_key):
-        api_key = settings.openrouter_api_key
-        base_url = settings.openrouter_base_url
-        model = settings.openrouter_model
-    elif _has_real_key(settings.deepseek_api_key):
-        api_key = settings.deepseek_api_key
-        base_url = settings.deepseek_base_url
-        model = settings.deepseek_model
-    else:
-        raise GeneratorAgentError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
+    api_key, base_url, model = _llm_client_config(settings)
 
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=25.0)
     response = client.chat.completions.create(

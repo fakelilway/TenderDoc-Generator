@@ -153,6 +153,32 @@ function readableStatus(status: string) {
   return labels[status] ?? status;
 }
 
+function nextStepCopy(status: string, hasProject: boolean) {
+  if (!hasProject) {
+    return "先填写项目名称并上传招标文件，系统会自动进入解析。";
+  }
+  const copy: Record<string, string> = {
+    uploaded: "下一步：解析招标文件，确认项目名称、招标人、工期、质量标准等字段。",
+    parsing: "正在解析招标文件，请等待结构化结果出现。",
+    parsed: "下一步：检查解析字段，确认无误后生成标书目录。",
+    parsed_confirmed: "下一步：生成并确认商务、技术、报价目录。",
+    outline_ready: "下一步：检查目录结构，必要时调整后保存。",
+    outline_review: "下一步：确认解析结果和目录，然后开始生成。",
+    outline_confirmed: "下一步：点击“开始生成”，系统会调用大模型生成完整标书。",
+    processing: "正在准备生成上下文，系统会读取模板、知识库和招标文件。",
+    generating: "正在调用大模型生成标书。长文档会停留较久，请看实时状态。",
+    reviewing: "正在审查废标风险和响应完整性。",
+    human_review: "下一步：人工检查正文，必要时修改，然后批准并导出。",
+    needs_revision: "下一步：根据审查意见修改正文，再重新确认。",
+    approved: "标书已确认，可以下载 DOCX、PDF 或审查报告。",
+    finished: "标书已完成，可以下载并进入新点制作软件封装。",
+    generated: "标书已生成，可以预览、编辑并下载。",
+    failed: "任务失败，请查看实时状态中的失败原因。",
+    generation_failed: "生成失败，请检查模型 API、网络或重试。"
+  };
+  return copy[status] ?? "按左侧流程从上到下完成上传、解析、选资料、生成、审查和下载。";
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -294,6 +320,10 @@ export function TenderWorkspace({
     projectId && ["approved", "finished", "generated"].includes(status)
   );
   const statusText = useMemo(() => readableStatus(status), [status]);
+  const nextStepText = useMemo(
+    () => nextStepCopy(status, Boolean(projectId)),
+    [projectId, status]
+  );
   const statusBusy = busy || actionBusy || runningStatuses.has(status);
   const applyWorkflowSnapshot = useCallback(
     (state?: WorkflowState | null, report?: ReviewReport | null) => {
@@ -981,110 +1011,114 @@ export function TenderWorkspace({
 
   return (
     <main className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
-        <div className="flex min-h-16 flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
-              <AppLogo className="h-10 w-10 border border-line" />
-              <h1 className="text-lg font-semibold text-ink">TenderDoc Generator</h1>
+      <header className="sticky top-0 z-20 border-b border-line bg-white/90 shadow-sm backdrop-blur-xl">
+        <div className="flex min-h-16 flex-col gap-3 px-4 py-3 lg:px-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3">
+                <AppLogo className="h-10 w-10 border border-line shadow-sm" />
+                <div>
+                  <h1 className="text-lg font-semibold text-ink">
+                    TenderDoc Generator
+                  </h1>
+                  <p className="text-xs text-muted">
+                    Project {projectId ?? "-"} · {nextStepText}
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-              <span>Project {projectId ?? "-"}</span>
-              <span className="rounded-md border border-line bg-field px-2 py-1 font-medium text-ink">
-                {statusText}
-              </span>
-              {canDownload ? (
-                <button
-                  type="button"
-                  disabled={actionBusy}
-                  onClick={() => handleDownload("docx")}
-                  className="font-medium text-brand hover:underline disabled:cursor-not-allowed disabled:text-muted"
-                >
-                  DOCX
-                </button>
+
+            <nav className="flex flex-wrap items-center gap-2">
+              {username ? (
+                <span className="inline-flex h-9 items-center rounded-full border border-line bg-field px-3 text-sm font-medium text-muted">
+                  {username}
+                </span>
               ) : null}
-            </div>
+              <NavLinkButton href="/projects" icon={FolderOpen}>
+                历史项目
+              </NavLinkButton>
+              <NavLinkButton href="/knowledge" icon={Database}>
+                知识库
+              </NavLinkButton>
+              {isAdmin ? (
+                <>
+                  <NavLinkButton href="/templates" icon={FileStack}>
+                    模板库
+                  </NavLinkButton>
+                  <NavLinkButton href="/admin/users" icon={Users}>
+                    账号管理
+                  </NavLinkButton>
+                </>
+              ) : null}
+              <button
+                type="button"
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4" />
+                退出
+              </button>
+            </nav>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {username ? (
-              <span className="inline-flex h-9 items-center rounded-md border border-line bg-field px-3 text-sm font-medium text-muted">
-                {username}
+          <div className="flex flex-col gap-3 rounded-2xl border border-line bg-field/80 p-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted">
+              <span className="rounded-full border border-line bg-white px-3 py-1.5 font-semibold text-ink">
+                {statusText}
               </span>
-            ) : null}
-            <NavLinkButton href="/projects" icon={FolderOpen}>
-              历史项目
-            </NavLinkButton>
-            <NavLinkButton href="/knowledge" icon={Database}>
-              知识库
-            </NavLinkButton>
-            {isAdmin ? (
-              <>
-                <NavLinkButton href="/templates" icon={FileStack}>
-                  模板库
-                </NavLinkButton>
-                <NavLinkButton href="/admin/users" icon={Users}>
-                  账号管理
-                </NavLinkButton>
-              </>
-            ) : null}
-            <button
-              type="button"
-              disabled={!projectId || actionBusy}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
-              onClick={handleRefresh}
-            >
-              {actionBusy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              刷新
-            </button>
-            <button
-              type="button"
-              disabled={!canStartWorkflow || actionBusy}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-              onClick={() => projectId && startWorkflow(projectId)}
-            >
-              <Loader2 className={actionBusy ? "h-4 w-4 animate-spin" : "hidden"} />
-              开始生成
-            </button>
-            <button
-              type="button"
-              disabled={!canConfirm || actionBusy}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
-              onClick={() => setModalOpen(true)}
-            >
-              <PencilLine className="h-4 w-4" />
-              手动修改
-            </button>
-            <button
-              type="button"
-              disabled={!canConfirm || actionBusy}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
-              onClick={handleApprove}
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              批准并继续
-            </button>
-            <button
-              type="button"
-              disabled={!canDownload || actionBusy}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-              onClick={() => handleDownload("docx")}
-            >
-              <Download className="h-4 w-4" />
-              下载标书
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
-              onClick={handleLogout}
-            >
-              <LogOut className="h-4 w-4" />
-              退出
-            </button>
+              <span>{statusBusy ? "任务运行中" : "等待操作"}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={!projectId || actionBusy}
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
+                onClick={handleRefresh}
+              >
+                {actionBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                刷新状态
+              </button>
+              <button
+                type="button"
+                disabled={!canStartWorkflow || actionBusy}
+                className="inline-flex h-9 items-center gap-2 rounded-full bg-ink px-4 text-sm font-semibold text-white hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-300"
+                onClick={() => projectId && startWorkflow(projectId)}
+              >
+                <Loader2 className={actionBusy ? "h-4 w-4 animate-spin" : "hidden"} />
+                开始生成
+              </button>
+              <button
+                type="button"
+                disabled={!canConfirm || actionBusy}
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
+                onClick={() => setModalOpen(true)}
+              >
+                <PencilLine className="h-4 w-4" />
+                修改意见
+              </button>
+              <button
+                type="button"
+                disabled={!canConfirm || actionBusy}
+                className="inline-flex h-9 items-center gap-2 rounded-full bg-ok px-4 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                onClick={handleApprove}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                确认导出
+              </button>
+              <button
+                type="button"
+                disabled={!canDownload || actionBusy}
+                className="inline-flex h-9 items-center gap-2 rounded-full bg-brand px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                onClick={() => handleDownload("docx")}
+              >
+                <Download className="h-4 w-4" />
+                下载标书
+              </button>
+            </div>
           </div>
         </div>
       </header>

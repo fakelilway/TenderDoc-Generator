@@ -37,6 +37,12 @@ def _default_no_real_llm(monkeypatch):
 def _requirements() -> TenderRequirements:
     return TenderRequirements(
         project_name="星河湾二期高层住宅施工总承包项目",
+        tenderer_name="星河湾置业有限公司",
+        project_location="星河湾片区",
+        tender_scope="高层住宅土建、安装、装饰及室外配套工程施工",
+        planned_duration="300日历天",
+        quality_standard="合格",
+        safety_target="无安全责任事故",
         qualification_list=[RequirementItem(title="企业资质", description="建筑工程施工总承包一级")],
         technical_score_items=[
             RequirementItem(title="施工组织设计", description="施工组织设计 30 分"),
@@ -358,6 +364,9 @@ def test_generate_bid_package_uses_complete_bid_file_shell(monkeypatch):
 
     assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
     assert "投标人：安徽正奇建设有限公司" in markdown
+    assert "星河湾置业有限公司" in markdown
+    assert "300日历天" in markdown
+    assert "高层住宅土建、安装、装饰及室外配套工程施工" in markdown
     assert "## 一、投标函及投标函附录" in markdown
     assert "## 五、施工组织设计" in markdown
     assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
@@ -561,6 +570,7 @@ def test_long_context_prompt_uses_volume_contract_and_selected_materials() -> No
             }
         ],
         knowledge_images=[{"document_id": 36, "caption": "营业执照", "tags": ["公司证件"]}],
+        tender_text="招标范围：道路改造、排水及交通安全设施。计划工期180日历天，质量标准为合格。",
     )
     prompt = messages[1]["content"]
 
@@ -570,6 +580,8 @@ def test_long_context_prompt_uses_volume_contract_and_selected_materials() -> No
     assert "五、施工组织设计" in prompt
     assert "类似工程施工方案.docx" in prompt
     assert "施工总体部署经验。" in prompt
+    assert "道路改造、排水及交通安全设施" in prompt
+    assert "计划工期180日历天" in prompt
     assert "第13页/共892页" not in prompt
     assert "13812345678" not in prompt
     assert "{{knowledge_image:document_id=36" in prompt
@@ -581,9 +593,7 @@ def test_long_context_prompt_includes_extracted_conditions_and_manual_fields() -
         company_name="安徽正奇建设有限公司",
         document_outline=[],
         pricing_strategy={
-            "payment_terms": [
-                {"name": "付款条件", "source_text": "工程进度款按月支付80%"}
-            ],
+            "payment_terms": [{"name": "付款条件", "source_text": "工程进度款按月支付80%"}],
             "guarantee_requirements": [],
             "extracted_conditions": [
                 {"name": "工期约束", "source_text": "计划工期300日历天"},

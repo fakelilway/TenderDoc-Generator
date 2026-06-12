@@ -55,6 +55,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS pricing_strategy_report_json JSONB
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS score_prediction_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_matrix_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS tender_text TEXT;
 
 CREATE TABLE IF NOT EXISTS bid_templates (
     id BIGSERIAL PRIMARY KEY,

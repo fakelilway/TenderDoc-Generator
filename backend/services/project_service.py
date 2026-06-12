@@ -84,6 +84,7 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     id,
                     name,
                     tender_file_path,
+                    tender_text,
                     parsed_json,
                     generated_markdown_path,
                     generated_docx_path,
@@ -401,11 +402,13 @@ def parse_project(project_id: int) -> dict[str, Any]:
             cursor.execute(
                 """
                 UPDATE projects
-                SET parsed_json = %s, status = %s
+                SET parsed_json = %s,
+                    tender_text = %s,
+                    status = %s
                 WHERE id = %s
                 RETURNING id, name, tender_file_path, parsed_json, status, created_at
                 """,
-                (Json(parsed_json), status, project_id),
+                (Json(parsed_json), text, status, project_id),
             )
             return dict(cursor.fetchone())
 

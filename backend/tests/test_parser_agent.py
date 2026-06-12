@@ -132,13 +132,42 @@ def test_extract_project_name_joins_wrapped_project_name() -> None:
     assert _extract_project_name(text) == "南陵县三里镇 2026 年联网路工程(河南路、山施路)施工"
 
 
+def test_rule_based_extraction_gets_core_project_fields() -> None:
+    text = """
+    萧县2025年农村公路提质改造联网路工程
+    招标人：萧县交通运输局
+    建设地点：萧县境内
+    招标范围：农村公路提质改造、排水及交通安全设施工程施工
+    计划工期：90日历天
+    质量标准：符合国家现行工程质量验收标准规范合格标准
+    安全目标：无安全责任事故发生
+    投标截止时间：2026年7月1日09时30分
+    """
+
+    parsed = _extract_rule_based_requirements(text)
+
+    assert parsed.tenderer_name == "萧县交通运输局"
+    assert parsed.project_location == "萧县境内"
+    assert "农村公路提质改造" in parsed.tender_scope
+    assert parsed.planned_duration == "90日历天"
+    assert "合格标准" in parsed.quality_standard
+    assert parsed.safety_target == "无安全责任事故发生"
+    assert "2026年7月1日" in parsed.bid_deadline
+
+
 def test_merge_requirements_rejects_placeholder_project_name() -> None:
     rule_based = TenderRequirements(project_name="见投标人须知前附表")
-    llm_based = TenderRequirements(project_name="萧县2025年农村公路提质改造联网路工程")
+    llm_based = TenderRequirements(
+        project_name="萧县2025年农村公路提质改造联网路工程",
+        tenderer_name="萧县交通运输局",
+        planned_duration="90日历天",
+    )
 
     merged = _merge_requirements(rule_based, llm_based)
 
     assert merged.project_name == "萧县2025年农村公路提质改造联网路工程"
+    assert merged.tenderer_name == "萧县交通运输局"
+    assert merged.planned_duration == "90日历天"
 
 
 def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(

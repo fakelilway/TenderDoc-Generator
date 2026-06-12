@@ -108,6 +108,39 @@ function statusIndex(status: string) {
   return -1;
 }
 
+function readableStatus(status: string) {
+  const labels: Record<string, string> = {
+    idle: "待上传",
+    uploading: "上传中",
+    uploaded: "已上传",
+    parsing: "解析招标文件",
+    parsed: "解析完成",
+    parsed_confirmed: "解析已确认",
+    outline_ready: "目录待确认",
+    outline_review: "等待确认目录",
+    outline_confirmed: "目录已确认",
+    processing: "准备生成",
+    generating: "正在生成标书",
+    generated: "生成完成",
+    reviewing: "正在审查",
+    human_review: "等待人工确认",
+    draft_saved: "草稿已保存",
+    needs_revision: "需要修正",
+    approved: "已确认",
+    finished: "已完成",
+    failed: "失败",
+    generation_failed: "生成失败"
+  };
+  return labels[status] ?? status;
+}
+
+function readableTraceMeta(meta: string) {
+  return meta
+    .replace("fallback", "已降级")
+    .replace("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro")
+    .replace("deepseek-v4-pro", "DeepSeek V4 Pro");
+}
+
 function stageProgress(
   status: string,
   index: number,
@@ -124,8 +157,8 @@ function stageProgress(
   }
 
   if (busy && current === index) {
-    const stageMaxProgress = [45, 55, 95, 90, 95, 98][index] ?? 92;
-    return Math.min(stageMaxProgress, 35 + Math.floor(elapsedSeconds / 3) * 3);
+    const stageMaxProgress = [45, 55, 92, 90, 95, 98][index] ?? 92;
+    return Math.min(stageMaxProgress, 32 + Math.floor(elapsedSeconds / 4) * 2);
   }
 
   const activeProgress: Record<string, number> = {
@@ -211,7 +244,7 @@ export function StatusRail({
         meta: [
           event.model_name,
           event.duration_ms ? `${event.duration_ms}ms` : "",
-          event.fallback ? "fallback" : ""
+          event.fallback ? "已降级" : ""
         ]
           .filter(Boolean)
           .join(" · ")
@@ -250,7 +283,7 @@ export function StatusRail({
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink">实时状态</h2>
         <span className="rounded-md border border-line bg-field px-2 py-1 text-xs font-medium text-muted">
-          {status || "idle"}
+          {readableStatus(status || "idle")}
         </span>
       </div>
       <ol className="space-y-3">
@@ -330,7 +363,7 @@ export function StatusRail({
                           {trace.message}
                           {"meta" in trace && trace.meta ? (
                             <span className="ml-1 text-[11px] text-muted">
-                              {trace.meta}
+                              {readableTraceMeta(trace.meta)}
                             </span>
                           ) : null}
                         </span>

@@ -172,7 +172,7 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     monkeypatch.setattr(
         workflow_service,
         "generate_bid_package",
-        lambda requirements, chunks, bid_template=None, pricing_strategy=None, knowledge_images=None, bid_plan=None: BidPackage(
+        lambda requirements, chunks, bid_template=None, pricing_strategy=None, knowledge_images=None, bid_plan=None, tender_text="": BidPackage(
             commercial_markdown="# 商务文件\n\n项目经理具备一级建造师。\n\n投标保证金已响应。",
             technical_markdown="# 技术文件\n\n## 施工组织设计\n\n项目经理具备一级建造师。",
             pricing_markdown="# 报价文件\n\n投标保证金已响应。",
@@ -303,7 +303,9 @@ def test_correct_markdown_keeps_volumes_clean_via_notes_marker() -> None:
     }
 
     corrected = workflow_service.correct_markdown(combined, report)
-    corrected = workflow_service._apply_human_corrections(corrected, {"note": "调整工期承诺。"})
+    corrected = workflow_service._apply_human_corrections(
+        corrected, {"note": "调整工期承诺。"}
+    )
     recovered = workflow_service._volumes_from_combined_markdown(corrected)
 
     assert "## 审查修正说明" in corrected

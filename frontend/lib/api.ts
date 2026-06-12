@@ -78,6 +78,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
         message = text;
       }
     }
+    if (message === "500 Internal Server Error" || message === "Internal Server Error") {
+      message = "后端请求失败，请查看实时状态里的失败原因，或稍后刷新重试。";
+    }
     throw new Error(message);
   }
 

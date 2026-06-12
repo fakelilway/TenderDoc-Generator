@@ -134,6 +134,10 @@ def run_bid_workflow(
         fallback=not settings.enable_llm_generation,
     )
     project = _fetch_project(project_id)
+    if not state.tender_text and project.get("tender_text"):
+        state.tender_text = project["tender_text"]
+    if not state.tender_text:
+        state.tender_text = _load_and_persist_tender_text(project)
     requirements = _ensure_parsed_requirements(project, state)
     state.parsed = requirements.model_dump()
 
@@ -235,6 +239,7 @@ def run_bid_workflow(
         pricing_strategy=pricing_strategy,
         knowledge_images=knowledge_images,
         bid_plan=bid_plan,
+        tender_text=state.tender_text,
     )
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown
@@ -733,8 +738,10 @@ def _fetch_project(project_id: int) -> dict:
                 SELECT
                     id,
                     name,
+                    tender_file_path,
                     parsed_json,
                     confirmed_parsed_json,
+                    tender_text,
                     bid_outline_json,
                     document_outline_json,
                     selected_chunk_ids,
@@ -748,6 +755,49 @@ def _fetch_project(project_id: int) -> dict:
     if not row:
         raise ProjectNotFoundError(f"Project {project_id} was not found")
     return dict(row)
+
+
+def _load_and_persist_tender_text(project: dict) -> str:
+    tender_path = project.get("tender_file_path")
+    if not tender_path:
+        return ""
+    try:
+        from utils.file_parser import extract_text
+        from utils.minio_client import minio_client
+
+        with _connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT file_name, file_path, file_type
+                    FROM documents
+                    WHERE project_id = %s AND file_path = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (project["id"], tender_path),
+                )
+                document = cursor.fetchone()
+        if not document:
+            return ""
+        file_bytes = minio_client.download_bytes(
+            settings.minio_bucket,
+            str(document["file_path"]),
+        )
+        text = extract_text(
+            file_bytes,
+            filename=str(document["file_name"]),
+            content_type=document["file_type"],
+        )
+        with _connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE projects SET tender_text = %s WHERE id = %s",
+                    (text, project["id"]),
+                )
+        return text
+    except Exception:
+        return ""
 
 
 def _persist_state(project_id: int, state: WorkflowState) -> None:
