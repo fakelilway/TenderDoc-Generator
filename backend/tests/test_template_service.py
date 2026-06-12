@@ -160,7 +160,7 @@ def test_seed_template_from_json_inserts_when_missing(monkeypatch, tmp_path) -> 
                 id=9,
                 name="默认公路第一信封模板",
                 source_filename="road_first_envelope_template.json",
-                tags=["默认模板", "公路", "第一信封"],
+                tags=["风格案例", "公路", "第一信封"],
                 template_json={"project_name": None, "page_count": 10},
             ),
         ]
@@ -171,7 +171,7 @@ def test_seed_template_from_json_inserts_when_missing(monkeypatch, tmp_path) -> 
 
     assert summary["id"] == 9
     assert summary["seeded"] is True
-    assert summary["tags"] == ["默认模板", "公路", "第一信封"]
+    assert summary["tags"] == ["风格案例", "公路", "第一信封"]
     insert_statement, params = cursor.statements[1]
     assert "INSERT INTO bid_templates" in insert_statement
     assert params[0] == "默认公路第一信封模板"

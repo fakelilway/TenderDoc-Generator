@@ -167,7 +167,7 @@ function nextStepCopy(status: string, hasProject: boolean) {
     outline_ready: "下一步：检查目录结构，必要时调整后保存。",
     outline_review: "下一步：确认解析结果和目录，然后开始生成。",
     outline_confirmed: "下一步：点击“开始生成”，系统会调用大模型生成完整标书。",
-    processing: "正在准备生成上下文，系统会读取模板、知识库和招标文件。",
+    processing: "正在准备生成上下文，系统会读取招标文件、知识库和可选风格案例。",
     generating: "正在调用大模型生成标书。长文档会停留较久，请看实时状态。",
     reviewing: "正在审查废标风险和响应完整性。",
     human_review: "下一步：人工检查正文，必要时修改，然后批准并导出。",
@@ -265,7 +265,7 @@ export function TenderWorkspace({
   const [documentOutline, setDocumentOutline] = useState<BidDocumentOutlineSection[]>(
     []
   );
-  const [ragQuery, setRagQuery] = useState("施工组织设计 技术标 模板");
+  const [ragQuery, setRagQuery] = useState("施工组织设计 技术标 正奇案例");
   const [ragProjectType, setRagProjectType] = useState("");
   const [ragDocumentType, setRagDocumentType] = useState("");
   const [ragDocumentCategory, setRagDocumentCategory] = useState("");
@@ -606,7 +606,6 @@ export function TenderWorkspace({
           const top = recommendation.recommendations[0];
           if (top && top.match_score > 0) {
             setRecommendedTemplateId(top.template.id);
-            setSelectedTemplateId((current) => current ?? top.template.id);
           }
         }
       } catch {
@@ -1074,7 +1073,7 @@ export function TenderWorkspace({
               {isAdmin ? (
                 <>
                   <NavLinkButton href="/templates" icon={FileStack}>
-                    模板库
+                    风格库
                   </NavLinkButton>
                   <NavLinkButton href="/admin/users" icon={Users}>
                     账号管理

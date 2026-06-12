@@ -99,7 +99,7 @@ export function TemplatesView() {
   }
 
   async function handleRename(template: TemplateSummary) {
-    const next = window.prompt("重命名模板", template.name);
+    const next = window.prompt("重命名风格案例", template.name);
     if (!next || next.trim() === template.name) return;
     setError(null);
     try {
@@ -111,7 +111,7 @@ export function TemplatesView() {
   }
 
   async function handleDelete(template: TemplateSummary) {
-    if (!window.confirm(`确认删除模板「${template.name}」？`)) return;
+    if (!window.confirm(`确认删除风格案例「${template.name}」？`)) return;
     setError(null);
     try {
       await deleteTemplate(template.id);
@@ -123,7 +123,7 @@ export function TemplatesView() {
 
   return (
     <ViewShell
-      title="投标模板库"
+      title="公司风格案例库"
       icon={FileStack}
       actions={
         <>
@@ -152,7 +152,7 @@ export function TemplatesView() {
           <section className="mb-6 rounded-lg border border-line bg-white p-4 shadow-panel">
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
               <UploadCloud className="h-4 w-4 text-brand" />
-              上传历史投标文件作为模板（PDF）
+              上传历史投标文件作为风格案例（PDF）
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
               <input
@@ -165,7 +165,7 @@ export function TemplatesView() {
               <input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="模板名称"
+                placeholder="案例名称"
                 className="h-9 rounded-md border border-line bg-field px-3 text-sm text-ink"
               />
               <input
@@ -216,18 +216,18 @@ export function TemplatesView() {
               ) : (
                 <UploadCloud className="h-4 w-4" />
               )}
-              解析并保存模板
+              解析并保存案例
             </button>
           </section>
         ) : (
           <p className="mb-4 text-sm text-muted">
-            模板由管理员维护，下表可供创建项目时选择。
+            风格案例由管理员维护。创建项目时可主动选择，用于参考写作深度、表格习惯和图片位，不控制招标文件格式。
           </p>
         )}
 
         {templates.length === 0 && !loading ? (
           <div className="rounded-lg border border-dashed border-line bg-white px-6 py-12 text-center text-sm text-muted">
-            暂无模板。
+            暂无风格案例。
           </div>
         ) : null}
 

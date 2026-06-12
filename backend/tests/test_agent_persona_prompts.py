@@ -30,5 +30,5 @@ def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
     assert "真实投标文件总编" in GENERATOR_SYSTEM_PROMPT
     assert "施工组织设计主笔" in GENERATOR_SYSTEM_PROMPT
     assert "商务标合规顾问" in GENERATOR_SYSTEM_PROMPT
-    assert "章节顺序必须以 BidTemplate 主目录为准" in GENERATOR_SYSTEM_PROMPT
-    assert "BidTemplate/outline 是唯一章节结构来源" in GENERATOR_SYSTEM_PROMPT
+    assert "招标文件格式要求" in GENERATOR_SYSTEM_PROMPT
+    assert "公司风格案例不得覆盖招标文件格式要求" in GENERATOR_SYSTEM_PROMPT

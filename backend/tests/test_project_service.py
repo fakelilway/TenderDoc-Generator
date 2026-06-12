@@ -252,6 +252,7 @@ def test_create_project_records_owner_user_id(monkeypatch) -> None:
 def test_build_project_outline_saves_complete_document_outline(monkeypatch) -> None:
     parsed_json = {
         "project_name": "项目",
+        "bid_format_requirements": "- 投标文件包括投标函及投标函附录、施工组织设计、报价文件",
         "qualification_list": [],
         "technical_score_items": [],
         "invalid_bid_items": [],
@@ -321,10 +322,9 @@ def test_build_project_outline_saves_complete_document_outline(monkeypatch) -> N
         ],
     )
     monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
-    monkeypatch.setattr(project_service, "load_bid_template", lambda: template)
     monkeypatch.setattr(
         "services.template_service.bid_template_for_project",
-        lambda project_id: None,
+        lambda project_id: template,
     )
 
     result = project_service.build_project_outline(7)
@@ -338,6 +338,77 @@ def test_build_project_outline_saves_complete_document_outline(monkeypatch) -> N
         "五、施工组织设计",
     ]
     assert document_outline[-1]["section_type"] == "price_missing_template"
+
+
+def test_build_project_outline_does_not_load_default_template_when_unselected(
+    monkeypatch,
+) -> None:
+    parsed_json = {
+        "project_name": "项目",
+        "bid_format_requirements": "- 投标文件包括商务文件、技术文件、报价文件",
+        "qualification_list": [],
+        "technical_score_items": [],
+        "invalid_bid_items": [],
+    }
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "name": "项目",
+                "tender_file_path": "projects/7/tender/file.txt",
+                "parsed_json": parsed_json,
+                "generated_markdown_path": None,
+                "generated_docx_path": None,
+                "generation_quality_json": None,
+                "review_report_json": None,
+                "workflow_state_json": None,
+                "confirmed_parsed_json": None,
+                "bid_outline_json": None,
+                "document_outline_json": None,
+                "selected_chunk_ids": [],
+                "edited_markdown": None,
+                "final_checklist_json": None,
+                "final_versions_json": None,
+                "pricing_strategy_json": None,
+                "pricing_strategy_report_json": None,
+                "score_prediction_json": None,
+                "response_matrix_json": None,
+                "status": "parsed",
+                "template_id": None,
+                "created_at": None,
+            },
+            {
+                "id": 7,
+                "status": "outline_ready",
+                "bid_outline_json": [],
+                "document_outline_json": [],
+            },
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+    monkeypatch.setattr(
+        "services.template_service.bid_template_for_project",
+        lambda project_id: None,
+    )
+
+    project_service.build_project_outline(7)
+
+    document_outline = cursor.statements[-1][1][1].adapted
+    assert document_outline[0]["title"] == "一、技术标"
+    assert all(section["title"] != "一、投标函及投标函附录" for section in document_outline)
+
+
+def test_confirm_parsed_result_requires_bid_format_requirements() -> None:
+    with pytest.raises(ValueError, match="未确认投标文件格式要求"):
+        project_service.confirm_parsed_result(
+            7,
+            {
+                "project_name": "项目",
+                "qualification_list": [],
+                "technical_score_items": [],
+                "invalid_bid_items": [],
+            },
+        )
 
 
 def test_save_project_outline_preserves_manual_image_slots(monkeypatch) -> None:

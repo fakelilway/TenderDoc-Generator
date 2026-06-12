@@ -37,6 +37,31 @@ RELEVANT_KEYWORDS = (
     "废标",
     "无效投标",
     "重大偏差",
+    # 投标文件格式/组成要求直接关系废标风险，长文本裁剪时必须保留。
+    "投标文件的组成",
+    "投标文件组成",
+    "投标文件格式",
+    "投标文件的编制",
+    "投标文件的签署",
+    "投标文件的密封",
+    "密封和标记",
+    "签字",
+    "签章",
+    "盖章",
+    "正本",
+    "副本",
+    "第一信封",
+    "第二信封",
+    "商务及技术文件",
+    "报价文件",
+    "电子投标文件",
+    "加密投标文件",
+    "投标函",
+    "授权委托书",
+    "法定代表人身份证明",
+    "投标保证金",
+    "资格审查资料",
+    "已标价工程量清单",
 )
 
 
@@ -374,37 +399,130 @@ _FORMAT_SECTION_HEADINGS = (
     "投标文件组成",
     "投标文件格式",
     "投标文件的编制",
+    "投标文件编制",
+    "投标文件的签署",
+    "投标文件签署",
     "投标文件的密封和标记",
+    "投标文件密封和标记",
+    "投标文件的递交",
     "密封和标记",
+    "电子投标文件",
+    "投标文件上传",
+)
+
+_FORMAT_SIGNAL_KEYWORDS = (
+    "投标文件应包括",
+    "投标文件包括",
+    "投标文件由",
+    "组成",
+    "格式",
+    "正本",
+    "副本",
+    "份数",
+    "签字",
+    "签署",
+    "签章",
+    "盖章",
+    "装订",
+    "密封",
+    "标记",
+    "封套",
+    "加密",
+    "解密",
+    "电子投标文件",
+    "商务及技术文件",
+    "报价文件",
+    "第一信封",
+    "第二信封",
+    "投标函",
+    "投标函附录",
+    "法定代表人身份证明",
+    "授权委托书",
+    "联合体协议书",
+    "投标保证金",
+    "资格审查资料",
+    "承诺函",
+    "声明函",
+    "中小企业声明函",
+    "已标价工程量清单",
+)
+
+_FORMAT_STOP_HEADING_RE = re.compile(
+    r"^第[一二三四五六七八九十]+章\s*(?!.*(?:投标文件格式|投标文件的编制|投标文件组成|投标文件的组成|密封和标记)).{2,30}$"
 )
 
 
 def _extract_format_requirements(text: str) -> str:
-    """Capture the tender's own bid-format chapter as a deterministic fallback.
+    """Capture tender-native bid-format clauses as deterministic fallback.
 
-    The LLM summary is preferred; this raw excerpt guards the no-LLM path so
-    the generator still sees the tender's composition/sealing requirements.
+    Formatting clauses are waste-bid sensitive. Do not rely on one exact
+    heading: many tenders scatter composition, signing, sealing and electronic
+    upload rules across "投标人须知" instead of a clean "投标文件格式" chapter.
     """
-    lines = [line.strip() for line in text.splitlines()]
-    collected: list[str] = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    def add_line(line: str) -> None:
+        cleaned = re.sub(r"\s+", " ", line).strip(" ；;")
+        if not cleaned:
+            return
+        key = re.sub(r"\s+", "", cleaned)
+        if key in seen:
+            return
+        seen.add(key)
+        selected.append(cleaned)
+
     capturing = False
     captured_chars = 0
     for line in lines:
-        if not line:
-            continue
-        is_heading = any(heading in line for heading in _FORMAT_SECTION_HEADINGS) and len(
-            line
-        ) <= 40
+        is_heading = any(heading in line for heading in _FORMAT_SECTION_HEADINGS)
         if is_heading:
             capturing = True
-            collected.append(f"- {line}")
+            add_line(line)
             continue
+        if capturing and _FORMAT_STOP_HEADING_RE.match(line) and captured_chars >= 800:
+            capturing = False
         if capturing:
-            collected.append(f"- {line}")
+            add_line(line)
             captured_chars += len(line)
-            if captured_chars >= 1200 or len(collected) >= 40:
+            if captured_chars >= 6500 or len(selected) >= 120:
                 break
-    return "\n".join(collected) if len(collected) > 1 else ""
+
+    for index, line in enumerate(lines):
+        if not any(keyword in line for keyword in _FORMAT_SIGNAL_KEYWORDS):
+            continue
+        start = max(0, index - 2)
+        end = min(len(lines), index + 8)
+        for candidate in lines[start:end]:
+            if any(
+                keyword in candidate
+                for keyword in (*_FORMAT_SIGNAL_KEYWORDS, *_FORMAT_SECTION_HEADINGS)
+            ):
+                add_line(candidate)
+        if len(selected) >= 160:
+            break
+
+    if not selected:
+        return ""
+    return "\n".join(f"- {line}" for line in selected)
+
+
+def _merge_format_requirements(llm_text: str, rule_text: str) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for source in (llm_text, rule_text):
+        for raw in (source or "").splitlines():
+            cleaned = raw.strip()
+            if not cleaned:
+                continue
+            cleaned = cleaned[2:].strip() if cleaned.startswith("- ") else cleaned
+            key = re.sub(r"\s+", "", cleaned)
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {cleaned}")
+    return "\n".join(lines)
 
 
 def _extract_rule_based_requirements(text: str) -> TenderRequirements:
@@ -672,11 +790,10 @@ def _merge_requirements(
         ),
         safety_target=_prefer_text(rule_based.safety_target, llm_based.safety_target),
         bid_deadline=_prefer_text(rule_based.bid_deadline, llm_based.bid_deadline),
-        # LLM 的格式总结是给生成 Agent 的整理版指令，优先于规则抓取的原文片段；
-        # 不走 _prefer_text 以保留多行结构
-        bid_format_requirements=(
-            llm_based.bid_format_requirements.strip()
-            or rule_based.bid_format_requirements.strip()
+        # 格式要求是废标敏感信息：LLM 的整理版不能覆盖规则抓取的原文兜底，
+        # 二者合并去重后一起交给生成器。
+        bid_format_requirements=_merge_format_requirements(
+            llm_based.bid_format_requirements, rule_based.bid_format_requirements
         ),
         qualification_list=_dedupe_items(
             [*rule_based.qualification_list, *llm_based.qualification_list]

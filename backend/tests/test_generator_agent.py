@@ -44,6 +44,7 @@ def _requirements() -> TenderRequirements:
         planned_duration="300日历天",
         quality_standard="合格",
         safety_target="无安全责任事故",
+        bid_format_requirements="- 投标文件包括商务文件、技术文件、报价文件\n- 投标文件正本一份，副本四份",
         qualification_list=[RequirementItem(title="企业资质", description="建筑工程施工总承包一级")],
         technical_score_items=[
             RequirementItem(title="施工组织设计", description="施工组织设计 30 分"),
@@ -368,9 +369,10 @@ def test_generate_bid_package_uses_complete_bid_file_shell(monkeypatch):
     assert "星河湾置业有限公司" in markdown
     assert "300日历天" in markdown
     assert "高层住宅土建、安装、装饰及室外配套工程施工" in markdown
-    assert "## 一、投标函及投标函附录" in markdown
-    assert "## 五、施工组织设计" in markdown
-    assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
+    assert "## 一、投标函及投标函附录" not in markdown
+    assert "## 五、施工组织设计" not in markdown
+    assert "## 施工组织设计" in markdown
+    assert "## 报价文件" in markdown
     # Authoring meta-text must NOT leak into the production bid.
     assert "人工确认点" not in markdown
     assert "待补充" not in markdown
@@ -378,7 +380,6 @@ def test_generate_bid_package_uses_complete_bid_file_shell(monkeypatch):
     assert "废标风险逐条响应自查表" not in markdown
     assert "### 施工组织设计目录" in markdown
     assert "- 第一章、总体施工组织布置及规划" in markdown
-    assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 五、施工组织设计")
 
 
 def test_generate_bid_package_combined_markdown_carries_lossless_volume_markers(
@@ -425,7 +426,7 @@ def test_generate_bid_package_includes_template_appendices():
     assert "### 附表一、施工总体计划表" in markdown
     assert "## 一、投标函及投标函附录" in markdown
     assert "## 八、资格审查资料" in markdown
-    assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 五、施工组织设计")
+    assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 施工组织设计")
     assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
     assert "### 1. 施工组织设计" not in markdown
 
@@ -567,8 +568,9 @@ def test_generated_fallback_uses_formal_bid_tone(monkeypatch):
 
 def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:
     assert "真实投标文件文风与正文规范" in GENERATOR_SYSTEM_PROMPT
-    assert "BidTemplate JSON 是唯一章节结构来源" in GENERATOR_SYSTEM_PROMPT
-    assert "知识库/RAG 只提供措辞和素材" in GENERATOR_SYSTEM_PROMPT
+    assert "招标文件格式要求决定卷册、表单和签章等强制结构" in GENERATOR_SYSTEM_PROMPT
+    assert "知识库/RAG 只提供真实资料和措辞素材" in GENERATOR_SYSTEM_PROMPT
+    assert "BidTemplate JSON 是唯一章节结构来源" not in GENERATOR_SYSTEM_PROMPT
     assert "严禁输出" in GENERATOR_SYSTEM_PROMPT
     # The prompt no longer mandates emitting authoring meta-text.
     assert "必须使用“⚠️人工确认点" not in GENERATOR_SYSTEM_PROMPT

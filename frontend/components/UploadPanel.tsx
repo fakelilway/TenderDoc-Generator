@@ -67,7 +67,7 @@ export function UploadPanel({
         {templates.length > 0 && onTemplateChange ? (
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-muted">
-              投标模板{recommendedTemplateId != null ? "（已自动推荐）" : "（可选）"}
+              公司风格案例{recommendedTemplateId != null ? "（有推荐，不自动套用）" : "（可选）"}
             </span>
             <select
               value={selectedTemplateId ?? ""}
@@ -78,7 +78,7 @@ export function UploadPanel({
               }
               className="h-10 w-full rounded-md border border-line bg-field px-3 text-sm text-ink"
             >
-              <option value="">不使用模板（默认结构）</option>
+              <option value="">不使用案例（推荐，完全按招标文件格式）</option>
               {templates.map((template) => (
                 <option key={template.id} value={template.id}>
                   {template.name}

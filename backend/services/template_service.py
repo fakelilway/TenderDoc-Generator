@@ -145,7 +145,7 @@ def seed_template_from_json(
     template = BidTemplate.model_validate_json(path.read_text(encoding="utf-8"))
     clean_name = (name or template.template_name or path.stem).strip()
     source_filename = template.source_file or path.name
-    clean_tags = tags if tags is not None else ["默认模板", "公路", "第一信封"]
+    clean_tags = tags if tags is not None else ["风格案例", "公路", "第一信封"]
     clean_envelope = envelope_type or template.envelope_type or None
     profile = build_template_profile(
         template,

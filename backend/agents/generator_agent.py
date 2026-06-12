@@ -285,7 +285,6 @@ def generate_bid_package(
     tender_text: str = "",
     company_profile: dict[str, object] | None = None,
 ) -> BidPackage:
-    bid_template = bid_template or load_bid_template()
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
     outline = build_bid_outline(requirements, bid_template)
     settings = get_settings()
@@ -393,7 +392,6 @@ def generate_bid_package_long_context(
     This is the primary generation kernel for long-context models. Existing
     template/evidence/DOCX infrastructure remains the product shell around it.
     """
-    bid_template = bid_template or load_bid_template()
     settings = get_settings()
     company_name = company_name or settings.company_name
     document_outline = [
@@ -553,7 +551,7 @@ def _document_preface(
         "",
         "## 投标文件响应总说明",
         "",
-        f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照招标文件和模板目录顺序编制，做到资格、商务、技术、报价及附表资料逐项响应，并对所提交资料的真实性负责。",
+        f"我单位已认真研究{project_name}招标文件、补遗澄清文件及相关技术资料，充分理解招标范围、资格条件、评审办法、合同条款、工期质量安全要求及否决投标条款。本投标文件按照招标文件格式要求和人工确认目录编制，做到资格、商务、技术、报价及附表资料逐项响应，并对所提交资料的真实性负责。",
         "",
         *core_lines,
         "",
@@ -584,7 +582,7 @@ def _technical_volume_from_outline(
     knowledge_images: list[dict[str, object]] | None = None,
     bid_plan: BidPlan | None = None,
 ) -> list[str]:
-    parts = ["## 五、施工组织设计", "", "### 施工组织设计目录", ""]
+    parts = ["## 施工组织设计", "", "### 施工组织设计目录", ""]
     for section in outline:
         parts.append(f"- {section.title}")
     parts.append("")

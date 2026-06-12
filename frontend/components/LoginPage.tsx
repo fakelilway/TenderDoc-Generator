@@ -151,7 +151,7 @@ export function LoginPage() {
               登录后继续处理招标文件
             </h1>
             <p className="mt-4 max-w-lg text-sm leading-7 text-slate-300">
-              管理员负责账户、模板库和知识库维护，普通员工可生成标书并查看知识库资料。
+              管理员负责账户、风格案例库和知识库维护，普通员工可生成标书并查看知识库资料。
             </p>
           </div>
 

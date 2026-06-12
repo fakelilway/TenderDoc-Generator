@@ -607,6 +607,7 @@ def test_project_review_report_returns_workflow_state(monkeypatch) -> None:
 def test_confirm_parsed_result_endpoint(monkeypatch) -> None:
     parsed_json = {
         "project_name": "人工确认项目",
+        "bid_format_requirements": "- 投标文件包括投标函、授权委托书、资格审查资料",
         "qualification_list": [],
         "technical_score_items": [],
         "invalid_bid_items": [],

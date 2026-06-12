@@ -12,7 +12,6 @@ from agents.generator_agent import (
     build_bid_outline,
     build_bid_document_outline,
     generate_bid_package,
-    load_bid_template,
 )
 from agents.parser_agent import parse_tender
 from agents.pricing_agent import (
@@ -156,17 +155,17 @@ def run_bid_workflow(
 
     from services import template_service
 
-    bid_template = (
-        template_service.bid_template_for_project(project_id) or load_bid_template()
-    )
+    bid_template = template_service.bid_template_for_project(project_id)
     template_note = (
-        f"，使用模板：{bid_template.template_name}" if bid_template else "，未加载真实模板，使用默认兜底大纲"
+        f"，参考公司风格案例：{bid_template.template_name}"
+        if bid_template
+        else "，未选择公司风格案例，完全按招标文件格式和确认目录生成"
     )
     _append_trace(
         state,
         "generate",
         "running",
-        f"根据评分项、废标条款和模板结构生成标书大纲{template_note}。",
+        f"根据评分项、废标条款、招标文件格式要求和人工确认目录生成标书大纲{template_note}。",
         project_status="processing",
     )
     outline = _outline_from_project(project, requirements, bid_template)

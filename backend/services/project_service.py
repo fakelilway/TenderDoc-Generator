@@ -15,7 +15,6 @@ from psycopg2.extras import Json, RealDictCursor
 from agents.generator_agent import (
     build_bid_document_outline,
     build_bid_outline,
-    load_bid_template,
 )
 from schemas.bid import BidDocumentOutlineSection
 from agents.parser_agent import parse_tender
@@ -425,7 +424,13 @@ def get_project_result(project_id: int) -> dict[str, Any]:
 def confirm_parsed_result(
     project_id: int, parsed_json: dict[str, Any]
 ) -> dict[str, Any]:
-    confirmed = TenderRequirements.model_validate(parsed_json).model_dump()
+    confirmed_model = TenderRequirements.model_validate(parsed_json)
+    if not confirmed_model.bid_format_requirements.strip():
+        raise ValueError(
+            "未确认投标文件格式要求。请从招标文件中补充投标文件组成、必交表单、"
+            "签字盖章、正副本、密封/电子标等要求后再确认。"
+        )
+    confirmed = confirmed_model.model_dump()
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
@@ -453,9 +458,7 @@ def build_project_outline(project_id: int) -> dict[str, Any]:
     requirements = TenderRequirements.model_validate(parsed_json)
     from services import template_service
 
-    bid_template = (
-        template_service.bid_template_for_project(project_id) or load_bid_template()
-    )
+    bid_template = template_service.bid_template_for_project(project_id)
     outline = [
         section.model_dump()
         for section in build_bid_outline(requirements, bid_template)
@@ -567,9 +570,7 @@ def _build_document_outline_for_saved_technical_outline(
     requirements = TenderRequirements.model_validate(parsed_json)
     from services import template_service
 
-    bid_template = (
-        template_service.bid_template_for_project(project_id) or load_bid_template()
-    )
+    bid_template = template_service.bid_template_for_project(project_id)
     document_outline = build_bid_document_outline(requirements, bid_template)
     technical_children = [
         BidDocumentOutlineSection(

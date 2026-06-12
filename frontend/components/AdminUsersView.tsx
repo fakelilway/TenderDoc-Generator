@@ -30,7 +30,7 @@ export function AdminUsersView() {
           </NavLinkButton>
           {isAdmin ? (
             <NavLinkButton href="/templates" icon={FileStack}>
-              模板库
+              风格库
             </NavLinkButton>
           ) : null}
         </>

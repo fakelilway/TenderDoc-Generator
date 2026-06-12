@@ -168,7 +168,7 @@ export function ProjectsView() {
           {isAdmin ? (
             <>
               <NavLinkButton href="/templates" icon={FileStack}>
-                模板库
+                风格库
               </NavLinkButton>
               <NavLinkButton href="/admin/users" icon={Users}>
                 账号管理

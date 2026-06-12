@@ -1,6 +1,6 @@
 # TenderDoc-Generator 本地启动与验证指南
 
-本文档说明如何在本地运行当前 MVP。当前版本仍是 localhost 开发部署，但已经包含完整后端、前端、数据库、对象存储、知识库、模板库和工作流。
+本文档说明如何在本地运行当前 MVP。当前版本仍是 localhost 开发部署，但已经包含完整后端、前端、数据库、对象存储、知识库、风格库和工作流。
 
 ## 1. 前置要求
 
@@ -194,13 +194,13 @@ curl -fsSI http://localhost:3000
 1. 运行 `./scripts/dev_local.sh`。
 2. 打开 http://localhost:3000。
 3. 使用 `admin / tenderdoc` 登录。
-4. 进入模板库，确认默认模板或上传脱敏历史投标 PDF。
+4. 可选进入风格库，上传脱敏历史投标 PDF 作为公司风格案例；新项目默认不套任何案例。
 5. 进入知识库，上传少量测试资料并填写结构化标签。
 6. 创建项目并上传招标文件 PDF/DOCX/TXT。
 7. 查看并确认解析结果。
 8. 生成并调整投标文件大纲。
 9. 在资料选择面板筛选并勾选需要进入本次投标的企业资料。
-10. 开始生成，后端会构建 `EvidencePack` 和 `BidPlan`，默认用长上下文模式一次性生成商务/技术/报价三卷；旧分章节生成仅作为失败 fallback。
+10. 开始生成，后端会构建 `EvidencePack` 和 `BidPlan`，默认用长上下文模式一次性生成商务/技术/报价三卷；格式要求来自招标文件和人工确认目录，风格案例仅在主动选择时参考。
 11. 查看审查报告、响应矩阵、评分预测和报价策略。
 12. 在线编辑正文，保存后重新审查。
 13. 终审确认后下载 DOCX、Markdown 或审查报告。
@@ -253,20 +253,20 @@ curl -fsSI http://localhost:3000
 
 默认会跳过 `review_required=true` 的资料；样本试导或已人工确认时才加 `--include-review-required`。脚本不会改动原始资料目录，`--copy-to` 只生成整理后的副本。
 
-## 9. 模板与离线脚本
+## 9. 风格案例与离线脚本
 
-导入默认模板：
+导入历史案例样本到风格库：
 
 ```bash
 .venv/bin/python backend/scripts/seed_default_template.py
 ```
 
-从真实历史投标 PDF 抽取脱敏模板 JSON：
+从真实历史投标 PDF 抽取脱敏案例 JSON：
 
 ```bash
 .venv/bin/python backend/scripts/extract_bid_template.py "/path/to/投标文件.pdf" \
   --out backend/templates/bid_templates/my_template.json \
-  --name "某类项目投标模板"
+  --name "某类项目风格案例"
 ```
 
 分析真实 PDF 格式特征：
@@ -368,8 +368,8 @@ docker compose down -v
 | `scripts/generate_bid.py` | 离线生成脱敏标书 demo |
 | `scripts/analyze_pdf_format.py` | 分析真实 PDF 格式特征 |
 | `scripts/index_bid_templates.sh` | 将模板资料索引到本地知识库 |
-| `backend/scripts/seed_default_template.py` | 导入默认模板到模板库 |
-| `backend/scripts/extract_bid_template.py` | 从历史投标 PDF 抽取模板 JSON |
+| `backend/scripts/seed_default_template.py` | 导入历史案例样本到风格库 |
+| `backend/scripts/extract_bid_template.py` | 从历史投标 PDF 抽取案例 JSON |
 | `backend/scripts/prepare_knowledge_manifest.py` | 批量生成知识库命名/标签 manifest，并可导入本地知识库 |
 | `backend/scripts/run_quality_eval.py` | 运行质量评估集 |
 | `backend/scripts/run_bid_gap_eval.py` | 评估 AI 标书与真实模板差距 |

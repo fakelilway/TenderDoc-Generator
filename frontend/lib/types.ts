@@ -11,6 +11,14 @@ export type RequirementItem = {
 
 export type TenderRequirements = {
   project_name: string;
+  tenderer_name?: string;
+  project_location?: string;
+  tender_scope?: string;
+  planned_duration?: string;
+  quality_standard?: string;
+  safety_target?: string;
+  bid_deadline?: string;
+  bid_format_requirements?: string;
   qualification_list: RequirementItem[];
   technical_score_items: RequirementItem[];
   invalid_bid_items: RequirementItem[];

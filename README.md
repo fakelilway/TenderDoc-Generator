@@ -5,7 +5,7 @@
 
 TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统。第一版不做泛行业通用投标软件，而是优先服务市政工程、公路工程、交通安全设施养护、公路改建/扩建/维修养护等正奇高频业务。
 
-系统从招标文件解析开始，结合真实投标文件模板、企业知识库、人工确认节点和审查 Agent，生成商务文件、技术文件、报价文件三卷草稿，并支持完整合并稿、DOCX 导出、废标风险审查、响应矩阵、评分预测和报价策略建议。
+系统从招标文件解析开始，结合招标文件格式要求、企业知识库、可选公司风格案例、人工确认节点和审查 Agent，生成商务文件、技术文件、报价文件三卷草稿，并支持完整合并稿、DOCX 导出、废标风险审查、响应矩阵、评分预测和报价策略建议。
 
 ## 当前能力
 
@@ -14,13 +14,13 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 用户登录、注册、管理员注册码、普通用户权限控制。
 - 项目创建、历史项目列表、项目属主鉴权、项目恢复和删除。
 - 招标文件上传，支持 PDF/DOCX/TXT 解析。
-- Parser Agent 抽取项目名称、资质要求、评分项、废标项等结构化 JSON。
-- 人工确认解析结果与大纲，生成前不再绕过人工确认；大纲可预留人工插图位，生成稿会保留明确插图占位。
-- 真实投标模板 JSON 作为章节结构权威，Generator prompt 只负责角色、文风和真实性边界。
-- 模板上传/默认模板会生成模板画像，记录分卷、章节顺序、附表、图片位、表格位和禁用语气。
+- Parser Agent 抽取项目名称、核心字段、资质要求、评分项、废标项和投标文件格式要求等结构化 JSON。
+- 人工确认解析结果、大纲和投标文件格式要求；格式要求为空时后端拒绝进入生成，避免套默认结构造成废标风险。
+- 招标文件格式要求是卷册、表单、签字盖章、正副本、密封/电子标要求的最高权威；默认模板不再自动参与线上生成。
+- 公司风格案例库保留历史投标 PDF 资产，生成案例画像，记录写作深度、表格/图片位、禁用语气等风格资产；只有用户主动选择时才作为参考。
 - 生成前会构建 `EvidencePack`，把公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据分开。
 - 生成时会构建 `BidPlan`，统一决定章节顺序、可用知识片段、可插入图片、表格需求和文风边界。
-- 默认生成内核已切为长上下文模式：一次性把确认目录、招标要求、模板约束、精选企业资料和图片清单交给 DeepSeek/OpenRouter 生成三卷 Markdown；旧分章节生成保留为 fallback。
+- 默认生成内核已切为长上下文模式：一次性把招标文件格式要求、确认目录、招标要求、可选风格案例、精选企业资料和图片清单交给 DeepSeek/OpenRouter 生成三卷 Markdown；旧分章节生成保留为 fallback。
 - 商务文件、技术文件、报价文件三卷生成与预览，完整标书作为按需合并稿。
 - Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
 - DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
@@ -32,7 +32,7 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 报价策略 Agent：只输出策略、风险和人工确认点，不自动编造清单价格。
 - 评分预测 Agent：按评分项模拟分数、短板和不确定性说明，不替代人工判断。
 - 审查响应矩阵：覆盖资质、废标项、评分项和商务人工字段。
-- 模板库：管理员上传历史投标 PDF，解析为脱敏模板 JSON，按项目类型/专业/信封/地区/年份推荐。
+- 公司风格案例库：管理员上传历史投标 PDF，解析为脱敏案例 JSON 和风格画像，按项目类型/专业/信封/地区/年份推荐，但不自动套用、不控制招标文件格式。
 - 离线脚本：模板解析、格式分析、标书生成 demo、质量评估、AI 与真实投标文件差距评估。
 
 - 公司信息档案：`/company` 页维护企业工商、资质、账户和拟派项目班子信息，生成时自动注入投标人基本状况表、投标函落款等商务内容。
@@ -62,11 +62,11 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 
 系统当前最重要的边界在 [docs/generation_contract.md](docs/generation_contract.md)：
 
-- `TenderRequirements` 只回答“招标文件要求什么”。
-- `BidTemplate JSON` 是唯一章节结构来源。
-- `TemplateProfile` 是模板画像，负责把真实案例模板总结为可执行的章节、表格和图片插入规则。
+- `TenderRequirements` 回答“招标文件要求什么”，其中 `bid_format_requirements` 是投标文件格式确认关卡。
+- 招标文件格式要求和人工确认目录是线上生成的结构来源；默认模板不再作为结构权威。
+- `TemplateProfile` 是公司风格案例画像，负责把历史投标文件总结为写作深度、表格习惯、图片位和禁用语气。
 - `EvidencePack` 是知识库资料的分类层，证件/图片/表格/技术素材不能混作同一种 RAG 文本。
-- `BidPlan` 是生成阶段唯一计划层，负责把模板画像、招标要求和证据包落到每个章节。
+- `BidPlan` 是生成阶段计划层，负责把人工确认目录、招标要求、可选风格案例画像和证据包落到每个章节。
 - RAG/知识库主要负责资料治理、资料选择、证据供给和图片候选；默认长上下文生成会使用已选资料，不再把 RAG 碎片当成章节结构来源。
 - Generator prompt 只约束角色、文风、真实性和禁止事项。
 - DOCX 视觉排版统一由 `backend/utils/docx_exporter.py` 负责。
@@ -111,7 +111,7 @@ pnpm --dir frontend build
 - `/project/{projectId}`：标书工作台。
 - `/knowledge`：知识库资料管理。
 - `/company`：公司信息档案，管理员可编辑，生成时自动填入商务内容。
-- `/templates`：模板库管理，管理员可写，普通用户只读或按权限查看。
+- `/templates`：公司风格案例库管理，管理员可写，普通用户只读或按权限查看。
 - `/admin/users`：管理员用户与权限管理。
 
 ## 主要 API
@@ -130,8 +130,8 @@ pnpm --dir frontend build
 - `GET /api/knowledge/documents/{id}/preview`：预览文本、图片、PDF 或文件。
 - `PATCH /api/knowledge/documents/{id}`：编辑资料标题和 metadata。
 - `GET /api/knowledge/search`：按语义和 metadata 检索知识库。
-- `POST /api/templates`：上传历史投标 PDF 并解析为模板。
-- `GET /api/templates/recommend`：按项目上下文推荐模板。
+- `POST /api/templates`：上传历史投标 PDF 并解析为公司风格案例。
+- `GET /api/templates/recommend`：按项目上下文推荐风格案例。
 - `GET/PUT /api/company-profile`：读取/保存公司信息档案（PUT 需管理员）。
 
 ## 知识库资料标签
@@ -165,15 +165,15 @@ TenderDoc-Generator/
 │   ├── agents/              # parser/generator/reviewer/pricing/scoring/response matrix
 │   ├── api/                 # FastAPI 路由
 │   ├── rag/                 # embedding、pgvector 检索和过滤
-│   ├── scripts/             # 模板导入、质量评估、知识库 manifest/批量入库
+│   ├── scripts/             # 案例导入、质量评估、知识库 manifest/批量入库
 │   ├── schemas/             # Pydantic schema
 │   ├── services/            # workflow、project、knowledge、template、evidence pack、bid plan
-│   ├── templates/           # 内置投标模板 JSON
+│   ├── templates/           # 历史案例/离线评估 JSON
 │   ├── utils/               # file parser、DOCX exporter、MinIO、template parser
 │   └── tests/
 ├── frontend/
 │   ├── app/                 # Next.js App Router 页面
-│   ├── components/          # 工作台、知识库、模板库、预览和编辑组件
+│   ├── components/          # 工作台、知识库、风格库、预览和编辑组件
 │   └── lib/                 # API client、类型、Markdown 解析
 ├── docs/
 ├── scripts/                 # 本地启动、离线生成、格式分析、模板索引

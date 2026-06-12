@@ -69,11 +69,11 @@ def build_bid_plan(
         for section in sections
     ]
     notes = [
-        "BidPlan 是生成阶段唯一的结构控制层：模板负责章节顺序，知识库只提供证据素材。",
+        "BidPlan 使用已确认目录作为结构控制层；招标文件格式优先，风格案例只提供深度、表格、图片位和语气参考。",
         *evidence_pack.notes,
     ]
     if template_profile:
-        notes.append(f"已应用模板画像：{template_profile.template_name}")
+        notes.append(f"已参考公司风格案例画像：{template_profile.template_name}")
     return BidPlan(
         template_name=template_profile.template_name if template_profile else "",
         sections=plan_sections,
@@ -118,6 +118,10 @@ def _sections_from_profile_or_outline(
     template_profile: TemplateProfile | None,
     document_outline: list[BidDocumentOutlineSection | dict[str, Any]] | None,
 ) -> list[BidPlanSection]:
+    outline_sections = _flatten_outline(document_outline or [])
+    if outline_sections:
+        return outline_sections
+
     if template_profile and template_profile.section_order:
         return [
             BidPlanSection(
@@ -128,10 +132,6 @@ def _sections_from_profile_or_outline(
             )
             for title in template_profile.section_order
         ]
-
-    outline_sections = _flatten_outline(document_outline or [])
-    if outline_sections:
-        return outline_sections
 
     if template_profile and template_profile.volumes:
         sections: list[BidPlanSection] = []

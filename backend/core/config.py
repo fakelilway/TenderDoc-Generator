@@ -71,10 +71,7 @@ class Settings(BaseSettings):
 
     company_name: str = Field("安徽正奇建设有限公司", alias="COMPANY_NAME")
     enable_llm_generation: bool = Field(False, alias="ENABLE_LLM_GENERATION")
-    bid_template_path: str = Field(
-        "templates/bid_templates/road_first_envelope_template.json",
-        alias="BID_TEMPLATE_PATH",
-    )
+    bid_template_path: str = Field("", alias="BID_TEMPLATE_PATH")
 
     debug: bool = Field(False, alias="DEBUG")
     log_level: str = Field("INFO", alias="LOG_LEVEL")

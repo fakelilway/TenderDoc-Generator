@@ -8,6 +8,7 @@ from utils.docx_exporter import VOLUME_MARKERS, combine_delivery_volumes
 
 PARSED_JSON = {
     "project_name": "测试项目",
+    "bid_format_requirements": "- 投标文件包括商务文件、技术文件、报价文件\n- 投标文件正本一份，副本四份",
     "qualification_list": [
         {
             "title": "项目经理",

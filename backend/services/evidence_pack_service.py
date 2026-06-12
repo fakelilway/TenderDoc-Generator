@@ -85,7 +85,7 @@ def build_evidence_pack(
 
     pack.selected_chunk_ids = sorted(set(pack.selected_chunk_ids))
     if not pack.all_items():
-        pack.notes.append("未匹配到知识库资料，生成器将仅依据招标解析结果和模板结构生成。")
+        pack.notes.append("未匹配到知识库资料，生成器将仅依据招标解析结果和人工确认目录生成。")
     elif not pack.technical_schemes:
         pack.notes.append("未匹配到可作为正文素材的技术方案类资料，证件资料不会直接进入技术正文。")
     if requirements.project_name:
