@@ -339,7 +339,11 @@ export function TenderWorkspace({
   // Last status applied by refreshProject, for detecting preview transitions.
   const lastRefreshedStatus = useRef<string | null>(null);
 
-  const canConfirm = Boolean(projectId && workflowState?.awaiting_human);
+  const canConfirm = Boolean(
+    projectId &&
+      workflowState?.awaiting_human &&
+      ["human_review", "needs_revision"].includes(status)
+  );
   const canStartWorkflow = Boolean(
     projectId && ["outline_confirmed", "outline_review"].includes(status)
   );
