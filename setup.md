@@ -60,8 +60,9 @@ OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 BID_LLM_PROVIDER=auto
 BID_GENERATION_MODE=long_context
 BID_GENERATION_FALLBACK_ENABLED=true
-BID_LONG_CONTEXT_TIMEOUT_SECONDS=60
-BID_LONG_CONTEXT_MAX_TOKENS=6000
+# 生成跑在后台线程，超时给足、输出预算给足，质量优先
+BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
+BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
 
 如需绕开 OpenRouter 直连 DeepSeek：
@@ -184,7 +185,7 @@ curl -fsSI http://localhost:3000
 
 最近一次完整验证：
 
-- `.venv/bin/python -m pytest backend/tests -q`：`182 passed, 2 skipped`
+- `.venv/bin/python -m pytest backend/tests -q`：`232 passed, 2 skipped`（2026-06-12）
 - `pnpm --dir frontend typecheck`：通过
 - `pnpm --dir frontend build`：通过
 

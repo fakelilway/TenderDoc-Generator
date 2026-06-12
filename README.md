@@ -35,10 +35,12 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 模板库：管理员上传历史投标 PDF，解析为脱敏模板 JSON，按项目类型/专业/信封/地区/年份推荐。
 - 离线脚本：模板解析、格式分析、标书生成 demo、质量评估、AI 与真实投标文件差距评估。
 
-最近一次架构验证：
+- 公司信息档案：`/company` 页维护企业工商、资质、账户和拟派项目班子信息，生成时自动注入投标人基本状况表、投标函落款等商务内容。
+- 招标全文持久化（`projects.tender_text`），Parser 额外抽取招标人、建设地点、招标范围、计划工期、质量标准、安全目标、投标截止时间七个核心字段。
 
-- 后端完整回归：`182 passed, 2 skipped`
-- 知识库批量整理脚本测试：`4 passed`
+最近一次架构验证（2026-06-12）：
+
+- 后端完整回归：`232 passed, 2 skipped`
 - 前端类型检查：通过
 
 ## 产品范围
@@ -108,6 +110,7 @@ pnpm --dir frontend build
 - `/projects`：历史项目。
 - `/project/{projectId}`：标书工作台。
 - `/knowledge`：知识库资料管理。
+- `/company`：公司信息档案，管理员可编辑，生成时自动填入商务内容。
 - `/templates`：模板库管理，管理员可写，普通用户只读或按权限查看。
 - `/admin/users`：管理员用户与权限管理。
 
@@ -129,6 +132,7 @@ pnpm --dir frontend build
 - `GET /api/knowledge/search`：按语义和 metadata 检索知识库。
 - `POST /api/templates`：上传历史投标 PDF 并解析为模板。
 - `GET /api/templates/recommend`：按项目上下文推荐模板。
+- `GET/PUT /api/company-profile`：读取/保存公司信息档案（PUT 需管理员）。
 
 ## 知识库资料标签
 
@@ -174,17 +178,38 @@ TenderDoc-Generator/
 ├── docs/
 ├── scripts/                 # 本地启动、离线生成、格式分析、模板索引
 ├── docker-compose.yml
-├── setup.md
-├── TECH_STACK.md
-└── minitasks.md
+├── setup.md                 # 本地安装、启动、排障
+└── minitasks.md             # 任务状态与路线图
 ```
+
+## 技术栈速览
+
+- 前端：Next.js 14 App Router + React 18 + TypeScript + Tailwind，pnpm 管理，API 用原生 fetch 封装（`frontend/lib/api.ts`）。
+- 后端：FastAPI + uvicorn，Python 3.11（根目录 `.venv`），psycopg2 显式 SQL + 连接池，Pydantic v2，JWT 认证，FastAPI BackgroundTasks 跑长任务。
+- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认长上下文一次生成三卷，分章节生成保留为 fallback。
+- RAG：BAAI/bge-large-zh-v1.5（1024 维）+ pgvector，JSONB metadata 过滤。
+- 存储：PostgreSQL 15+（JSONB + pgvector）、Redis 7（workflow state）、MinIO（原文/资料/产物）。
+- 文档处理：pypdf/pdfplumber/PyMuPDF 解析，python-docx 导出（`backend/utils/docx_exporter.py` 统一排版）。
+
+依赖事实以 `backend/requirements.txt` 和 `frontend/package.json` 为准。
+
+## 协作约定
+
+- `main` 必须始终保持可用：提交前跑 `pytest backend/tests` 和 `pnpm --dir frontend typecheck`。
+- 涉及数据库表结构、环境变量、docker 配置的改动，必须在提交说明里写明。
+- 未经脱敏的真实投标文件、证件资料禁止提交到 Git。
+
+## 生产化路线（尚未实施）
+
+当前是 localhost MVP。推向公司内网可用需要（详见 [minitasks.md](minitasks.md) M69–M74）：
+
+- 部署：单机 Docker Compose 内网起步，Nginx/HTTPS 反向代理。
+- 队列：长任务从 BackgroundTasks 迁移到 Celery/RQ 等可重试队列。
+- 数据：PostgreSQL 定时备份与恢复演练，MinIO 加密与版本保留，操作审计。
+- 边界：本系统输出 Word/Markdown/资料包；新点投标软件负责最终电子标书制作、签章、加密、上传。
+
+暂不引入：大型前端组件库重构、多租户、自动报价引擎、自动 CA 签章、NAS 无限制全量索引。
 
 ## 下一步
 
-短期下一步不是继续堆 Agent，而是把本地 MVP 推向公司可用：
-
-1. 用少量真实脱敏资料填充知识库，验证资料预览、标签筛选、长上下文资料选择和图片插入效果。
-2. 建立正奇真实模板库最小集合：市政、公路改扩建、交安养护各至少一类。
-3. 用 3 个脱敏真实项目跑通端到端质量评估和 gap 评估。
-4. 补生产化方案：部署、备份、权限、审计、对象存储加密、内网访问、NAS/资料库导入策略。
-5. 明确和新点投标文件制作软件的边界：本系统生成 Word/Markdown 和资料包，新点负责最终电子投标文件制作、签章、加密和上传。
+短期下一步不是继续堆 Agent，而是把本地 MVP 推向公司可用。具体任务状态和优先级见 [minitasks.md](minitasks.md)：先用真实脱敏资料验证长上下文生成质量和知识库流程，再建立质量基线（M68/M73），最后补部署、备份、队列（M69–M71）和新点软件交付边界（M74）。
