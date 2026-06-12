@@ -7,6 +7,7 @@ import {
   Download,
   FileText,
   FileStack,
+  Building2,
   FolderOpen,
   Database,
   Loader2,
@@ -45,6 +46,7 @@ import {
   getProjectReviewReport,
   getProjectResult,
   getProjectStatus,
+  listKnowledgeDocuments,
   logout as logoutRequest,
   parseProject,
   runProjectWorkflow,
@@ -306,6 +308,31 @@ export function TenderWorkspace({
   const autoAnalysisTriggered = useRef<Set<string>>(new Set());
   // Fields with unsaved local edits; polling must not overwrite these.
   const dirtyFields = useRef<Set<DirtyField>>(new Set());
+  const chunkSaveSeq = useRef(0);
+  const [knowledgeTags, setKnowledgeTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listKnowledgeDocuments()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const tags = new Set<string>();
+        for (const document of response.documents) {
+          for (const tag of document.tags ?? []) {
+            tags.add(tag);
+          }
+        }
+        setKnowledgeTags(Array.from(tags).sort());
+      })
+      .catch(() => {
+        // 标签 chips 只是辅助输入，知识库不可用时静默降级为手动输入
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Guards against stale/out-of-order refresh responses after project switches.
   const projectIdRef = useRef<number | null>(initialProjectId);
   const refreshSeq = useRef(0);
@@ -823,30 +850,27 @@ export function TenderWorkspace({
     }
   }
 
-  function handleToggleChunk(chunkId: number) {
-    dirtyFields.current.add("chunks");
-    setSelectedChunkIds((current) =>
-      current.includes(chunkId)
-        ? current.filter((id) => id !== chunkId)
-        : [...current, chunkId]
-    );
-  }
-
-  async function handleSaveKnowledgeSelection() {
+  async function handleToggleChunk(chunkId: number) {
+    const next = selectedChunkIds.includes(chunkId)
+      ? selectedChunkIds.filter((id) => id !== chunkId)
+      : [...selectedChunkIds, chunkId];
+    setSelectedChunkIds(next);
     if (!projectId) {
+      dirtyFields.current.add("chunks");
       return;
     }
-    setActionBusy(true);
+    // 勾选即采用：立即持久化，序号防止快速连点时旧响应覆盖新状态
+    const seq = ++chunkSaveSeq.current;
     setError(null);
     try {
-      const saved = await saveKnowledgeSelection(projectId, selectedChunkIds);
-      dirtyFields.current.delete("chunks");
-      setSelectedChunkIds(saved.selected_chunk_ids);
-      setRagReferences(saved.references);
+      const saved = await saveKnowledgeSelection(projectId, next);
+      if (seq === chunkSaveSeq.current) {
+        dirtyFields.current.delete("chunks");
+        setSelectedChunkIds(saved.selected_chunk_ids);
+        setRagReferences(saved.references);
+      }
     } catch (saveError) {
       setError(errorMessage(saveError));
-    } finally {
-      setActionBusy(false);
     }
   }
 
@@ -1039,6 +1063,9 @@ export function TenderWorkspace({
               </NavLinkButton>
               <NavLinkButton href="/knowledge" icon={Database}>
                 知识库
+              </NavLinkButton>
+              <NavLinkButton href="/company" icon={Building2}>
+                公司档案
               </NavLinkButton>
               {isAdmin ? (
                 <>
@@ -1260,6 +1287,11 @@ export function TenderWorkspace({
             onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
           />
+          <StatusRail
+            status={status}
+            busy={statusBusy}
+            traceEvents={workflowState?.trace_events}
+          />
           <RagSelectionPanel
             query={ragQuery}
             projectType={ragProjectType}
@@ -1272,6 +1304,7 @@ export function TenderWorkspace({
             usageScope={ragUsageScope}
             verifiedStatus={ragVerifiedStatus}
             tagText={ragTagText}
+            availableTags={knowledgeTags}
             results={ragResults}
             selectedIds={selectedChunkIds}
             references={ragReferences}
@@ -1289,12 +1322,6 @@ export function TenderWorkspace({
             onTagTextChange={setRagTagText}
             onSearch={handleSearchKnowledge}
             onToggle={handleToggleChunk}
-            onSave={handleSaveKnowledgeSelection}
-          />
-          <StatusRail
-            status={status}
-            busy={statusBusy}
-            traceEvents={workflowState?.trace_events}
           />
         </div>
 

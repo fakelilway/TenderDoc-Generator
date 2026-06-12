@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from threading import Thread
 from uuid import uuid4
@@ -25,6 +26,7 @@ from schemas.bid import BidSectionOutline
 from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import generation_service
+from services.company_profile_service import get_company_profile
 from services.project_service import (
     ProjectNotFoundError,
     _connect,
@@ -32,6 +34,7 @@ from services.project_service import (
     get_knowledge_references,
 )
 
+logger = logging.getLogger(__name__)
 
 MAX_CORRECTION_ITERATIONS = 3
 
@@ -232,6 +235,12 @@ def run_bid_workflow(
         ),
         project_status="generating",
     )
+    try:
+        company_profile = get_company_profile()["profile"]
+    except Exception:
+        # 企业档案缺失不应阻断生成；prompt 退回仅用 COMPANY_NAME
+        logger.warning("Company profile unavailable; generating without it")
+        company_profile = None
     bid_package = generate_bid_package(
         requirements,
         retrieved_by_section,
@@ -240,6 +249,7 @@ def run_bid_workflow(
         knowledge_images=knowledge_images,
         bid_plan=bid_plan,
         tender_text=state.tender_text,
+        company_profile=company_profile,
     )
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown

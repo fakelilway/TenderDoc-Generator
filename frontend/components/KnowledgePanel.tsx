@@ -151,6 +151,49 @@ function compactMeta(document: KnowledgeDocumentSummary) {
   ].filter(Boolean);
 }
 
+function TagChips({
+  knownTags,
+  tagText,
+  onTagTextChange
+}: {
+  knownTags: string[];
+  tagText: string;
+  onTagTextChange: (value: string) => void;
+}) {
+  if (!knownTags.length) {
+    return null;
+  }
+  const activeTags = splitTags(tagText);
+  function toggle(tag: string) {
+    const next = activeTags.includes(tag)
+      ? activeTags.filter((item) => item !== tag)
+      : [...activeTags, tag];
+    onTagTextChange(next.join(", "));
+  }
+  return (
+    <div className="col-span-2 flex flex-wrap gap-1.5">
+      {knownTags.map((tag) => {
+        const active = activeTags.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => toggle(tag)}
+            className={[
+              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              active
+                ? "border-brand bg-blue-50 font-medium text-brand"
+                : "border-line bg-field text-muted hover:border-brand hover:text-ink"
+            ].join(" ")}
+          >
+            {tag}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function MetaSelect({
   value,
   onChange,
@@ -422,6 +465,10 @@ export function KnowledgePanel() {
     0
   );
 
+  const knownTags = Array.from(
+    new Set(documents.flatMap((document) => document.tags ?? []))
+  ).sort();
+
   if (!canView) {
     return (
       <section className="rounded-lg border border-line bg-panel p-4 shadow-panel">
@@ -560,8 +607,9 @@ export function KnowledgePanel() {
                 value={tagText}
                 onChange={(event) => setTagText(event.target.value)}
                 className="col-span-2 h-9 rounded-md border border-line bg-field px-3 text-xs text-ink"
-                placeholder="补充标签，逗号分隔"
+                placeholder="补充标签，逗号分隔；也可点击下方已有标签"
               />
+              <TagChips knownTags={knownTags} tagText={tagText} onTagTextChange={setTagText} />
               <select
                 value={ingestionMode}
                 onChange={(event) => setIngestionMode(event.target.value)}
@@ -695,6 +743,7 @@ export function KnowledgePanel() {
                         <input value={editingMeta.validTo} onChange={(event) => setEditingMeta((current) => ({ ...current, validTo: event.target.value }))} className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="有效期至" />
                         <MetaSelect value={editingMeta.verifiedStatus} onChange={(value) => setEditingMeta((current) => ({ ...current, verifiedStatus: value }))} placeholder="核验状态" options={verifiedStatusOptions} />
                         <input value={editingMeta.tagText} onChange={(event) => setEditingMeta((current) => ({ ...current, tagText: event.target.value }))} className="col-span-2 h-8 rounded-md border border-line bg-field px-2 text-xs text-ink" placeholder="标签，逗号分隔" />
+                        <TagChips knownTags={knownTags} tagText={editingMeta.tagText} onTagTextChange={(value) => setEditingMeta((current) => ({ ...current, tagText: value }))} />
                       </div>
                     </div>
                   ) : (

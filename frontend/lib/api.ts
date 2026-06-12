@@ -2,6 +2,8 @@ import type {
   AuthMeResponse,
   BidOutlineResponse,
   BidOutlineSection,
+  CompanyProfile,
+  CompanyProfileResponse,
   DraftMarkdownResponse,
   FinalChecklistResponse,
   KnowledgeDeleteResponse,
@@ -600,5 +602,16 @@ export function updateUserPermissions(
 export function deleteUser(userId: number) {
   return requestJson<UserDeleteResponse>(`/api/admin/users/${userId}`, {
     method: "DELETE"
+  });
+}
+
+export function getCompanyProfile() {
+  return requestJson<CompanyProfileResponse>("/api/company-profile");
+}
+
+export function saveCompanyProfile(profile: CompanyProfile) {
+  return requestJson<CompanyProfileResponse>("/api/company-profile", {
+    method: "PUT",
+    body: JSON.stringify(profile)
   });
 }

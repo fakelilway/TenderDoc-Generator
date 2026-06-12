@@ -141,6 +141,7 @@ def build_long_context_prompt(
     knowledge_chunks: list[dict[str, Any]] | None = None,
     knowledge_images: list[dict[str, Any]] | None = None,
     tender_text: str = "",
+    company_profile_block: str = "",
 ) -> list[dict[str, str]]:
     """Build the simple long-context generation prompt.
 
@@ -150,11 +151,19 @@ def build_long_context_prompt(
     """
     chunks = _format_long_context_chunks(knowledge_chunks or [])
     images = _format_knowledge_images(knowledge_images)
+    profile_section = (
+        "\n【投标人企业档案（已人工核实，必须直接用于投标人基本状况表、"
+        "投标函落款、资格审查资料等处，禁止改写或留空）】\n"
+        f"{company_profile_block}\n"
+        if company_profile_block
+        else ""
+    )
     user_prompt = f"""请一次性生成完整投标文件 Markdown 成稿。
 
 项目名称：{requirements.project_name or "投标项目"}
 投标人：{company_name}
 模板名称：{template_name or "未绑定真实模板，使用系统确认目录"}
+{profile_section}
 
 【项目核心字段】
 - 招标人/采购人：{requirements.tenderer_name or "________"}
@@ -214,7 +223,8 @@ def build_long_context_prompt(
 - 正文必须出现具体项目名称、工程类别、施工范围和招标文件要求的响应内容；禁止只输出通用格式壳。
 - 报价文件只写真实报价文件目录、编制依据和响应说明；具体金额、清单单价、合价、税金等没有依据时留“________”，不得编造。
 - 需要插入知识库图片时，单独一行使用 `{{{{knowledge_image:document_id=数字 caption="说明"}}}}`，只能使用【可插入知识库图片资料】列出的 document_id。
-- 缺少人员姓名、证书编号、业绩金额、保证金金额、报价金额等事实依据时，使用“________”或“详见已标价工程量清单”，禁止写“人工确认点/待补充/系统不自动生成”等提示语。
+- 【投标人企业档案】中已提供的字段（公司名称、法定代表人、注册资本、资质等级、项目经理等）必须原样填入对应表格和正文，禁止留“________”。
+- 企业档案未提供且缺少其他事实依据的人员姓名、证书编号、业绩金额、保证金金额、报价金额等，使用“________”或“详见已标价工程量清单”，禁止写“人工确认点/待补充/系统不自动生成”等提示语。
 - 禁止输出页眉页脚、页码、目录点线、RAG 残片、自查表、AI 说明或生成器语气。
 """
     return [

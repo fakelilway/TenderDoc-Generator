@@ -535,3 +535,27 @@ export type RegistrationCodeResponse = {
 export type UserDeleteResponse = {
   ok: boolean;
 };
+
+export type CompanyProfile = {
+  company_name: string;
+  credit_code: string;
+  legal_representative: string;
+  registered_capital: string;
+  establish_date: string;
+  registered_address: string;
+  company_type: string;
+  business_scope: string;
+  qualification_grade: string;
+  safety_license_no: string;
+  contact_person: string;
+  contact_phone: string;
+  bank_name: string;
+  bank_account: string;
+  project_manager_name: string;
+  project_manager_cert: string;
+};
+
+export type CompanyProfileResponse = {
+  profile: CompanyProfile;
+  updated_at: string | null;
+};

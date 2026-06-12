@@ -57,6 +57,13 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_matrix_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS tender_text TEXT;
 
+-- 投标人企业档案：单行表，生成标书时注入【投标人信息】并填写商务卷表格
+CREATE TABLE IF NOT EXISTS company_profile (
+    id BIGSERIAL PRIMARY KEY,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS bid_templates (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,

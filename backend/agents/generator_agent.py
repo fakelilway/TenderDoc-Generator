@@ -17,6 +17,7 @@ from schemas.bid_template import BidTemplate
 from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
 from services.bid_tone_checker import line_has_forbidden_tone
+from services.company_profile_service import company_profile_prompt_block
 from utils.docx_exporter import combine_delivery_volumes, split_delivery_markdown
 
 
@@ -281,6 +282,7 @@ def generate_bid_package(
     knowledge_images: list[dict[str, object]] | None = None,
     bid_plan: BidPlan | None = None,
     tender_text: str = "",
+    company_profile: dict[str, object] | None = None,
 ) -> BidPackage:
     bid_template = bid_template or load_bid_template()
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
@@ -302,8 +304,12 @@ def generate_bid_package(
                 pricing_strategy=pricing_strategy,
                 knowledge_images=knowledge_images,
                 bid_plan=bid_plan,
-                company_name=settings.company_name,
+                company_name=str(
+                    (company_profile or {}).get("company_name") or ""
+                ).strip()
+                or settings.company_name,
                 tender_text=tender_text,
+                company_profile=company_profile,
             )
         except Exception as error:
             if not getattr(settings, "bid_generation_fallback_enabled", True):
@@ -379,6 +385,7 @@ def generate_bid_package_long_context(
     bid_plan: BidPlan | None = None,
     company_name: str | None = None,
     tender_text: str = "",
+    company_profile: dict[str, object] | None = None,
 ) -> BidPackage:
     """Generate the whole bid in one model call.
 
@@ -403,6 +410,7 @@ def generate_bid_package_long_context(
         knowledge_chunks=knowledge_chunks,
         knowledge_images=knowledge_images,
         tender_text=tender_text,
+        company_profile_block=company_profile_prompt_block(company_profile),
     )
     raw_markdown = sanitize_bid_markdown(raw_markdown)
     volumes = split_delivery_markdown(raw_markdown)
@@ -1051,6 +1059,7 @@ def _generate_long_context_with_llm(
     knowledge_chunks: list[dict[str, object]],
     knowledge_images: list[dict[str, object]] | None = None,
     tender_text: str = "",
+    company_profile_block: str = "",
 ) -> str:
     settings = get_settings()
     api_key, base_url, model = _llm_client_config(settings)
@@ -1072,6 +1081,7 @@ def _generate_long_context_with_llm(
         knowledge_chunks=knowledge_chunks,
         knowledge_images=knowledge_images,
         tender_text=tender_text,
+        company_profile_block=company_profile_block,
     )
 
     # 整本标书很容易超过单次输出上限。被截断（finish_reason=length）时先续写
