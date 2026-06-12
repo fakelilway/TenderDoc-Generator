@@ -3,11 +3,18 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class ManualImageSlot(BaseModel):
+    title: str = ""
+    placement: str = ""
+    description: str = ""
+
+
 class BidSectionOutline(BaseModel):
     title: str
     required: bool = True
     source_item: str = ""
     focus_points: list[str] = Field(default_factory=list)
+    manual_image_slots: list[ManualImageSlot] = Field(default_factory=list)
 
 
 class BidDocumentOutlineSection(BaseModel):
@@ -17,6 +24,7 @@ class BidDocumentOutlineSection(BaseModel):
     required: bool = True
     source_item: str = ""
     focus_points: list[str] = Field(default_factory=list)
+    manual_image_slots: list[ManualImageSlot] = Field(default_factory=list)
     children: list["BidDocumentOutlineSection"] = Field(default_factory=list)
 
 

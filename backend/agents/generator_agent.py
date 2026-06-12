@@ -184,6 +184,7 @@ def build_bid_document_outline(
             required=section.required,
             source_item=section.source_item,
             focus_points=section.focus_points,
+            manual_image_slots=section.manual_image_slots,
         )
         for section in technical_outline
     ]
@@ -621,9 +622,34 @@ def _technical_volume_from_outline(
     # fall back locally inside ``generate_bid_section``.
     with ThreadPoolExecutor(max_workers=min(4, len(outline))) as executor:
         section_markdowns = list(executor.map(_render_section, outline))
-    for section_markdown in section_markdowns:
-        parts.extend([section_markdown, ""])
+    for section, section_markdown in zip(outline, section_markdowns, strict=False):
+        parts.extend([section_markdown, *_manual_image_slot_block(section), ""])
     return parts
+
+
+def _manual_image_slot_block(section: BidSectionOutline) -> list[str]:
+    slots = [
+        slot
+        for slot in section.manual_image_slots
+        if slot.title.strip() or slot.placement.strip() or slot.description.strip()
+    ]
+    if not slots:
+        return []
+    lines = ["", "#### 手动插图预留", ""]
+    for index, slot in enumerate(slots, start=1):
+        title = slot.title.strip() or f"{section.title}插图{index}"
+        placement = slot.placement.strip() or section.title
+        description = slot.description.strip() or "此处需要人工补充图片。"
+        lines.extend(
+            [
+                f"> 【人工插图 {index}】{title}",
+                f"> 所属章节：{section.title}",
+                f"> 插入位置：{placement}",
+                f"> 图片说明：{description}",
+                "",
+            ]
+        )
+    return lines
 
 
 def _business_section_from_template(

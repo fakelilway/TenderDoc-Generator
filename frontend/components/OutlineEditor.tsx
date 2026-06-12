@@ -1,7 +1,11 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from "lucide-react";
-import type { BidDocumentOutlineSection, BidOutlineSection } from "@/lib/types";
+import { ArrowDown, ArrowUp, ImagePlus, Plus, Save, Trash2 } from "lucide-react";
+import type {
+  BidDocumentOutlineSection,
+  BidOutlineSection,
+  ManualImageSlot
+} from "@/lib/types";
 
 type Props = {
   outline: BidOutlineSection[];
@@ -40,6 +44,39 @@ export function OutlineEditor({
 
   function remove(index: number) {
     onChange(outline.filter((_item, itemIndex) => itemIndex !== index));
+  }
+
+  function addImageSlot(index: number) {
+    const section = outline[index];
+    const nextSlots: ManualImageSlot[] = [
+      ...(section.manual_image_slots ?? []),
+      {
+        title: `${section.title || "本章节"}插图`,
+        placement: section.title,
+        description: ""
+      }
+    ];
+    update(index, { manual_image_slots: nextSlots });
+  }
+
+  function updateImageSlot(
+    sectionIndex: number,
+    slotIndex: number,
+    patch: Partial<ManualImageSlot>
+  ) {
+    const slots = outline[sectionIndex].manual_image_slots ?? [];
+    update(sectionIndex, {
+      manual_image_slots: slots.map((slot, index) =>
+        index === slotIndex ? { ...slot, ...patch } : slot
+      )
+    });
+  }
+
+  function removeImageSlot(sectionIndex: number, slotIndex: number) {
+    const slots = outline[sectionIndex].manual_image_slots ?? [];
+    update(sectionIndex, {
+      manual_image_slots: slots.filter((_slot, index) => index !== slotIndex)
+    });
   }
 
   return (
@@ -145,6 +182,82 @@ export function OutlineEditor({
               }
               className="mt-2 min-h-16 w-full resize-y rounded-md border border-line bg-white px-3 py-2 text-xs text-ink outline-none focus:border-brand"
             />
+            <div className="mt-3 rounded-md border border-dashed border-line bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold text-ink">手动插图位</div>
+                  <div className="mt-0.5 text-[11px] leading-4 text-muted">
+                    需要人工配图的施工图、现场图、流程图可先在这里预留位置。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-medium text-ink hover:bg-field disabled:text-muted"
+                  onClick={() => addImageSlot(index)}
+                >
+                  <ImagePlus className="h-4 w-4" />
+                  添加
+                </button>
+              </div>
+              {(section.manual_image_slots ?? []).length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  {(section.manual_image_slots ?? []).map((slot, slotIndex) => (
+                    <div
+                      key={slotIndex}
+                      className="grid gap-2 rounded-md border border-line bg-field p-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="shrink-0 text-[11px] font-semibold text-muted">
+                          图 {slotIndex + 1}
+                        </span>
+                        <input
+                          value={slot.title}
+                          disabled={busy}
+                          placeholder="图片标题，例如：施工总平面布置图"
+                          onChange={(event) =>
+                            updateImageSlot(index, slotIndex, {
+                              title: event.target.value
+                            })
+                          }
+                          className="h-8 min-w-0 flex-1 rounded-md border border-line bg-white px-2 text-xs text-ink outline-none focus:border-brand"
+                        />
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-white text-danger hover:bg-field disabled:text-muted"
+                          onClick={() => removeImageSlot(index, slotIndex)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <input
+                        value={slot.placement ?? ""}
+                        disabled={busy}
+                        placeholder="插入位置，例如：第一章 第二节 施工准备"
+                        onChange={(event) =>
+                          updateImageSlot(index, slotIndex, {
+                            placement: event.target.value
+                          })
+                        }
+                        className="h-8 rounded-md border border-line bg-white px-2 text-xs text-ink outline-none focus:border-brand"
+                      />
+                      <textarea
+                        value={slot.description ?? ""}
+                        disabled={busy}
+                        placeholder="图片说明，例如：此处人工插入交通导改示意图"
+                        onChange={(event) =>
+                          updateImageSlot(index, slotIndex, {
+                            description: event.target.value
+                          })
+                        }
+                        className="min-h-14 resize-y rounded-md border border-line bg-white px-2 py-1.5 text-xs text-ink outline-none focus:border-brand"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         ))}
       </div>

@@ -74,11 +74,18 @@ export type WorkflowTraceEvent = {
   created_at?: string;
 };
 
+export type ManualImageSlot = {
+  title: string;
+  placement?: string;
+  description?: string;
+};
+
 export type BidOutlineSection = {
   title: string;
   required: boolean;
   source_item?: string;
   focus_points: string[];
+  manual_image_slots?: ManualImageSlot[];
 };
 
 export type BidDocumentOutlineSection = {
@@ -88,6 +95,7 @@ export type BidDocumentOutlineSection = {
   required: boolean;
   source_item?: string;
   focus_points: string[];
+  manual_image_slots?: ManualImageSlot[];
   children: BidDocumentOutlineSection[];
 };
 

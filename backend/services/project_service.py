@@ -495,6 +495,9 @@ def save_project_outline(
                     for point in item.get("focus_points", [])
                     if str(point).strip()
                 ],
+                "manual_image_slots": _clean_manual_image_slots(
+                    item.get("manual_image_slots", [])
+                ),
             }
         )
     clean_document_outline = (
@@ -531,6 +534,28 @@ def _clean_document_outline(outline: list[dict[str, Any]]) -> list[dict[str, Any
     ]
 
 
+def _clean_manual_image_slots(slots: Any) -> list[dict[str, str]]:
+    if not isinstance(slots, list):
+        return []
+    clean_slots: list[dict[str, str]] = []
+    for slot in slots:
+        if not isinstance(slot, dict):
+            continue
+        title = str(slot.get("title") or "").strip()
+        placement = str(slot.get("placement") or "").strip()
+        description = str(slot.get("description") or "").strip()
+        if not title and not placement and not description:
+            continue
+        clean_slots.append(
+            {
+                "title": title,
+                "placement": placement,
+                "description": description,
+            }
+        )
+    return clean_slots
+
+
 def _build_document_outline_for_saved_technical_outline(
     project_id: int,
     technical_outline: list[dict[str, Any]],
@@ -554,6 +579,7 @@ def _build_document_outline_for_saved_technical_outline(
             required=item["required"],
             source_item=item.get("source_item", ""),
             focus_points=item.get("focus_points", []),
+            manual_image_slots=item.get("manual_image_slots", []),
         )
         for item in technical_outline
     ]

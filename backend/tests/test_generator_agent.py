@@ -9,6 +9,7 @@ from prompts.generator_prompt import (
     build_section_prompt,
     redact_pii,
 )
+from schemas.bid import BidSectionOutline
 from schemas.bid_plan import BidPlan, BidPlanSection
 from schemas.bid_template import BidTemplate, BidTemplateSection
 from schemas.tender import RequirementItem, TenderRequirements
@@ -448,6 +449,40 @@ def test_generate_bid_package_uses_section_llm_for_technical_volume(monkeypatch)
     assert "【报价文件】" in package.pricing_markdown
     assert "技术正文" in package.technical_markdown
     assert "技术正文" not in package.commercial_markdown
+
+
+def test_technical_volume_keeps_manual_image_slots(monkeypatch):
+    monkeypatch.setattr(
+        generator_agent,
+        "generate_bid_section",
+        lambda section_title, requirements, chunks: f"## {section_title}\n\n技术正文。",
+    )
+    outline = [
+        BidSectionOutline(
+            title="施工总平面布置",
+            manual_image_slots=[
+                {
+                    "title": "施工总平面布置图",
+                    "placement": "第一章 第二节",
+                    "description": "人工插入现场总平面图。",
+                }
+            ],
+        )
+    ]
+
+    markdown = "\n".join(
+        generator_agent._technical_volume_from_outline(
+            _requirements(),
+            outline,
+            {},
+            use_local_section_fallback=False,
+        )
+    )
+
+    assert "#### 手动插图预留" in markdown
+    assert "【人工插图 1】施工总平面布置图" in markdown
+    assert "插入位置：第一章 第二节" in markdown
+    assert "图片说明：人工插入现场总平面图。" in markdown
 
 
 def test_generate_bid_package_separates_business_technical_and_pricing(monkeypatch):

@@ -340,6 +340,55 @@ def test_build_project_outline_saves_complete_document_outline(monkeypatch) -> N
     assert document_outline[-1]["section_type"] == "price_missing_template"
 
 
+def test_save_project_outline_preserves_manual_image_slots(monkeypatch) -> None:
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "status": "outline_confirmed",
+                "bid_outline_json": [],
+                "document_outline_json": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    project_service.save_project_outline(
+        7,
+        [
+            {
+                "title": "施工总平面布置",
+                "focus_points": ["总平面布置要求"],
+                "manual_image_slots": [
+                    {
+                        "title": "施工总平面布置图",
+                        "placement": "第一章 第二节",
+                        "description": "人工插入现场总平面图。",
+                    }
+                ],
+            }
+        ],
+        document_outline=[
+            {
+                "title": "五、施工组织设计",
+                "volume": "技术标",
+                "section_type": "technical_volume",
+                "children": [],
+            }
+        ],
+    )
+
+    _statement, params = cursor.statements[-1]
+    saved_outline = params[0].adapted
+    assert saved_outline[0]["manual_image_slots"] == [
+        {
+            "title": "施工总平面布置图",
+            "placement": "第一章 第二节",
+            "description": "人工插入现场总平面图。",
+        }
+    ]
+
+
 def test_authorize_project_access_allows_owner(monkeypatch) -> None:
     cursor = FakeCursor([{"owner_user_id": 5}])
     monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
