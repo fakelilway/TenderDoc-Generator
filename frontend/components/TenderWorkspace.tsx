@@ -1122,24 +1122,28 @@ export function TenderWorkspace({
                 <Loader2 className={actionBusy ? "h-4 w-4 animate-spin" : "hidden"} />
                 开始生成
               </button>
-              <button
-                type="button"
-                disabled={!canConfirm || actionBusy}
-                className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
-                onClick={() => setModalOpen(true)}
-              >
-                <PencilLine className="h-4 w-4" />
-                修改意见
-              </button>
-              <button
-                type="button"
-                disabled={!canConfirm || actionBusy}
-                className="inline-flex h-9 items-center gap-2 rounded-full bg-ok px-4 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
-                onClick={handleApprove}
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                确认导出
-              </button>
+              {canConfirm ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
+                    onClick={() => setModalOpen(true)}
+                  >
+                    <PencilLine className="h-4 w-4" />
+                    修改意见
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    className="inline-flex h-9 items-center gap-2 rounded-full bg-ok px-4 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                    onClick={handleApprove}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    确认导出
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 disabled={!canDownload || actionBusy}
