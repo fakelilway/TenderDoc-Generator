@@ -563,10 +563,13 @@ def project_status(
 @app.post("/api/project/{project_id}/parse", response_model=ProjectResultResponse)
 def parse_project(
     project_id: int,
+    background_tasks: BackgroundTasks,
     _project: int = Depends(authorized_project),
 ) -> ProjectResultResponse:
     try:
-        project = project_service.parse_project(project_id)
+        project = project_service.start_parse_project(project_id)
+        if not project.get("parsed_json"):
+            background_tasks.add_task(project_service.parse_project, project_id)
     except Exception as error:
         _raise_http_error(error)
 

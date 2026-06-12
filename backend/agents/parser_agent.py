@@ -8,7 +8,7 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from core.config import get_settings
-from prompts.parser_prompt import build_parser_prompt
+from prompts.parser_prompt import build_parser_json_repair_prompt, build_parser_prompt
 from schemas.tender import RequirementItem, SourceReference, TenderRequirements
 
 
@@ -169,6 +169,16 @@ def _prepare_tender_text(text: str, max_chars: int = 45000) -> str:
         add_index(index)
 
     for index, line in enumerate(lines):
+        if _is_format_chapter_heading(line):
+            start = max(0, index - 2)
+            end = min(len(lines), index + 1200)
+            for selected_index in range(start, end):
+                if selected_index > index and _is_next_chapter_heading(
+                    lines[selected_index]
+                ):
+                    break
+                add_index(selected_index)
+            continue
         if any(keyword in line for keyword in RELEVANT_KEYWORDS):
             start = max(0, index - 4)
             end = min(len(lines), index + 12)
@@ -397,25 +407,20 @@ def _is_placeholder_field_value(value: str) -> bool:
 _FORMAT_SECTION_HEADINGS = (
     "投标文件的组成",
     "投标文件组成",
-    "投标文件格式",
     "投标文件的编制",
     "投标文件编制",
     "投标文件的签署",
     "投标文件签署",
     "投标文件的密封和标记",
     "投标文件密封和标记",
-    "投标文件的递交",
     "密封和标记",
-    "电子投标文件",
-    "投标文件上传",
 )
 
-_FORMAT_SIGNAL_KEYWORDS = (
+_FORMAT_STRONG_SIGNAL_KEYWORDS = (
     "投标文件应包括",
     "投标文件包括",
     "投标文件由",
-    "组成",
-    "格式",
+    "投标文件组成",
     "正本",
     "副本",
     "份数",
@@ -427,24 +432,24 @@ _FORMAT_SIGNAL_KEYWORDS = (
     "密封",
     "标记",
     "封套",
-    "加密",
-    "解密",
-    "电子投标文件",
+    "加密上传",
+    "非加密投标文件",
     "商务及技术文件",
-    "报价文件",
     "第一信封",
     "第二信封",
-    "投标函",
-    "投标函附录",
-    "法定代表人身份证明",
-    "授权委托书",
-    "联合体协议书",
-    "投标保证金",
-    "资格审查资料",
-    "承诺函",
-    "声明函",
-    "中小企业声明函",
-    "已标价工程量清单",
+)
+
+_TOC_DOT_LEADER_RE = re.compile(r"[.·。…]{4,}\s*\d+\s*$")
+_FORMAT_CHAPTER_RE = re.compile(
+    r"^(?:第[一二三四五六七八九十百\d]+章|[一二三四五六七八九十百\d]+[、.．])\s*投标文件格式\s*$"
+)
+_NEXT_CHAPTER_RE = re.compile(r"^第[一二三四五六七八九十百\d]+章\s+.+$")
+_NUMBERED_FORMAT_CLAUSE_RE = re.compile(
+    r"^(?:\d+(?:\.\d+){1,3}|[（(]?\d+[）)])\s*"
+    r".*(?:投标文件(?:的)?(?:组成|编制|签署|密封|标记)|密封和标记|签字|盖章|电子投标文件|非加密投标文件)"
+)
+_FORMAT_LIST_ITEM_RE = re.compile(
+    r"^(?:[（(][一二三四五六七八九十\d]+[）)]|[一二三四五六七八九十\d]+[、.])\s*.+"
 )
 
 _FORMAT_STOP_HEADING_RE = re.compile(
@@ -452,12 +457,36 @@ _FORMAT_STOP_HEADING_RE = re.compile(
 )
 
 
+def _is_toc_line(line: str) -> bool:
+    compact = re.sub(r"\s+", "", line)
+    return bool(_TOC_DOT_LEADER_RE.search(compact))
+
+
+def _is_format_chapter_heading(line: str) -> bool:
+    stripped = line.strip()
+    return bool(_FORMAT_CHAPTER_RE.match(stripped)) and not _is_toc_line(stripped)
+
+
+def _is_next_chapter_heading(line: str) -> bool:
+    stripped = line.strip()
+    return (
+        bool(_NEXT_CHAPTER_RE.match(stripped))
+        and not _is_format_chapter_heading(stripped)
+        and not _is_toc_line(stripped)
+    )
+
+
+def _is_format_list_item(line: str) -> bool:
+    return bool(_FORMAT_LIST_ITEM_RE.match(line.strip()))
+
+
 def _extract_format_requirements(text: str) -> str:
     """Capture tender-native bid-format clauses as deterministic fallback.
 
-    Formatting clauses are waste-bid sensitive. Do not rely on one exact
-    heading: many tenders scatter composition, signing, sealing and electronic
-    upload rules across "投标人须知" instead of a clean "投标文件格式" chapter.
+    Formatting clauses are waste-bid sensitive. Prefer the real
+    "第X章 投标文件格式" chapter and ignore table-of-contents dot leaders. Only
+    when that chapter is absent do we fall back to scattered strong clauses in
+    "投标人须知" about composition, signing, sealing and electronic files.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     selected: list[str] = []
@@ -465,7 +494,7 @@ def _extract_format_requirements(text: str) -> str:
 
     def add_line(line: str) -> None:
         cleaned = re.sub(r"\s+", " ", line).strip(" ；;")
-        if not cleaned:
+        if not cleaned or _is_toc_line(cleaned):
             return
         key = re.sub(r"\s+", "", cleaned)
         if key in seen:
@@ -473,39 +502,173 @@ def _extract_format_requirements(text: str) -> str:
         seen.add(key)
         selected.append(cleaned)
 
-    capturing = False
-    captured_chars = 0
-    for line in lines:
-        is_heading = any(heading in line for heading in _FORMAT_SECTION_HEADINGS)
-        if is_heading:
-            capturing = True
+    chapter_lines = _extract_format_chapter_lines(lines)
+    if chapter_lines:
+        for line in _summarize_format_chapter_lines(chapter_lines):
             add_line(line)
+        return "\n".join(f"- {line}" for line in selected)
+
+    capturing = False
+    capturing_form_list = False
+    captured_chars = 0
+    for index, line in enumerate(lines):
+        if _is_toc_line(line):
             continue
-        if capturing and _FORMAT_STOP_HEADING_RE.match(line) and captured_chars >= 800:
-            capturing = False
-        if capturing:
+        is_heading = any(heading in line for heading in _FORMAT_SECTION_HEADINGS)
+        is_strong_clause = bool(_NUMBERED_FORMAT_CLAUSE_RE.match(line)) or any(
+            keyword in line for keyword in _FORMAT_STRONG_SIGNAL_KEYWORDS
+        )
+        if is_heading or is_strong_clause:
+            capturing = True
+            capturing_form_list = "组成" in line or "投标文件应包括" in line or "投标文件包括" in line
             add_line(line)
             captured_chars += len(line)
-            if captured_chars >= 6500 or len(selected) >= 120:
-                break
-
-    for index, line in enumerate(lines):
-        if not any(keyword in line for keyword in _FORMAT_SIGNAL_KEYWORDS):
             continue
-        start = max(0, index - 2)
-        end = min(len(lines), index + 8)
-        for candidate in lines[start:end]:
-            if any(
-                keyword in candidate
-                for keyword in (*_FORMAT_SIGNAL_KEYWORDS, *_FORMAT_SECTION_HEADINGS)
+        if capturing:
+            if _FORMAT_STOP_HEADING_RE.match(line) or _is_next_chapter_heading(line):
+                capturing = False
+                capturing_form_list = False
+                continue
+            if (
+                capturing_form_list
+                and _is_format_list_item(line)
+                or any(keyword in line for keyword in _FORMAT_STRONG_SIGNAL_KEYWORDS)
             ):
-                add_line(candidate)
-        if len(selected) >= 160:
+                add_line(line)
+                captured_chars += len(line)
+        if captured_chars >= 6500 or len(selected) >= 120:
             break
 
     if not selected:
         return ""
     return "\n".join(f"- {line}" for line in selected)
+
+
+def _extract_format_chapter_lines(lines: list[str]) -> list[str]:
+    for index, line in enumerate(lines):
+        if not _is_format_chapter_heading(line):
+            continue
+        collected: list[str] = []
+        captured_chars = 0
+        for candidate in lines[index:]:
+            if collected and _is_next_chapter_heading(candidate):
+                break
+            if _is_toc_line(candidate):
+                continue
+            collected.append(candidate)
+            captured_chars += len(candidate)
+            if captured_chars >= 80000 or len(collected) >= 1400:
+                break
+        return collected if len(collected) > 1 else []
+    return []
+
+
+def _summarize_format_chapter_lines(lines: list[str]) -> list[str]:
+    """Summarise the real bid-format chapter instead of leaking raw forms."""
+    if not lines:
+        return []
+    summary: list[str] = [f"格式章节：{lines[0]}"]
+    volume_items: dict[str, list[str]] = {}
+    current_volume = ""
+    in_local_toc = False
+    notes: list[str] = []
+    awaiting_volume_suffix = False
+
+    for offset, raw in enumerate(lines[1:], start=1):
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or _is_toc_line(line):
+            continue
+        if line.isdigit():
+            if in_local_toc and current_volume and volume_items.get(current_volume):
+                in_local_toc = False
+            continue
+        if line == "投标文件":
+            awaiting_volume_suffix = True
+            continue
+        if awaiting_volume_suffix:
+            split_volume_match = re.fullmatch(r"[（(]([^）)]+)[）)]", line)
+            if split_volume_match:
+                current_volume = split_volume_match.group(1).strip()
+                volume_items.setdefault(current_volume, [])
+                in_local_toc = True
+                awaiting_volume_suffix = False
+                continue
+            awaiting_volume_suffix = False
+        volume_match = re.search(r"投标文件[（(]([^）)]+)[）)]", line)
+        if volume_match:
+            current_volume = volume_match.group(1).strip()
+            volume_items.setdefault(current_volume, [])
+            in_local_toc = True
+            continue
+        if line == "目 录" or line == "目录":
+            in_local_toc = True
+            continue
+        if line.startswith("注：") and ("投标制作软件" in line or "投标文件制作软件" in line):
+            note_parts = [line]
+            for continuation in lines[offset + 1 : offset + 5]:
+                continuation = re.sub(r"\s+", " ", continuation).strip()
+                if not continuation or continuation.isdigit():
+                    continue
+                note_parts.append(continuation)
+                if (
+                    "评审" in continuation
+                    or "两者均可" in continuation
+                    or len("".join(note_parts)) >= 180
+                ):
+                    break
+            _append_unique(notes, "".join(note_parts))
+            continue
+        if "盖单位章" in line or "签字或盖章" in line:
+            _append_unique(notes, "签字盖章：按各表单要求由投标人盖单位章，法定代表人或授权代表签字/盖章。")
+        if "电子保函" in line and "无需提供" in line:
+            _append_unique(notes, "投标保证金：采用电子保函的，系统自动抓取电子保函信息，投标文件无需另附相关证明材料。")
+        if "基本存款账户" in line and ("扫描件" in line or "编入投标文件" in line):
+            _append_unique(notes, "投标保证金：现金、纸质保函、担保或保证保险方式须按格式要求编入基本存款账户信息及相应凭证扫描件。")
+        if not current_volume:
+            continue
+        if _looks_like_form_heading(line, in_local_toc):
+            title = _clean_form_heading(line)
+            if title:
+                _append_unique(volume_items[current_volume], title)
+            continue
+        if in_local_toc and not _looks_like_form_heading(line, True):
+            # A local table of contents usually ends before the first form body.
+            in_local_toc = False
+
+    for volume, items in volume_items.items():
+        if items:
+            summary.append(f"{volume}组成：{'、'.join(items)}。")
+        else:
+            summary.append(f"{volume}：按招标文件该卷格式编制。")
+    summary.extend(notes[:8])
+    return summary
+
+
+def _looks_like_form_heading(line: str, in_local_toc: bool) -> bool:
+    if len(line) > 60:
+        return False
+    if any(mark in line for mark in ("：", "；", "。", "，", "、 ")):
+        return False
+    if re.match(r"^[（(][一二三四五六七八九十\d]+[）)]\s*.+", line):
+        return in_local_toc
+    if re.match(r"^[一二三四五六七八九十]+[、]\s*.+", line):
+        return True
+    if re.match(r"^\d+[.．]\s*.+", line):
+        return in_local_toc
+    return False
+
+
+def _clean_form_heading(line: str) -> str:
+    line = re.sub(r"^[一二三四五六七八九十\d]+[、.．]\s*", "", line)
+    line = re.sub(r"^[（(][一二三四五六七八九十\d]+[）)]\s*", "", line)
+    return line.strip(" ：:；;。")
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    value = value.strip()
+    normalized = re.sub(r"[（(]如有[）)]", "", value)
+    if value and all(re.sub(r"[（(]如有[）)]", "", item) != normalized for item in items):
+        items.append(value)
 
 
 def _merge_format_requirements(llm_text: str, rule_text: str) -> str:
@@ -816,58 +979,136 @@ def _has_rule_based_content(requirements: TenderRequirements) -> bool:
     )
 
 
+def _sanitize_json_content(content: str) -> str:
+    """Fix common LLM JSON issues: unescaped control chars, stray newlines in strings."""
+    # Collapse literal newlines inside JSON string values (not structural ones)
+    # Strategy: replace literal \n \r \t that aren't already escaped
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    # Simple pass: escape real control chars inside quoted strings
+    # More robust: let the JSON repair prompt handle truly broken JSON
+    return content
+
+
 def parse_tender_response(content: str) -> TenderRequirements:
     """Parse and validate raw LLM output into the MVP tender schema."""
     json_text = _remove_trailing_commas(_extract_json_object(content))
+    json_text = _sanitize_json_content(json_text)
     try:
         data: dict[str, Any] = json.loads(json_text)
     except json.JSONDecodeError as exc:
         raise ParserAgentError(f"Failed to decode parser JSON: {exc}") from exc
 
-    try:
-        return TenderRequirements.model_validate(data)
-    except ValidationError as exc:
+    result = TenderRequirements.model_validate(data)
+
+    # Reject effectively-empty results — an all-default skeleton is worse than
+    # an honest failure because downstream agents treat it as valid input.
+    if _is_empty_parse(result):
         raise ParserAgentError(
-            f"Parser JSON did not match TenderRequirements: {exc}"
-        ) from exc
+            "LLM returned a valid JSON skeleton with all fields empty. "
+            "This looks like a model reliability issue rather than a real parse result."
+        )
+    return result
+
+
+def _is_empty_parse(result: TenderRequirements) -> bool:
+    """True when the LLM returned only default/empty values — no real extraction happened."""
+    string_fields = (
+        result.project_name,
+        result.tenderer_name,
+        result.project_location,
+        result.tender_scope,
+        result.planned_duration,
+        result.quality_standard,
+        result.safety_target,
+        result.bid_deadline,
+        result.bid_format_requirements,
+    )
+    has_string_data = any(v.strip() for v in string_fields)
+    has_list_data = bool(
+        result.qualification_list
+        or result.technical_score_items
+        or result.invalid_bid_items
+    )
+    return not has_string_data and not has_list_data
+
+
+def _chat_json(
+    client: OpenAI,
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    timeout_seconds: float,
+    max_tokens: int,
+) -> str:
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+        timeout=timeout_seconds,
+    )
+    if not response.choices:
+        raise ParserAgentError(
+            "LLM response did not contain choices: "
+            f"{response.model_dump_json()[:1000]}"
+        )
+    return response.choices[0].message.content or ""
+
+
+def _parse_or_repair_tender_response(
+    content: str,
+    *,
+    client: OpenAI,
+    model: str,
+    timeout_seconds: float,
+) -> TenderRequirements:
+    try:
+        return parse_tender_response(content)
+    except ParserAgentError as first_error:
+        repaired = _chat_json(
+            client,
+            model,
+            build_parser_json_repair_prompt(content, str(first_error)),
+            timeout_seconds=timeout_seconds,
+            max_tokens=100000,
+        )
+        try:
+            return parse_tender_response(repaired)
+        except ParserAgentError as repair_error:
+            raise ParserAgentError(
+                f"{first_error}; JSON repair also failed: {repair_error}"
+            ) from repair_error
 
 
 def parse_tender(text: str) -> TenderRequirements:
     """Extract tender requirements with the configured OpenAI-compatible LLM."""
     if not text.strip():
         raise ValueError("Tender text is empty")
-    rule_based = _extract_rule_based_requirements(text)
     try:
         api_key, base_url, model = _get_llm_client_config()
-    except ParserAgentError:
-        if _has_rule_based_content(rule_based):
-            return rule_based
-        raise
+    except ParserAgentError as error:
+        raise ParserAgentError(f"Parser LLM is not configured: {error}") from error
 
     tender_text = _prepare_tender_text(text)
 
     try:
         timeout_seconds = _get_parser_timeout_seconds()
         client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
-        response = client.chat.completions.create(
-            model=model,
-            messages=build_parser_prompt(tender_text),
-            temperature=0,
-            max_tokens=4000,
-            response_format={"type": "json_object"},
-            timeout=timeout_seconds,
+        content = _chat_json(
+            client,
+            model,
+            build_parser_prompt(tender_text),
+            timeout_seconds=timeout_seconds,
+            max_tokens=100000,
         )
+        llm_based = _parse_or_repair_tender_response(
+            content,
+            client=client,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as error:
+        raise ParserAgentError(f"Parser LLM failed: {error}") from error
 
-        if not response.choices:
-            raise ParserAgentError(
-                "LLM response did not contain choices: "
-                f"{response.model_dump_json()[:1000]}"
-            )
-        content = response.choices[0].message.content or ""
-        llm_based = parse_tender_response(content)
-    except Exception:
-        if _has_rule_based_content(rule_based):
-            return rule_based
-        raise
-
-    return _merge_requirements(rule_based, llm_based)
+    return llm_based

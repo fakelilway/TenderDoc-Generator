@@ -96,25 +96,30 @@ def test_status_returns_parsed_flag(monkeypatch) -> None:
     assert response.json() == {"project_id": 7, "status": "parsed", "parsed": True}
 
 
-def test_parse_project_returns_result(monkeypatch) -> None:
+def test_parse_project_starts_background_parse(monkeypatch) -> None:
+    calls = []
     monkeypatch.setattr(
-        "api.main.project_service.parse_project",
+        "api.main.project_service.start_parse_project",
         lambda project_id: {
             "id": project_id,
-            "status": "parsed",
-            "parsed_json": {
-                "project_name": "测试项目",
-                "qualification_list": [],
-                "technical_score_items": [],
-                "invalid_bid_items": [],
-            },
+            "status": "parsing",
+            "parsed_json": None,
         },
+    )
+    monkeypatch.setattr(
+        "api.main.project_service.parse_project",
+        lambda project_id: calls.append(project_id),
     )
 
     response = client.post("/api/project/7/parse")
 
     assert response.status_code == 200
-    assert response.json()["parsed_json"]["project_name"] == "测试项目"
+    assert response.json() == {
+        "project_id": 7,
+        "status": "parsing",
+        "parsed_json": None,
+    }
+    assert calls == [7]
 
 
 def test_legacy_generate_and_review_endpoints_are_removed() -> None:

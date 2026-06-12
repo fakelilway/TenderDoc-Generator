@@ -27,7 +27,9 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = PROJECT_ROOT / "backend"
-DEFAULT_TEMPLATE = BACKEND_DIR / "templates/bid_templates/road_first_envelope_template.json"
+DEFAULT_TEMPLATE = (
+    BACKEND_DIR / "templates/bid_templates/road_first_envelope_template.json"
+)
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data/output"
 DEFAULT_COMPANY_NAME = "投标人名称（脱敏）"
 
@@ -44,7 +46,9 @@ from utils.docx_exporter import (  # noqa: E402
 )
 
 
-def load_requirements(path: str | Path | None, *, demo: bool = False) -> TenderRequirements:
+def load_requirements(
+    path: str | Path | None, *, demo: bool = False
+) -> TenderRequirements:
     if demo:
         return TenderRequirements(
             project_name="脱敏示例项目",
@@ -88,7 +92,9 @@ def load_retrieved_chunks(path: str | Path | None) -> dict[str, list[str]]:
         return {}
     payload = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("--retrieved-chunks must be a JSON object keyed by section title")
+        raise ValueError(
+            "--retrieved-chunks must be a JSON object keyed by section title"
+        )
     return {
         str(key): [str(item) for item in value]
         for key, value in payload.items()
@@ -205,7 +211,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-llm-generation",
         action="store_true",
-        help="Allow generator_agent to call the configured LLM; disabled by default",
+        help="Allow generator_agent to call the configured LLM; required for generation because local fallback is disabled",
     )
     return parser.parse_args()
 
@@ -237,11 +243,12 @@ def _configure_generator_runtime(
     company_name: str,
     enable_llm_generation: bool,
 ) -> None:
-    # Keep the CLI independent from .env infrastructure credentials. The
-    # generator fallback path only needs these two attributes.
+    # Keep the CLI independent from .env infrastructure credentials. Actual
+    # generation still requires the caller to enable and configure an LLM.
     generator_agent.get_settings = lambda: SimpleNamespace(
         company_name=company_name,
         enable_llm_generation=enable_llm_generation,
+        bid_generation_mode="long_context",
     )
 
 

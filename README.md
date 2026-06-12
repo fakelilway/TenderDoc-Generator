@@ -20,7 +20,7 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 公司风格案例库保留历史投标 PDF 资产，生成案例画像，记录写作深度、表格/图片位、禁用语气等风格资产；只有用户主动选择时才作为参考。
 - 生成前会构建 `EvidencePack`，把公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据分开。
 - 生成时会构建 `BidPlan`，统一决定章节顺序、可用知识片段、可插入图片、表格需求和文风边界。
-- 默认生成内核已切为长上下文模式：一次性把招标文件格式要求、确认目录、招标要求、可选风格案例、精选企业资料和图片清单交给 DeepSeek/OpenRouter 生成三卷 Markdown；旧分章节生成保留为 fallback。
+- 默认生成内核已切为长上下文模式：一次性把招标文件格式要求、确认目录、招标要求、可选风格案例、精选企业资料和图片清单交给 DeepSeek/OpenRouter 生成三卷 Markdown；解析/生成失败即失败，不再自动降级生成看似可用但可能废标的内容。
 - 商务文件、技术文件、报价文件三卷生成与预览，完整标书作为按需合并稿。
 - Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
 - DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
@@ -186,7 +186,7 @@ TenderDoc-Generator/
 
 - 前端：Next.js 14 App Router + React 18 + TypeScript + Tailwind，pnpm 管理，API 用原生 fetch 封装（`frontend/lib/api.ts`）。
 - 后端：FastAPI + uvicorn，Python 3.11（根目录 `.venv`），psycopg2 显式 SQL + 连接池，Pydantic v2，JWT 认证，FastAPI BackgroundTasks 跑长任务。
-- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认长上下文一次生成三卷，分章节生成保留为 fallback。
+- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认长上下文一次生成三卷，失败后提示修正配置、输入或提示词后重跑，不自动 fallback。
 - RAG：BAAI/bge-large-zh-v1.5（1024 维）+ pgvector，JSONB metadata 过滤。
 - 存储：PostgreSQL 15+（JSONB + pgvector）、Redis 7（workflow state）、MinIO（原文/资料/产物）。
 - 文档处理：pypdf/pdfplumber/PyMuPDF 解析，python-docx 导出（`backend/utils/docx_exporter.py` 统一排版）。

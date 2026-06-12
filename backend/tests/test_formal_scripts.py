@@ -24,7 +24,9 @@ def test_analyze_pdf_format_is_parameterized(tmp_path: Path) -> None:
     pdf_path = tmp_path / "sample.pdf"
     document = fitz.open()
     page = document.new_page()
-    page.insert_text((72, 72), "Tender file format sample", fontsize=14, fontname="helv")
+    page.insert_text(
+        (72, 72), "Tender file format sample", fontsize=14, fontname="helv"
+    )
     document.save(pdf_path)
     document.close()
 
@@ -36,17 +38,49 @@ def test_analyze_pdf_format_is_parameterized(tmp_path: Path) -> None:
     assert "Tender file format sample" in report["styles"][0]["samples"][0]
 
 
-def test_generate_bid_script_uses_template_and_sanitized_defaults(tmp_path: Path) -> None:
+def test_generate_bid_script_uses_template_and_sanitized_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     script = _load_script("generate_bid", "scripts/generate_bid.py")
     requirements = script.load_requirements(None, demo=True)
     template = script.load_template(
-        PROJECT_ROOT / "backend/templates/bid_templates/road_first_envelope_template.json"
+        PROJECT_ROOT
+        / "backend/templates/bid_templates/road_first_envelope_template.json"
+    )
+    monkeypatch.setattr(
+        script.generator_agent,
+        "_generate_long_context_with_llm",
+        lambda **kwargs: """
+# 脱敏示例项目 投标文件
+
+<!-- tdg:volume:commercial -->
+
+# 脱敏示例项目 商务文件
+
+投标人名称（脱敏）
+
+<!-- tdg:volume:technical -->
+
+# 脱敏示例项目 技术文件
+
+## 第一章、总体施工组织布置及规划
+
+我单位将严格响应招标文件要求组织施工。
+
+<!-- tdg:volume:pricing -->
+
+# 脱敏示例项目 报价文件
+
+投标报价详见已标价工程量清单。
+""",
     )
 
     artifacts = script.generate_bid_artifacts(
         requirements,
         output_dir=tmp_path,
         template=template,
+        enable_llm_generation=True,
         export_docx=False,
     )
 

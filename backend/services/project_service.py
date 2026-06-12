@@ -30,6 +30,7 @@ from core.db import get_db_connection
 from schemas.review import ReviewReport
 from schemas.strategy import PricingStrategy
 from schemas.tender import TenderRequirements
+from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from utils.docx_exporter import (
     build_export_filename,
     markdown_to_docx,
@@ -370,8 +371,19 @@ def parse_project(project_id: int) -> dict[str, Any]:
                 raise ValueError("Project tender document record was not found")
 
             cursor.execute(
-                "UPDATE projects SET status = %s WHERE id = %s",
-                ("parsing", project_id),
+                "UPDATE projects SET status = %s, workflow_state_json = %s WHERE id = %s",
+                (
+                    "parsing",
+                    Json(
+                        _parse_workflow_state(
+                            project_id,
+                            "parsing",
+                            "running",
+                            "解析 Agent 正在读取招标文件并调用 LLM。",
+                        )
+                    ),
+                    project_id,
+                ),
             )
 
     try:
@@ -387,12 +399,20 @@ def parse_project(project_id: int) -> dict[str, Any]:
         parsed = parse_tender(text)
         parsed_json = parsed.model_dump()
         status = "parsed"
-    except Exception:
+    except Exception as error:
         with _connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "UPDATE projects SET status = %s WHERE id = %s",
-                    ("failed", project_id),
+                    "UPDATE projects SET status = %s, workflow_state_json = %s WHERE id = %s",
+                    (
+                        "failed",
+                        Json(
+                            _parse_workflow_state(
+                                project_id, "failed", "failed", f"解析失败：{error}"
+                            )
+                        ),
+                        project_id,
+                    ),
                 )
         raise
 
@@ -403,13 +423,77 @@ def parse_project(project_id: int) -> dict[str, Any]:
                 UPDATE projects
                 SET parsed_json = %s,
                     tender_text = %s,
+                    workflow_state_json = %s,
                     status = %s
                 WHERE id = %s
                 RETURNING id, name, tender_file_path, parsed_json, status, created_at
                 """,
-                (Json(parsed_json), text, status, project_id),
+                (
+                    Json(parsed_json),
+                    text,
+                    Json(
+                        _parse_workflow_state(
+                            project_id,
+                            "parsed",
+                            "done",
+                            "招标文件已解析完成，结构化要求已保存。",
+                            parsed_json,
+                        )
+                    ),
+                    status,
+                    project_id,
+                ),
             )
             return dict(cursor.fetchone())
+
+
+def start_parse_project(project_id: int) -> dict[str, Any]:
+    project = _fetch_project(project_id)
+    if not project["tender_file_path"]:
+        raise ValueError("Project has no tender file path")
+    if project.get("parsed_json"):
+        return project
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                UPDATE projects
+                SET status = %s,
+                    workflow_state_json = %s
+                WHERE id = %s
+                RETURNING id, name, tender_file_path, parsed_json, status, created_at
+                """,
+                (
+                    "parsing",
+                    Json(
+                        _parse_workflow_state(
+                            project_id, "parsing", "running", "解析任务已启动，正在后台处理。"
+                        )
+                    ),
+                    project_id,
+                ),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ProjectNotFoundError(f"Project {project_id} was not found")
+    return dict(row)
+
+
+def _parse_workflow_state(
+    project_id: int,
+    status: str,
+    trace_status: str,
+    message: str,
+    parsed_json: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return WorkflowState(
+        project_id=project_id,
+        status=status,
+        parsed=parsed_json,
+        trace_events=[
+            WorkflowTraceEvent(stage="parse", status=trace_status, message=message)
+        ],
+    ).model_dump(mode="json")
 
 
 def get_project_result(project_id: int) -> dict[str, Any]:
@@ -426,10 +510,8 @@ def confirm_parsed_result(
 ) -> dict[str, Any]:
     confirmed_model = TenderRequirements.model_validate(parsed_json)
     if not confirmed_model.bid_format_requirements.strip():
-        raise ValueError(
-            "未确认投标文件格式要求。请从招标文件中补充投标文件组成、必交表单、"
-            "签字盖章、正副本、密封/电子标等要求后再确认。"
-        )
+        message = "未确认投标文件格式要求。请从招标文件中补充投标文件组成、必交表单、" "签字盖章、正副本、密封/电子标等要求后再确认。"
+        raise ValueError(message)
     confirmed = confirmed_model.model_dump()
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:

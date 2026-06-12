@@ -188,6 +188,13 @@ function errorMessage(error: unknown) {
   return String(error);
 }
 
+function latestFailedTraceMessage(state?: WorkflowState | null) {
+  const failed = [...(state?.trace_events ?? [])]
+    .reverse()
+    .find((event) => event.status === "failed" && event.message);
+  return failed?.message;
+}
+
 function triggerDownload(url: string, filename?: string) {
   const link = document.createElement("a");
   link.href = url;
@@ -257,6 +264,7 @@ export function TenderWorkspace({
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [persistentError, setPersistentError] = useState<string | null>(null);
   const [reviewReport, setReviewReport] = useState<ReviewReport | null>(null);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
   const [parsedJson, setParsedJson] = useState<TenderRequirements | null>(null);
@@ -311,6 +319,14 @@ export function TenderWorkspace({
   const chunkSaveSeq = useRef(0);
   const [knowledgeTags, setKnowledgeTags] = useState<string[]>([]);
 
+  const reportError = useCallback((caught: unknown) => {
+    const message = errorMessage(caught);
+    setError(message);
+    setPersistentError(message);
+  }, []);
+
+  const visibleError = persistentError ?? error;
+
   useEffect(() => {
     let cancelled = false;
     listKnowledgeDocuments()
@@ -356,6 +372,33 @@ export function TenderWorkspace({
     [projectId, status]
   );
   const statusBusy = busy || actionBusy || runningStatuses.has(status);
+  const clearWorkflowDerivedState = useCallback(() => {
+    setWorkflowState(null);
+    setReviewReport(null);
+    setFinalChecklist(null);
+    setFinalVersions([]);
+    setPricingStrategy(null);
+    setPricingReport(null);
+    setScorePrediction(null);
+    setResponseMatrix(null);
+    if (!dirtyFields.current.has("markdown")) {
+      setMarkdown("");
+      setDeliveryPreview(null);
+    }
+    setSelectedChunkIds([]);
+    setRagReferences([]);
+  }, []);
+
+  const clearParsedDerivedState = useCallback(() => {
+    if (!dirtyFields.current.has("parsed")) {
+      setParsedJson(null);
+      setParsedJsonText("");
+    }
+    // Outline is built/saved independently of parse; only clear on explicit project reset.
+    // The polling loop in refreshProject can fire with parsed:false transiently,
+    // and without bid_outline in workflow_state_json, cleared outline is unrecoverable.
+  }, []);
+
   const applyWorkflowSnapshot = useCallback(
     (state?: WorkflowState | null, report?: ReviewReport | null) => {
       if (state) {
@@ -412,12 +455,16 @@ export function TenderWorkspace({
             state.pricing_strategy as PricingStrategy
           );
         }
+      } else {
+        clearWorkflowDerivedState();
       }
       if (report) {
         setStateIfChanged(setReviewReport, report);
+      } else if (!state?.review_report) {
+        setReviewReport(null);
       }
     },
-    []
+    [clearWorkflowDerivedState]
   );
 
   const refreshDeliveryPreview = useCallback(async (id: number) => {
@@ -445,6 +492,14 @@ export function TenderWorkspace({
           return;
         }
         setStatus(projectStatus.status);
+        // Only clear parsed state when truly pre-parse, not on transient inconsistencies.
+        // Outline is built independently and must survive polling.
+        if (
+          !projectStatus.parsed &&
+          ["idle", "uploaded", "uploading"].includes(projectStatus.status)
+        ) {
+          clearParsedDerivedState();
+        }
         if (projectStatus.parsed && !dirtyFields.current.has("parsed")) {
           const result = await getProjectResult(id);
           if (isStale()) {
@@ -483,11 +538,40 @@ export function TenderWorkspace({
         }
       } catch (refreshError) {
         if (!silent && !isStale()) {
-          setError(errorMessage(refreshError));
+          reportError(refreshError);
         }
       }
     },
-    [applyWorkflowSnapshot, refreshDeliveryPreview]
+    [applyWorkflowSnapshot, clearParsedDerivedState, refreshDeliveryPreview, reportError]
+  );
+
+  const waitForParsedResult = useCallback(
+    async (id: number) => {
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        const projectStatus = await getProjectStatus(id);
+        if (projectIdRef.current !== id) {
+          return null;
+        }
+        setStatus(projectStatus.status);
+        if (projectStatus.parsed) {
+          const result = await getProjectResult(id);
+          if (projectIdRef.current !== id) {
+            return null;
+          }
+          return result;
+        }
+        if (["failed", "generation_failed"].includes(projectStatus.status)) {
+          const snapshot = await getProjectReviewReport(id).catch(() => null);
+          const message =
+            latestFailedTraceMessage(snapshot?.workflow_state) ||
+            "解析失败：后端未能完成招标文件结构化解析。";
+          throw new Error(message);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      }
+      throw new Error("解析仍在进行中，请稍后刷新查看结果。");
+    },
+    []
   );
 
   const startWorkflow = useCallback(
@@ -513,12 +597,12 @@ export function TenderWorkspace({
       } catch (workflowError) {
         autoStartedWorkflowProject.current = null;
         setStatus("failed");
-        setError(errorMessage(workflowError));
+        reportError(workflowError);
       } finally {
         setActionBusy(false);
       }
     },
-    [refreshDeliveryPreview, refreshProject]
+    [refreshDeliveryPreview, refreshProject, reportError]
   );
 
   const handleApprove = useCallback(async () => {
@@ -539,11 +623,11 @@ export function TenderWorkspace({
       await refreshProject(projectId);
       await refreshDeliveryPreview(projectId);
     } catch (approveError) {
-      setError(errorMessage(approveError));
+      reportError(approveError);
     } finally {
       setActionBusy(false);
     }
-  }, [projectId, refreshDeliveryPreview, refreshProject]);
+  }, [projectId, refreshDeliveryPreview, refreshProject, reportError]);
 
   const humanActionPrompt = useMemo(
     () => buildHumanActionPrompt(status, {
@@ -707,6 +791,7 @@ export function TenderWorkspace({
 
     setBusy(true);
     setError(null);
+    setPersistentError(null);
     setReviewReport(null);
     setWorkflowState(null);
     setParsedJson(null);
@@ -748,15 +833,19 @@ export function TenderWorkspace({
       setStatus(created.status);
 
       setStatus("parsing");
-      const parsed = await parseProject(created.project_id);
-      setStatus(parsed.status);
+      await parseProject(created.project_id);
+      const parsed = await waitForParsedResult(created.project_id);
+      if (!parsed) {
+        return;
+      }
       if (parsed.parsed_json) {
+        setStatus(parsed.status);
         setParsedJson(parsed.parsed_json);
         setParsedJsonText(JSON.stringify(parsed.parsed_json, null, 2));
       }
     } catch (runError) {
       setStatus("failed");
-      setError(errorMessage(runError));
+      reportError(runError);
     } finally {
       setBusy(false);
     }
@@ -781,7 +870,7 @@ export function TenderWorkspace({
       setOutline(built.bid_outline);
       setDocumentOutline(built.document_outline ?? []);
     } catch (confirmError) {
-      setError(errorMessage(confirmError));
+      reportError(confirmError);
     } finally {
       setActionBusy(false);
     }
@@ -800,7 +889,7 @@ export function TenderWorkspace({
       setOutline(built.bid_outline);
       setDocumentOutline(built.document_outline ?? []);
     } catch (outlineError) {
-      setError(errorMessage(outlineError));
+      reportError(outlineError);
     } finally {
       setActionBusy(false);
     }
@@ -819,7 +908,7 @@ export function TenderWorkspace({
       setOutline(saved.bid_outline);
       setDocumentOutline(saved.document_outline ?? []);
     } catch (outlineError) {
-      setError(errorMessage(outlineError));
+      reportError(outlineError);
     } finally {
       setActionBusy(false);
     }
@@ -847,7 +936,7 @@ export function TenderWorkspace({
       });
       setRagResults(response.results);
     } catch (searchError) {
-      setError(errorMessage(searchError));
+      reportError(searchError);
     } finally {
       setActionBusy(false);
     }
@@ -873,7 +962,7 @@ export function TenderWorkspace({
         setRagReferences(saved.references);
       }
     } catch (saveError) {
-      setError(errorMessage(saveError));
+      reportError(saveError);
     }
   }
 
@@ -893,7 +982,7 @@ export function TenderWorkspace({
       }
       await refreshDeliveryPreview(projectId);
     } catch (saveError) {
-      setError(errorMessage(saveError));
+      reportError(saveError);
     } finally {
       setActionBusy(false);
     }
@@ -913,7 +1002,7 @@ export function TenderWorkspace({
         setResponseMatrix(result.checklist.response_matrix);
       }
     } catch (checklistError) {
-      setError(errorMessage(checklistError));
+      reportError(checklistError);
     } finally {
       setActionBusy(false);
     }
@@ -930,7 +1019,7 @@ export function TenderWorkspace({
       setPricingStrategy(result.pricing_strategy);
       setPricingReport(result.pricing_report);
     } catch (strategyError) {
-      setError(errorMessage(strategyError));
+      reportError(strategyError);
     } finally {
       setActionBusy(false);
     }
@@ -946,7 +1035,7 @@ export function TenderWorkspace({
       const result = await buildProjectScorePrediction(projectId);
       setScorePrediction(result.score_prediction);
     } catch (scoreError) {
-      setError(errorMessage(scoreError));
+      reportError(scoreError);
     } finally {
       setActionBusy(false);
     }
@@ -962,7 +1051,7 @@ export function TenderWorkspace({
       const result = await buildProjectResponseMatrix(projectId);
       setResponseMatrix(result.response_matrix);
     } catch (matrixError) {
-      setError(errorMessage(matrixError));
+      reportError(matrixError);
     } finally {
       setActionBusy(false);
     }
@@ -1000,7 +1089,7 @@ export function TenderWorkspace({
       setModalOpen(false);
       await refreshProject(projectId);
     } catch (correctionError) {
-      setError(errorMessage(correctionError));
+      reportError(correctionError);
     } finally {
       setActionBusy(false);
     }
@@ -1020,7 +1109,7 @@ export function TenderWorkspace({
       const result = await getProjectDownload(projectId, artifact);
       triggerDownload(result.download_url, result.filename);
     } catch (downloadError) {
-      setError(errorMessage(downloadError));
+      reportError(downloadError);
     } finally {
       setActionBusy(false);
     }
@@ -1157,10 +1246,20 @@ export function TenderWorkspace({
         </div>
       </header>
 
-      {error ? (
-        <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger lg:mx-6">
+      {visibleError ? (
+        <div className="mx-4 mt-4 flex items-start gap-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger lg:mx-6">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>{error}</p>
+          <p className="flex-1 whitespace-pre-wrap">{visibleError}</p>
+          <button
+            type="button"
+            className="rounded-md border border-orange-200 bg-white px-2 py-1 text-xs font-semibold text-danger hover:bg-orange-100"
+            onClick={() => {
+              setPersistentError(null);
+              setError(null);
+            }}
+          >
+            关闭
+          </button>
         </div>
       ) : null}
 

@@ -202,7 +202,7 @@ def _review_with_llm(
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
-            max_tokens=1200,
+            max_tokens=100000,
             response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content or "{}"

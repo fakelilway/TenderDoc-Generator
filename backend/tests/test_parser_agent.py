@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agents.parser_agent import (
     _extract_project_name,
     _extract_rule_based_requirements,
@@ -98,19 +100,23 @@ def test_prepare_tender_text_keeps_bid_format_sections() -> None:
         [
             "前言",
             *[f"普通行{i}" for i in range(200)],
-            "投标文件的组成：投标函及投标函附录、授权委托书、投标保证金。",
-            "投标文件正本一份，副本四份，电子投标文件应加密上传。",
+            "第八章 投标文件格式",
+            "投标文件（商务文件）",
+            "一、投标函",
+            "二、法定代表人身份证明",
+            "投标文件（技术文件）",
+            "施工组织设计",
+            "投标文件（报价文件）",
             *[f"更多普通行{i}" for i in range(200)],
-            "密封和标记：封套应写明项目名称并加盖投标人单位章。",
         ]
     )
 
     focused = _prepare_tender_text(long_text, max_chars=500)
 
     assert len(focused) <= 500
-    assert "投标文件的组成" in focused
-    assert "电子投标文件应加密上传" in focused
-    assert "密封和标记" in focused
+    assert "第八章 投标文件格式" in focused
+    assert "投标文件（商务文件）" in focused
+    assert "法定代表人身份证明" in focused
 
 
 def test_rule_based_extraction_covers_real_fixture_baseline() -> None:
@@ -190,19 +196,9 @@ def test_merge_requirements_rejects_placeholder_project_name() -> None:
     assert merged.planned_duration == "90日历天"
 
 
-def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(
+def test_parse_tender_raises_when_llm_returns_non_json(
     monkeypatch,
 ) -> None:
-    text = """
-    萧县2025年农村公路提质改造联网路工程
-    （项目编号：EP-XXGC2025024）
-    项目名称：见投标人须知前附表
-    本次招标要求投标人具备独立法人资格或其他组织，具有有效的公路工程施工总承包叁级及以上资质。
-    且具备有效的安全生产许可证。
-    施工组织设计：40分。
-    投标人不按要求提交投标保证金的，评标委员会将否决其投标。
-    """
-
     class FakeCompletions:
         def create(self, **kwargs):
             return SimpleNamespace(
@@ -217,12 +213,8 @@ def test_parse_tender_falls_back_to_rules_when_llm_returns_non_json(
     )
     monkeypatch.setattr("agents.parser_agent.OpenAI", lambda **kwargs: fake_client)
 
-    parsed = parse_tender(text)
-
-    assert parsed.project_name == "萧县2025年农村公路提质改造联网路工程"
-    assert parsed.qualification_list
-    assert parsed.technical_score_items
-    assert parsed.invalid_bid_items
+    with pytest.raises(Exception, match="Parser LLM failed"):
+        parse_tender("项目名称：测试项目")
 
 
 def test_parse_tender_uses_configured_parser_timeout(monkeypatch) -> None:
@@ -271,6 +263,42 @@ def test_parse_tender_uses_configured_parser_timeout(monkeypatch) -> None:
     assert captured == {"client_timeout": 12.0, "request_timeout": 12.0}
 
 
+def test_parse_tender_repairs_invalid_json_once(monkeypatch) -> None:
+    calls: list[list[dict[str, str]]] = []
+    broken_json = '{"project_name": "测试项目" "qualification_list": []}'
+    repaired_json = json.dumps(
+        {
+            "project_name": "测试项目",
+            "qualification_list": [],
+            "technical_score_items": [],
+            "invalid_bid_items": [],
+        },
+        ensure_ascii=False,
+    )
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs["messages"])
+            content = broken_json if len(calls) == 1 else repaired_json
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+    monkeypatch.setattr(
+        "agents.parser_agent._get_llm_client_config",
+        lambda: ("test-key", "http://example.test", "test-model"),
+    )
+    monkeypatch.setattr("agents.parser_agent.OpenAI", lambda **kwargs: fake_client)
+
+    parsed = parse_tender("项目名称：测试项目")
+
+    assert parsed.project_name == "测试项目"
+    assert len(calls) == 2
+    assert "JSON 修复器" in calls[1][0]["content"]
+
+
 def test_extract_format_requirements_captures_format_chapter():
     from agents.parser_agent import _extract_format_requirements
 
@@ -288,6 +316,107 @@ def test_extract_format_requirements_captures_format_chapter():
     assert "投标文件的组成" in result
     assert "投标函及投标函附录" in result
     assert "副本四份" in result
+
+
+def test_extract_format_requirements_prefers_real_format_chapter_over_toc_noise():
+    from agents.parser_agent import _extract_format_requirements
+
+    text = (
+        "目录\n"
+        "5.投标文件的递交...............................................................6\n"
+        "第八章 投标文件格式...........................................................167\n"
+        "投标文件（商务文件）.........................................................168\n"
+        "5.投标文件的递交\n"
+        "投标文件递交的截止时间为 2025 年 07 月 16 日 10 时 00 分。\n"
+        "第八章 投标文件格式\n"
+        "投标文件（商务文件）\n"
+        "一、投标函\n"
+        "二、法定代表人身份证明\n"
+        "三、授权委托书\n"
+        "四、投标保证金\n"
+        "五、资格审查资料\n"
+        "投标文件（技术文件）\n"
+        "一、施工组织设计\n"
+        "投标文件（报价文件）\n"
+        "一、投标函\n"
+        "二、已标价工程量清单\n"
+        "第九章 其他资料\n"
+        "其他内容。\n"
+    )
+
+    result = _extract_format_requirements(text)
+
+    assert "格式章节：第八章 投标文件格式" in result
+    assert "商务文件组成：投标函、法定代表人身份证明、授权委托书、投标保证金、资格审查资料。" in result
+    assert "技术文件组成：施工组织设计。" in result
+    assert "报价文件组成：投标函、已标价工程量清单。" in result
+    assert "投标文件的递交................................" not in result
+    assert "投标文件递交的截止时间为" not in result
+    assert "第九章 其他资料" not in result
+
+
+def test_extract_format_requirements_fallback_ignores_delivery_and_guarantee_noise():
+    from agents.parser_agent import _extract_format_requirements
+
+    text = (
+        "5.投标文件的递交...............................................................6\n"
+        "第八章 投标文件格式...........................................................167\n"
+        "投标文件递交的截止时间为 2025 年 07 月 16 日 10 时 00 分。\n"
+        "13.投标保证金账户）：\n"
+        "徽商银行 户名：长丰县公共资源交易中心\n"
+        "投标报价的其 投标人报价文件投标函填写的投标总报价精确到分\n"
+        "3.7.4 非加密投标文 ☑不允许。\n"
+        "非加密投标文件由投标人自行确定是否递交。\n"
+        "非加密投标文件介质：光盘或U盘\n"
+        "非加密投标文件封套：\n"
+        "4.1.2 件密封和标记 （招标项目名称） 标段投标文件\n"
+        "要求 （非加密投标文件）\n"
+    )
+
+    result = _extract_format_requirements(text)
+
+    assert "投标文件的递交" not in result
+    assert "投标文件递交的截止时间" not in result
+    assert "投标保证金账户" not in result
+    assert "户名：长丰县公共资源交易中心" not in result
+    assert "投标总报价精确到分" not in result
+    assert "非加密投标文件封套" in result
+    assert "密封和标记" in result
+
+
+def test_extract_format_requirements_summarizes_format_chapter_not_raw_forms():
+    from agents.parser_agent import _extract_format_requirements
+
+    text = (
+        "第九章 投标文件格式\n"
+        "投标文件（商务文件）\n"
+        "目 录\n"
+        "一、投标函\n"
+        "二、法定代表人身份证明或授权委托书\n"
+        "三、投标保证金\n"
+        "致：（招标人）\n"
+        "1.我方已仔细研究（招标项目名称） 标段招标文件的全部内容。\n"
+        "投标人： （盖单位章）\n"
+        "法定代表人： （签字或盖章）\n"
+        "投标文件（技术文件）\n"
+        "一、施工组织设计\n"
+        "投标文件（报价文件）\n"
+        "一、投标函\n"
+        "二、已标价工程量清单\n"
+        "注：投标制作软件中“投标函（商务文件）”节点内容与招标文件中本项“投标函”部分内容不一致。\n"
+        "第十章 其他资料\n"
+    )
+
+    result = _extract_format_requirements(text)
+
+    assert "格式章节：第九章 投标文件格式" in result
+    assert "商务文件组成：投标函、法定代表人身份证明或授权委托书、投标保证金。" in result
+    assert "技术文件组成：施工组织设计。" in result
+    assert "报价文件组成：投标函、已标价工程量清单。" in result
+    assert "签字盖章" in result
+    assert "投标制作软件" in result
+    assert "我方已仔细研究" not in result
+    assert "第十章 其他资料" not in result
 
 
 def test_extract_format_requirements_captures_scattered_format_clauses():

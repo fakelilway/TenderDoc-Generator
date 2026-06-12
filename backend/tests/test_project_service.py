@@ -177,6 +177,45 @@ def test_parse_project_downloads_parses_and_stores_json(monkeypatch) -> None:
     assert not cursors
 
 
+def test_start_parse_project_marks_project_parsing(monkeypatch) -> None:
+    cursors = [
+        FakeCursor(
+            [
+                {
+                    "id": 42,
+                    "name": "项目",
+                    "tender_file_path": "projects/42/tender/file.txt",
+                    "parsed_json": None,
+                    "status": "uploaded",
+                    "created_at": None,
+                }
+            ]
+        ),
+        FakeCursor(
+            [
+                {
+                    "id": 42,
+                    "name": "项目",
+                    "tender_file_path": "projects/42/tender/file.txt",
+                    "parsed_json": None,
+                    "status": "parsing",
+                    "created_at": None,
+                }
+            ]
+        ),
+    ]
+
+    monkeypatch.setattr(
+        project_service, "_connect", lambda: FakeConnection(cursors.pop(0))
+    )
+
+    project = project_service.start_parse_project(42)
+
+    assert project["status"] == "parsing"
+    assert project["parsed_json"] is None
+    assert not cursors
+
+
 def test_parse_project_returns_cached_result_when_already_parsed(monkeypatch) -> None:
     cursor = FakeCursor(
         [

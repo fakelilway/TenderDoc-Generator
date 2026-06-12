@@ -286,92 +286,30 @@ def generate_bid_package(
     company_profile: dict[str, object] | None = None,
 ) -> BidPackage:
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
-    outline = build_bid_outline(requirements, bid_template)
     settings = get_settings()
     generation_mode = str(
         getattr(settings, "bid_generation_mode", "long_context") or "long_context"
     ).lower()
-    if settings.enable_llm_generation and generation_mode in {
-        "long_context",
-        "simple",
-        "auto",
-    }:
-        try:
-            return generate_bid_package_long_context(
-                requirements,
-                retrieved_chunks_by_section,
-                bid_template=bid_template,
-                pricing_strategy=pricing_strategy,
-                knowledge_images=knowledge_images,
-                bid_plan=bid_plan,
-                company_name=str(
-                    (company_profile or {}).get("company_name") or ""
-                ).strip()
-                or settings.company_name,
-                tender_text=tender_text,
-                company_profile=company_profile,
-            )
-        except Exception as error:
-            if not getattr(settings, "bid_generation_fallback_enabled", True):
-                raise
-            # Keep the product usable when the long-context model call fails:
-            # fall back to the established section pipeline and deterministic
-            # business/pricing shells.
-            logger.warning(
-                "Long-context generation failed; falling back", exc_info=True
-            )
-            fallback_reason = str(error)
-    else:
-        fallback_reason = None
-    use_local_section_fallback = False
     if not settings.enable_llm_generation:
-        use_local_section_fallback = True
-    else:
-        # The current LLM path is section-oriented and safest for technical
-        # writing. 商务/报价卷 use deterministic templates so they do not invent
-        # business facts or prices.
-        use_local_section_fallback = False
-
-    commercial = _generate_commercial_volume(
+        raise GeneratorAgentError(
+            "ENABLE_LLM_GENERATION must be true. Local fallback generation is disabled."
+        )
+    if generation_mode not in {"long_context", "simple", "auto"}:
+        raise GeneratorAgentError(
+            f"Unsupported BID_GENERATION_MODE={generation_mode!r}. "
+            "Fallback section generation is disabled; use long_context/simple/auto."
+        )
+    return generate_bid_package_long_context(
         requirements,
-        bid_template,
-        pricing_strategy,
-        settings.company_name,
-        knowledge_images,
-    )
-    technical = _generate_technical_volume(
-        requirements,
-        outline,
         retrieved_chunks_by_section,
-        bid_template,
-        use_local_section_fallback,
-        settings.company_name,
-        knowledge_images,
-        bid_plan,
-    )
-    pricing = _generate_pricing_volume(
-        requirements,
-        pricing_strategy,
-        settings.company_name,
-        missing_template=not _template_has_price_section(bid_template),
-    )
-    # The combined document carries lossless volume markers so it can later be
-    # split back into the exact volumes (see utils.docx_exporter).
-    combined = combine_delivery_volumes(
-        f"{_project_title(requirements)} 投标文件",
-        {
-            "commercial": commercial,
-            "technical": technical,
-            "pricing": pricing,
-        },
-    )
-    return BidPackage(
-        commercial_markdown=commercial,
-        technical_markdown=technical,
-        pricing_markdown=pricing,
-        combined_markdown=combined,
-        generation_mode="local_fallback" if use_local_section_fallback else "section",
-        fallback_reason=fallback_reason,
+        bid_template=bid_template,
+        pricing_strategy=pricing_strategy,
+        knowledge_images=knowledge_images,
+        bid_plan=bid_plan,
+        company_name=str((company_profile or {}).get("company_name") or "").strip()
+        or settings.company_name,
+        tender_text=tender_text,
+        company_profile=company_profile,
     )
 
 
@@ -1091,7 +1029,7 @@ def _generate_long_context_with_llm(
     timeout_seconds = float(
         getattr(settings, "bid_long_context_timeout_seconds", 180.0)
     )
-    max_tokens = int(getattr(settings, "bid_long_context_max_tokens", 12000))
+    max_tokens = int(getattr(settings, "bid_long_context_max_tokens", 100000))
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
     messages = build_long_context_prompt(
         requirements=requirements,
@@ -1109,8 +1047,8 @@ def _generate_long_context_with_llm(
     )
 
     # 整本标书很容易超过单次输出上限。被截断（finish_reason=length）时先续写
-    # 最多 LONG_CONTEXT_MAX_CONTINUATIONS 轮，保住长上下文路径的质量；仍然
-    # 截断才抛错，让调用方回退到分章管线，避免静默交付半本标书。
+    # 最多 LONG_CONTEXT_MAX_CONTINUATIONS 轮；仍然截断就直接失败，避免静默
+    # 交付半本或格式错误的标书。
     parts: list[str] = []
     finish_reason = None
     for round_index in range(1 + LONG_CONTEXT_MAX_CONTINUATIONS):
@@ -1147,7 +1085,7 @@ def _generate_long_context_with_llm(
     if finish_reason == "length":
         raise GeneratorAgentError(
             f"长上下文输出在 {1 + LONG_CONTEXT_MAX_CONTINUATIONS} 轮后仍被截断"
-            f"（max_tokens={max_tokens}），回退到分章生成。"
+            f"（max_tokens={max_tokens}）。已关闭 fallback，请提高输出上限后重试。"
         )
     combined = "".join(parts).strip()
     if not combined:
@@ -1206,7 +1144,7 @@ def _generate_section_with_llm(
             section_title, requirements, retrieved_chunks, knowledge_images
         ),
         temperature=0.2,
-        max_tokens=1800,
+        max_tokens=100000,
     )
     if not response.choices:
         raise GeneratorAgentError("LLM response did not contain choices")

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str = Field("", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
-        "https://api.deepseek.com/v1", alias="DEEPSEEK_BASE_URL"
+        "https://api.deepseek.com", alias="DEEPSEEK_BASE_URL"
     )
     deepseek_model: str = Field("deepseek-v4-pro", alias="DEEPSEEK_MODEL")
     qianwen_api_key: str = Field("", alias="QIANWEN_API_KEY")
@@ -50,19 +50,16 @@ class Settings(BaseSettings):
         "https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
     )
     openrouter_model: str = Field("deepseek/deepseek-v4-pro", alias="OPENROUTER_MODEL")
-    parser_llm_timeout_seconds: float = Field(45.0, alias="PARSER_LLM_TIMEOUT_SECONDS")
+    parser_llm_timeout_seconds: float = Field(180.0, alias="PARSER_LLM_TIMEOUT_SECONDS")
     bid_llm_provider: str = Field("auto", alias="BID_LLM_PROVIDER")
     bid_generation_mode: str = Field("long_context", alias="BID_GENERATION_MODE")
-    bid_generation_fallback_enabled: bool = Field(
-        True, alias="BID_GENERATION_FALLBACK_ENABLED"
-    )
     # 长上下文生成跑在后台线程里，不会阻塞 API；超时给足，质量优先。
     # 6000 tokens 装不下三卷标书，且 60s 等不到非流式长输出返回——
-    # fallback 关闭时等于必然失败。
+    # 生成失败时直接报错，由用户修正配置/输入后重试。
     bid_long_context_timeout_seconds: float = Field(
         300.0, alias="BID_LONG_CONTEXT_TIMEOUT_SECONDS"
     )
-    bid_long_context_max_tokens: int = Field(12000, alias="BID_LONG_CONTEXT_MAX_TOKENS")
+    bid_long_context_max_tokens: int = Field(100000, alias="BID_LONG_CONTEXT_MAX_TOKENS")
 
     embedding_model: str = Field("BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_device: str = Field("cpu", alias="EMBEDDING_DEVICE")
@@ -70,7 +67,7 @@ class Settings(BaseSettings):
     rerank_model: str = Field("BAAI/bge-reranker-base", alias="RERANK_MODEL")
 
     company_name: str = Field("安徽正奇建设有限公司", alias="COMPANY_NAME")
-    enable_llm_generation: bool = Field(False, alias="ENABLE_LLM_GENERATION")
+    enable_llm_generation: bool = Field(True, alias="ENABLE_LLM_GENERATION")
     bid_template_path: str = Field("", alias="BID_TEMPLATE_PATH")
 
     debug: bool = Field(False, alias="DEBUG")

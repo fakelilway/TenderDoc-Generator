@@ -30,7 +30,7 @@
 
 - 默认生成内核切换为**长上下文单次生成**（`BID_GENERATION_MODE=long_context`）：
   招标文件格式要求、确认目录、招标要求、可选风格案例、招标全文、企业档案、精选资料和图片清单一次性交给
-  DeepSeek/OpenRouter 生成三卷 Markdown；分章节生成保留为 fallback。
+  DeepSeek/OpenRouter 生成三卷 Markdown；解析/生成失败即失败，不再自动 fallback。
 - 招标全文持久化到 `projects.tender_text`；Parser 额外抽取招标人、地点、范围、工期、
   质量标准、安全目标、截止时间七个核心字段。
 - 公司信息档案（`/company` 页 + `company_profile` 表）：企业工商/资质/账户/项目班子

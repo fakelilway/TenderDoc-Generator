@@ -68,11 +68,13 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let hasServerDetail = false;
     const fallbackResponse = response.clone();
     try {
       const payload = (await response.json()) as { detail?: string };
       if (payload.detail) {
         message = payload.detail;
+        hasServerDetail = true;
       }
     } catch {
       const text = await fallbackResponse.text();
@@ -80,8 +82,11 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
         message = text;
       }
     }
-    if (message === "500 Internal Server Error" || message === "Internal Server Error") {
-      message = "后端请求失败，请查看实时状态里的失败原因，或稍后刷新重试。";
+    if (
+      !hasServerDetail &&
+      (message === "500 Internal Server Error" || message === "Internal Server Error")
+    ) {
+      message = "后端请求中断或返回异常。任务可能仍在后台继续，请稍后刷新状态；如果状态变为失败，请查看页面保留的错误信息。";
     }
     throw new Error(message);
   }

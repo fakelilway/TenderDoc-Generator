@@ -133,7 +133,7 @@ def run_bid_workflow(
         "读取解析结果，准备构建技术标/商务标生成上下文。",
         project_status="processing",
         model_name=settings.openrouter_model,
-        fallback=not settings.enable_llm_generation,
+        fallback=False,
     )
     project = _fetch_project(project_id)
     if not state.tender_text and project.get("tender_text"):
@@ -253,10 +253,7 @@ def run_bid_workflow(
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown
     generation_mode = bid_package.generation_mode
-    fallback_reason = bid_package.fallback_reason
     mode_note = f"生成模式：{generation_mode}"
-    if fallback_reason:
-        mode_note += f"；fallback 原因：{fallback_reason[:160]}"
     _append_trace(
         state,
         "generate",
@@ -270,7 +267,7 @@ def run_bid_workflow(
         ),
         project_status="reviewing",
         model_name=settings.openrouter_model,
-        fallback=bool(fallback_reason) or not settings.enable_llm_generation,
+        fallback=False,
     )
 
     _append_trace(

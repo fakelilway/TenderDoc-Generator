@@ -136,7 +136,6 @@ function readableStatus(status: string) {
 
 function readableTraceMeta(meta: string) {
   return meta
-    .replace("fallback", "已降级")
     .replace("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro")
     .replace("deepseek-v4-pro", "DeepSeek V4 Pro");
 }
@@ -244,7 +243,6 @@ export function StatusRail({
         meta: [
           event.model_name,
           event.duration_ms ? `${event.duration_ms}ms` : "",
-          event.fallback ? "已降级" : ""
         ]
           .filter(Boolean)
           .join(" · ")

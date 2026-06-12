@@ -85,7 +85,7 @@ def _disable_real_llm(monkeypatch) -> None:
     monkeypatch.setattr(generator_agent, "get_settings", lambda: _test_settings())
 
 
-def _enable_llm_generation(monkeypatch, mode: str = "section") -> None:
+def _enable_llm_generation(monkeypatch, mode: str = "long_context") -> None:
     monkeypatch.setattr(
         generator_agent,
         "get_settings",
@@ -96,6 +96,47 @@ def _enable_llm_generation(monkeypatch, mode: str = "section") -> None:
             if mode == "section"
             else "templates/bid_templates/road_first_envelope_template.json",
         ),
+    )
+
+
+def _mock_long_context(
+    monkeypatch, markdown: str | None = None, captured: dict | None = None
+) -> None:
+    def fake_long_context(**kwargs):
+        if captured is not None:
+            captured.update(kwargs)
+        return (
+            markdown
+            or f"""# 星河湾二期高层住宅施工总承包项目 投标文件
+
+{VOLUME_MARKERS["commercial"]}
+
+# 星河湾二期高层住宅施工总承包项目 商务文件
+
+投标人：安徽正奇建设有限公司
+致：星河湾置业有限公司
+我单位承诺响应招标文件商务要求，计划工期 300日历天。
+
+{VOLUME_MARKERS["technical"]}
+
+# 星河湾二期高层住宅施工总承包项目 技术文件
+
+## 施工组织设计
+
+长上下文生成的施工组织设计正文。
+
+{VOLUME_MARKERS["pricing"]}
+
+# 星河湾二期高层住宅施工总承包项目 报价文件
+
+## 报价文件
+
+投标报价详见已标价工程量清单。
+"""
+        )
+
+    monkeypatch.setattr(
+        generator_agent, "_generate_long_context_with_llm", fake_long_context
     )
 
 
@@ -251,14 +292,32 @@ def test_generate_bid_section_fallback_has_markdown_and_no_placeholder(monkeypat
 
 def test_structured_evidence_chunks_do_not_render_as_text(monkeypatch):
     _enable_llm_generation(monkeypatch)
-    monkeypatch.setattr(
-        generator_agent,
-        "generate_bid_section",
-        lambda section_title, requirements, chunks, knowledge_images=None: generator_agent._generate_section_fallback(
-            section_title,
-            requirements,
-            chunks,
-        ),
+    captured = {}
+    _mock_long_context(
+        monkeypatch,
+        markdown=f"""# 星河湾二期高层住宅施工总承包项目 投标文件
+
+{VOLUME_MARKERS["commercial"]}
+
+# 商务文件
+
+我单位承诺响应招标文件商务要求。
+
+{VOLUME_MARKERS["technical"]}
+
+# 技术文件
+
+## 人员证件
+
+{{{{knowledge_image:document_id=36 caption="江舟建安B证"}}}}
+
+{VOLUME_MARKERS["pricing"]}
+
+# 报价文件
+
+投标报价详见已标价工程量清单。
+""",
+        captured=captured,
     )
     evidence = generator_agent.RetrievalResult(
         chunk_id=541,
@@ -293,22 +352,13 @@ def test_structured_evidence_chunks_do_not_render_as_text(monkeypatch):
     assert "证件/证明：安全生产许可证" not in package.combined_markdown
     assert "{{knowledge_image:document_id=36" in package.combined_markdown
     assert "江舟建安B证" in package.combined_markdown
+    assert captured["knowledge_chunks"] == []
 
 
-def test_bid_plan_filters_section_chunks_and_images(monkeypatch):
+def test_bid_plan_filters_images_before_long_context_generation(monkeypatch):
     _enable_llm_generation(monkeypatch)
     captured = {}
-
-    def fake_generate_section(
-        section_title, requirements, chunks, knowledge_images=None
-    ):
-        captured[section_title] = {
-            "chunks": list(chunks),
-            "knowledge_images": knowledge_images or [],
-        }
-        return f"## {section_title}\n\n" + "\n".join(chunks or ["无资料"])
-
-    monkeypatch.setattr(generator_agent, "generate_bid_section", fake_generate_section)
+    _mock_long_context(monkeypatch, captured=captured)
     template = _bid_template()
     useful = generator_agent.RetrievalResult(
         chunk_id=22,
@@ -336,7 +386,7 @@ def test_bid_plan_filters_section_chunks_and_images(monkeypatch):
         ]
     )
 
-    package = generator_agent.generate_bid_package(
+    generator_agent.generate_bid_package(
         _requirements(),
         {"第一章、总体施工组织布置及规划": [useful, unrelated]},
         bid_template=template,
@@ -347,50 +397,23 @@ def test_bid_plan_filters_section_chunks_and_images(monkeypatch):
         bid_plan=plan,
     )
 
-    assert captured["第一章、总体施工组织布置及规划"]["chunks"] == ["施工组织设计有效素材"]
-    assert captured["第一章、总体施工组织布置及规划"]["knowledge_images"] == [
+    assert captured["knowledge_images"] == [
         {"document_id": 36, "caption": "施工平面图", "tags": ["施工平面图"]}
     ]
-    assert "不属于本章节的商务资料" not in package.technical_markdown
 
 
-def test_generate_bid_package_uses_complete_bid_file_shell(monkeypatch):
-    monkeypatch.setattr(
-        generator_agent,
-        "generate_bid_section",
-        lambda section_title, requirements, chunks: f"## {section_title}\n\n正文。",
-    )
+def test_generate_bid_package_requires_llm_enabled(monkeypatch):
+    _disable_real_llm(monkeypatch)
 
-    package = generator_agent.generate_bid_package(_requirements(), {})
-    markdown = package.combined_markdown
-
-    assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
-    assert "投标人：安徽正奇建设有限公司" in markdown
-    assert "星河湾置业有限公司" in markdown
-    assert "300日历天" in markdown
-    assert "高层住宅土建、安装、装饰及室外配套工程施工" in markdown
-    assert "## 一、投标函及投标函附录" not in markdown
-    assert "## 五、施工组织设计" not in markdown
-    assert "## 施工组织设计" in markdown
-    assert "## 报价文件" in markdown
-    # Authoring meta-text must NOT leak into the production bid.
-    assert "人工确认点" not in markdown
-    assert "待补充" not in markdown
-    assert "本章响应度自查" not in markdown
-    assert "废标风险逐条响应自查表" not in markdown
-    assert "### 施工组织设计目录" in markdown
-    assert "- 第一章、总体施工组织布置及规划" in markdown
+    with pytest.raises(generator_agent.GeneratorAgentError, match="Local fallback"):
+        generator_agent.generate_bid_package(_requirements(), {})
 
 
 def test_generate_bid_package_combined_markdown_carries_lossless_volume_markers(
     monkeypatch,
 ):
     _enable_llm_generation(monkeypatch)
-    monkeypatch.setattr(
-        generator_agent,
-        "generate_bid_section",
-        lambda section_title, requirements, chunks: f"## {section_title}\n\n技术正文。",
-    )
+    _mock_long_context(monkeypatch)
 
     package = generator_agent.generate_bid_package(
         _requirements(),
@@ -402,54 +425,42 @@ def test_generate_bid_package_combined_markdown_carries_lossless_volume_markers(
     for key in ("commercial", "technical", "pricing"):
         assert VOLUME_MARKERS[key] in markdown
 
-    # Sections are generated concurrently but must stay in outline order.
-    assert package.technical_markdown.index(
-        "## 第一章、总体施工组织布置及规划"
-    ) < package.technical_markdown.index("## 第二章、专项交通导改与保通方案")
-
     volumes = split_delivery_markdown(markdown)
     assert volumes["commercial"] == package.commercial_markdown.strip()
     assert volumes["technical"] == package.technical_markdown.strip()
     assert volumes["pricing"] == package.pricing_markdown.strip()
 
 
-def test_generate_bid_package_includes_template_appendices():
+def test_generate_bid_package_passes_template_outline_to_long_context(monkeypatch):
+    _enable_llm_generation(monkeypatch)
+    captured = {}
+    _mock_long_context(monkeypatch, captured=captured)
+
     package = generator_agent.generate_bid_package(
         _requirements(),
         {},
         bid_template=_bid_template(),
     )
-    markdown = package.combined_markdown
 
-    assert "- 第二章、专项交通导改与保通方案" in markdown
-    assert "## 附图附表" in markdown
-    assert "### 附表一、施工总体计划表" in markdown
-    assert "## 一、投标函及投标函附录" in markdown
-    assert "## 八、资格审查资料" in markdown
-    assert markdown.index("## 一、投标函及投标函附录") < markdown.index("## 施工组织设计")
-    assert "## 报价文件（第二信封/经济标，如招标文件要求）" in markdown
-    assert "### 1. 施工组织设计" not in markdown
+    outline_titles = [item["title"] for item in captured["document_outline"]]
+    assert "一、投标函及投标函附录" in outline_titles
+    assert "五、施工组织设计" in outline_titles
+    assert "附图附表" in outline_titles
+    assert package.generation_mode == "long_context"
 
 
-def test_generate_bid_package_uses_section_llm_for_technical_volume(monkeypatch):
+def test_generate_bid_package_uses_long_context_for_all_volumes(monkeypatch):
     _enable_llm_generation(monkeypatch)
-    monkeypatch.setattr(
-        generator_agent,
-        "generate_bid_section",
-        lambda section_title, requirements, chunks: f"## {section_title}\n\n技术正文。",
-    )
+    _mock_long_context(monkeypatch)
 
     package = generator_agent.generate_bid_package(_requirements(), {})
     markdown = package.combined_markdown
 
     assert markdown.startswith("# 星河湾二期高层住宅施工总承包项目 投标文件")
     assert "投标人：安徽正奇建设有限公司" in markdown
-    assert "## 二、商务标" in markdown
-    assert "【技术文件】" in package.technical_markdown
-    assert "【商务文件】" in package.commercial_markdown
-    assert "【报价文件】" in package.pricing_markdown
-    assert "技术正文" in package.technical_markdown
-    assert "技术正文" not in package.commercial_markdown
+    assert "长上下文生成的施工组织设计正文" in package.technical_markdown
+    assert "我单位承诺响应招标文件商务要求" in package.commercial_markdown
+    assert "投标报价详见已标价工程量清单" in package.pricing_markdown
 
 
 def test_technical_volume_keeps_manual_image_slots(monkeypatch):
@@ -494,10 +505,30 @@ def test_generate_bid_package_separates_business_technical_and_pricing(monkeypat
             RequirementItem(title="施工组织设计", description="施工组织设计 40 分")
         ],
     )
-    monkeypatch.setattr(
-        generator_agent,
-        "generate_bid_section",
-        lambda section_title, requirements, chunks: f"## {section_title}\n\n施工组织技术正文。",
+    _mock_long_context(
+        monkeypatch,
+        markdown=f"""# 萧县2025年农村公路提质改造联网路工程 投标文件
+
+{VOLUME_MARKERS["commercial"]}
+
+# 萧县2025年农村公路提质改造联网路工程 商务文件
+
+投标人：安徽正奇建设有限公司
+
+{VOLUME_MARKERS["technical"]}
+
+# 萧县2025年农村公路提质改造联网路工程 技术文件
+
+## 施工组织设计
+
+施工组织技术正文。
+
+{VOLUME_MARKERS["pricing"]}
+
+# 萧县2025年农村公路提质改造联网路工程 报价文件
+
+报价文件目录。
+""",
     )
 
     package = generator_agent.generate_bid_package(requirements, {})
@@ -506,7 +537,6 @@ def test_generate_bid_package_separates_business_technical_and_pricing(monkeypat
     assert markdown.startswith("# 萧县2025年农村公路提质改造联网路工程 投标文件")
     assert "见投标人须知前附表 投标文件" not in markdown
     assert "投标人：安徽正奇建设有限公司" in markdown
-    assert "## 二、商务标" in markdown
     assert "施工组织技术正文" in package.technical_markdown
     assert "施工组织技术正文" not in package.commercial_markdown
     assert "报价文件目录" in package.pricing_markdown
@@ -543,8 +573,33 @@ def test_sanitize_bid_markdown_removes_meta_and_rag_noise() -> None:
     assert "________" in cleaned
 
 
-def test_generated_fallback_uses_formal_bid_tone(monkeypatch):
+def test_long_context_output_is_sanitized_before_delivery(monkeypatch):
     _enable_llm_generation(monkeypatch)
+    _mock_long_context(
+        monkeypatch,
+        markdown=f"""# 星河湾二期高层住宅施工总承包项目 投标文件
+
+{VOLUME_MARKERS["commercial"]}
+
+# 商务文件
+
+本部分仅生成报价文件目录和编制说明，系统不自动生成任何报价数值。
+我单位承诺响应招标文件商务要求。
+
+{VOLUME_MARKERS["technical"]}
+
+# 技术文件
+
+本附表按招标文件和真实投标模板要求设置。
+我单位将按施工组织设计组织实施。
+
+{VOLUME_MARKERS["pricing"]}
+
+# 报价文件
+
+投标报价详见已标价工程量清单。
+""",
+    )
     package = generator_agent.generate_bid_package(
         _requirements(),
         {},
@@ -562,8 +617,9 @@ def test_generated_fallback_uses_formal_bid_tone(monkeypatch):
     ]
     for phrase in forbidden:
         assert phrase not in markdown
-    assert "本附表依据招标文件、施工图纸、工程量清单及施工组织设计编制" in markdown
-    assert "本报价文件依据招标文件、工程量清单、施工图纸" in markdown
+    assert "我单位承诺响应招标文件商务要求。" in markdown
+    assert "我单位将按施工组织设计组织实施。" in markdown
+    assert "投标报价详见已标价工程量清单。" in markdown
 
 
 def test_generator_prompt_embeds_real_format_spec_and_forbids_meta() -> None:
@@ -808,22 +864,13 @@ def test_generate_bid_package_prefers_long_context_kernel(monkeypatch) -> None:
     assert VOLUME_MARKERS["commercial"] in package.combined_markdown
 
 
-def test_generate_bid_package_falls_back_when_long_context_fails(monkeypatch) -> None:
+def test_generate_bid_package_raises_when_long_context_fails(monkeypatch) -> None:
     _enable_llm_generation(monkeypatch, mode="long_context")
     monkeypatch.setattr(
         generator_agent,
         "_generate_long_context_with_llm",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("model timeout")),
     )
-    monkeypatch.setattr(
-        generator_agent,
-        "generate_bid_section",
-        lambda section_title, requirements, chunks, knowledge_images=None: f"## {section_title}\n\n分章节兜底正文。",
-    )
 
-    package = generator_agent.generate_bid_package(_requirements(), {})
-
-    assert "分章节兜底正文" in package.technical_markdown
-    assert "商务文件" in package.commercial_markdown
-    assert package.generation_mode == "section"
-    assert package.fallback_reason == "model timeout"
+    with pytest.raises(RuntimeError, match="model timeout"):
+        generator_agent.generate_bid_package(_requirements(), {})
