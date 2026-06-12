@@ -102,6 +102,9 @@ def markdown_to_docx(
 
     _render_markdown_body(document, markdown_text, style_profile, image_resolver)
 
+    if toc or page_numbers:
+        _enable_field_updates(document)
+
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     document.save(path)
@@ -285,11 +288,20 @@ def _add_knowledge_image(
     )
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # 正奇风格的 Normal 是固定 32 磅行距，整页高的扫描件会向上溢出
+    # 盖住前文；图片段落必须用单倍行距，并把高度限制在版心内。
+    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
     run = paragraph.add_run()
-    run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+    picture = run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+    max_height = Cm(20)
+    if picture.height > max_height:
+        scale = max_height / picture.height
+        picture.width = int(picture.width * scale)
+        picture.height = int(max_height)
     if caption:
         caption_paragraph = document.add_paragraph(caption)
         caption_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        caption_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
         _style_paragraph_runs(
             caption_paragraph,
             BODY_CJK_FONT,
@@ -409,23 +421,12 @@ def _configure_header_footer(
                 WD_ALIGN_PARAGRAPH.RIGHT if is_zhengqi else WD_ALIGN_PARAGRAPH.CENTER
             )
             footer_paragraph.text = "第" if is_zhengqi else "第 "
+            _append_field(footer_paragraph, "PAGE", placeholder="1")
+            footer_paragraph.add_run("页/共" if is_zhengqi else " 页 / 共 ")
+            _append_field(footer_paragraph, "NUMPAGES", placeholder="1")
+            footer_paragraph.add_run("页" if is_zhengqi else " 页")
             _style_paragraph_runs(
                 footer_paragraph,
-                FOOTER_CJK_FONT if is_zhengqi else BODY_CJK_FONT,
-                10.5 if is_zhengqi else None,
-            )
-            _append_field(footer_paragraph, "PAGE")
-            separator = "页/共" if is_zhengqi else " 页 / 共 "
-            separator_run = footer_paragraph.add_run(separator)
-            _set_run_font(
-                separator_run,
-                FOOTER_CJK_FONT if is_zhengqi else BODY_CJK_FONT,
-                10.5 if is_zhengqi else None,
-            )
-            _append_field(footer_paragraph, "NUMPAGES")
-            end_run = footer_paragraph.add_run("页" if is_zhengqi else " 页")
-            _set_run_font(
-                end_run,
                 FOOTER_CJK_FONT if is_zhengqi else BODY_CJK_FONT,
                 10.5 if is_zhengqi else None,
             )
@@ -471,49 +472,51 @@ def _add_table_of_contents(document: Document) -> None:
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     paragraph = document.add_paragraph()
-    run = paragraph.add_run()
     _append_field(
-        run_or_paragraph=run,
+        paragraph,
         instruction='TOC \\o "1-3" \\h \\z \\u',
-        placeholder="请在 Word 中右键“更新域”以生成目录。",
+        placeholder="（目录将在 Word 打开时自动生成；若未生成请右键“更新域”。）",
     )
     document.add_page_break()
 
 
+def _enable_field_updates(document: Document) -> None:
+    """Ask Word to recalculate all fields (TOC/PAGE/NUMPAGES) when opening."""
+    settings = document.settings.element
+    update = settings.find(qn("w:updateFields"))
+    if update is None:
+        update = OxmlElement("w:updateFields")
+        settings.append(update)
+    update.set(qn("w:val"), "true")
+
+
 def _append_field(
-    run_or_paragraph,
+    paragraph,
     instruction: str,
     placeholder: str | None = None,
 ):
-    """Append a Word field (e.g. PAGE/TOC) to a run or paragraph."""
-    run = (
-        run_or_paragraph.add_run()
-        if hasattr(run_or_paragraph, "add_run")
-        else run_or_paragraph
-    )
-    element = run._r
+    """Append a Word field (e.g. PAGE/TOC) to a paragraph.
 
-    begin = OxmlElement("w:fldChar")
-    begin.set(qn("w:fldCharType"), "begin")
-    element.append(begin)
+    Each fldChar/instrText lives in its own run — packing them into a single
+    run is invalid OOXML and breaks field evaluation in WPS/preview renderers.
+    """
 
-    instr = OxmlElement("w:instrText")
-    instr.set(qn("xml:space"), "preserve")
-    instr.text = f" {instruction} "
-    element.append(instr)
+    def _flagged_run(tag: str, attr: str | None = None) -> None:
+        run = paragraph.add_run()
+        element = OxmlElement(tag)
+        if attr:
+            element.set(qn("w:fldCharType"), attr)
+        else:
+            element.set(qn("xml:space"), "preserve")
+            element.text = f" {instruction} "
+        run._r.append(element)
 
-    separate = OxmlElement("w:fldChar")
-    separate.set(qn("w:fldCharType"), "separate")
-    element.append(separate)
-
+    _flagged_run("w:fldChar", "begin")
+    _flagged_run("w:instrText")
+    _flagged_run("w:fldChar", "separate")
     if placeholder:
-        text = OxmlElement("w:t")
-        text.text = placeholder
-        element.append(text)
-
-    end = OxmlElement("w:fldChar")
-    end.set(qn("w:fldCharType"), "end")
-    element.append(end)
+        paragraph.add_run(placeholder)
+    _flagged_run("w:fldChar", "end")
 
 
 def _extract_title(markdown_text: str) -> str | None:
