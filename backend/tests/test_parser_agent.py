@@ -249,3 +249,28 @@ def test_parse_tender_uses_configured_parser_timeout(monkeypatch) -> None:
 
     assert parsed.project_name == "测试项目"
     assert captured == {"client_timeout": 12.0, "request_timeout": 12.0}
+
+
+def test_extract_format_requirements_captures_format_chapter():
+    from agents.parser_agent import _extract_format_requirements
+
+    text = (
+        "第三章 评标办法\n"
+        "评标采用综合评估法。\n"
+        "投标文件的组成\n"
+        "投标文件应包括下列内容：\n"
+        "（一）投标函及投标函附录；\n"
+        "（二）法定代表人身份证明或授权委托书；\n"
+        "（三）投标保证金缴纳凭证。\n"
+        "投标文件正本一份，副本四份。\n"
+    )
+    result = _extract_format_requirements(text)
+    assert "投标文件的组成" in result
+    assert "投标函及投标函附录" in result
+    assert "副本四份" in result
+
+
+def test_extract_format_requirements_empty_when_no_chapter():
+    from agents.parser_agent import _extract_format_requirements
+
+    assert _extract_format_requirements("本项目位于萧县，计划工期90日历天。") == ""

@@ -45,3 +45,28 @@ def test_long_context_prompt_omits_profile_section_when_empty():
         document_outline=[],
     )
     assert "投标人企业档案（已人工核实" not in messages[1]["content"]
+
+
+def test_long_context_prompt_includes_format_requirements():
+    requirements = TenderRequirements(
+        project_name="测试项目",
+        bid_format_requirements="- 投标文件分商务及技术文件、报价文件两个信封\n- 正本一份副本四份",
+    )
+    messages = build_long_context_prompt(
+        requirements=requirements,
+        company_name="安徽正奇建设有限公司",
+        document_outline=[],
+    )
+    user_prompt = messages[1]["content"]
+    assert "招标文件格式要求（最高权威" in user_prompt
+    assert "正本一份副本四份" in user_prompt
+
+
+def test_long_context_prompt_format_requirements_fallback_text():
+    requirements = TenderRequirements(project_name="测试项目")
+    messages = build_long_context_prompt(
+        requirements=requirements,
+        company_name="安徽正奇建设有限公司",
+        document_outline=[],
+    )
+    assert "未提取到明确格式要求" in messages[1]["content"]

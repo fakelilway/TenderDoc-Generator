@@ -174,6 +174,9 @@ def build_long_context_prompt(
 - 安全目标：{requirements.safety_target or "________"}
 - 投标截止时间：{requirements.bid_deadline or "________"}
 
+【招标文件格式要求（最高权威，商务卷组成和表单必须逐项满足）】
+{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；商务卷按【完整标书目录/模板结构】输出。"}
+
 【必须输出的卷册】
 请严格按下面三个内部卷册标记输出，标记本身必须原样保留，便于系统拆分 DOCX：
 <!-- tdg:volume:commercial -->

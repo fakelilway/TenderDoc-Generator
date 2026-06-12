@@ -23,6 +23,10 @@ class TenderRequirements(BaseModel):
     quality_standard: str = Field("", description="质量标准/质量目标，未知时为空字符串")
     safety_target: str = Field("", description="安全目标，未知时为空字符串")
     bid_deadline: str = Field("", description="投标截止时间，未知时为空字符串")
+    bid_format_requirements: str = Field(
+        "",
+        description="招标文件对投标文件组成、必交表单、份数、装订、密封、签字盖章等格式要求的总结，未知时为空字符串",
+    )
     qualification_list: list[RequirementItem] = Field(default_factory=list)
     technical_score_items: list[RequirementItem] = Field(default_factory=list)
     invalid_bid_items: list[RequirementItem] = Field(default_factory=list)

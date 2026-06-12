@@ -369,6 +369,44 @@ def _is_placeholder_field_value(value: str) -> bool:
     )
 
 
+_FORMAT_SECTION_HEADINGS = (
+    "投标文件的组成",
+    "投标文件组成",
+    "投标文件格式",
+    "投标文件的编制",
+    "投标文件的密封和标记",
+    "密封和标记",
+)
+
+
+def _extract_format_requirements(text: str) -> str:
+    """Capture the tender's own bid-format chapter as a deterministic fallback.
+
+    The LLM summary is preferred; this raw excerpt guards the no-LLM path so
+    the generator still sees the tender's composition/sealing requirements.
+    """
+    lines = [line.strip() for line in text.splitlines()]
+    collected: list[str] = []
+    capturing = False
+    captured_chars = 0
+    for line in lines:
+        if not line:
+            continue
+        is_heading = any(heading in line for heading in _FORMAT_SECTION_HEADINGS) and len(
+            line
+        ) <= 40
+        if is_heading:
+            capturing = True
+            collected.append(f"- {line}")
+            continue
+        if capturing:
+            collected.append(f"- {line}")
+            captured_chars += len(line)
+            if captured_chars >= 1200 or len(collected) >= 40:
+                break
+    return "\n".join(collected) if len(collected) > 1 else ""
+
+
 def _extract_rule_based_requirements(text: str) -> TenderRequirements:
     """Extract high-confidence tender clauses with deterministic MVP rules."""
     project_name = _extract_project_name(text)
@@ -603,6 +641,7 @@ def _extract_rule_based_requirements(text: str) -> TenderRequirements:
     return TenderRequirements(
         project_name=project_name,
         **core_fields,
+        bid_format_requirements=_extract_format_requirements(text),
         qualification_list=_dedupe_items(qualification_items),
         technical_score_items=_dedupe_items(score_items),
         invalid_bid_items=_dedupe_items(invalid_items),
@@ -633,6 +672,12 @@ def _merge_requirements(
         ),
         safety_target=_prefer_text(rule_based.safety_target, llm_based.safety_target),
         bid_deadline=_prefer_text(rule_based.bid_deadline, llm_based.bid_deadline),
+        # LLM 的格式总结是给生成 Agent 的整理版指令，优先于规则抓取的原文片段；
+        # 不走 _prefer_text 以保留多行结构
+        bid_format_requirements=(
+            llm_based.bid_format_requirements.strip()
+            or rule_based.bid_format_requirements.strip()
+        ),
         qualification_list=_dedupe_items(
             [*rule_based.qualification_list, *llm_based.qualification_list]
         ),
@@ -691,7 +736,7 @@ def parse_tender(text: str) -> TenderRequirements:
             model=model,
             messages=build_parser_prompt(tender_text),
             temperature=0,
-            max_tokens=3000,
+            max_tokens=4000,
             response_format={"type": "json_object"},
             timeout=timeout_seconds,
         )
