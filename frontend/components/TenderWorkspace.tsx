@@ -295,7 +295,7 @@ export function TenderWorkspace({
   const [responseMatrix, setResponseMatrix] = useState<ResponseMatrix | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [activeLine, setActiveLine] = useState<number | null>(null);
-  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("combined");
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("split");
   const [deliveryFormat, setDeliveryFormat] = useState<DeliveryFormat>("docx");
   const [activeDeliveryVolume, setActiveDeliveryVolume] =
     useState<DeliveryVolumeKey>("commercial");
@@ -1309,30 +1309,13 @@ export function TenderWorkspace({
             <div>
               <p className="font-semibold">标书已完成，可按投递网站要求下载</p>
               <p className="text-xs text-[#6e6e73]">
-                合并文件顺序固定为商务文件、技术文件、报价文件；也可按分卷分别投递。
+                商务文件、技术文件、报价文件分别下载投递。
               </p>
             </div>
           </div>
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-full border border-black/[0.06] bg-black/[0.045] p-1">
-                {(["combined", "split"] as DeliveryMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setDeliveryMode(mode)}
-                    className={[
-                      "h-8 rounded-full px-3 text-xs font-semibold transition",
-                      deliveryMode === mode
-                        ? "bg-white text-[#1d1d1f] shadow-sm"
-                        : "text-[#6e6e73] hover:bg-white/60"
-                    ].join(" ")}
-                  >
-                    {mode === "combined" ? "合并投递" : "分开投递"}
-                  </button>
-                ))}
-              </div>
               <div className="inline-flex rounded-full border border-black/[0.06] bg-black/[0.045] p-1">
                 {(["docx", "pdf"] as DeliveryFormat[]).map((format) => (
                   <button
@@ -1353,36 +1336,22 @@ export function TenderWorkspace({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {deliveryMode === "combined" ? (
+              {deliveryVolumes.map((volume) => (
                 <button
+                  key={volume.key}
                   type="button"
                   disabled={actionBusy}
                   onClick={() =>
-                    handleDownload(deliveryArtifact("combined", deliveryFormat))
+                    handleDownload(
+                      deliveryArtifact("split", deliveryFormat, volume.key)
+                    )
                   }
                   className="inline-flex h-10 items-center gap-2 rounded-full bg-[#34c759] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(52,199,89,0.18)] hover:bg-[#2fb34f] disabled:cursor-not-allowed disabled:bg-[#b8e8c3]"
                 >
                   <Download className="h-4 w-4" />
-                  合并{deliveryFormat.toUpperCase()}
+                  {volume.label}
                 </button>
-              ) : (
-                deliveryVolumes.map((volume) => (
-                  <button
-                    key={volume.key}
-                    type="button"
-                    disabled={actionBusy}
-                    onClick={() =>
-                      handleDownload(
-                        deliveryArtifact("split", deliveryFormat, volume.key)
-                      )
-                    }
-                    className="inline-flex h-10 items-center gap-2 rounded-full bg-[#34c759] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(52,199,89,0.18)] hover:bg-[#2fb34f] disabled:cursor-not-allowed disabled:bg-[#b8e8c3]"
-                  >
-                    <Download className="h-4 w-4" />
-                    {volume.label}
-                  </button>
-                ))
-              )}
+              ))}
             </div>
           </div>
 
