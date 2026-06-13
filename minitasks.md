@@ -5,6 +5,8 @@
 **当前在跑版本：** V2 原文复制骨架（已接入 API，`BID_GENERATION_MODE=v2`）
 **当前重点：** 内容质量优化（表格密度、施工方案篇幅、项目针对性、填空率）
 
+**🔥 DOCX OOXML 原样复制已上线:** `original_docx_format_service.py` — DOCX 输入直接 copy 格式章 OOXML，表格/边框/下划线/对齐/合并单元格全部保真。失败不回退。
+
 ---
 
 ## V2 迁移路线图（原文复制骨架）

@@ -4,38 +4,30 @@
 
 ---
 
-## 当前状态 (2026-06-14 00:40)
+## 当前状态 (2026-06-14 02:01)
 
-**V2 全文复制骨架 — 流程跑通，正在优化内容质量**
+**V2 原文复制骨架 — DOCX 已实现真正的 OOXML 原样复制**
 
 ```
 ✅ V2-M1~M7 全部完成
 ✅ 5/5 真实 case 格式提取通过
-✅ API: BID_GENERATION_MODE=v2 (3bc10f8)
-✅ Content Writer 强化: ≥5段/节, 真实中标风格示例
-✅ Form Filler 强化: 招标人/项目名/工期/质量自动填入
-🔧 待加强: 表格数量少(3 vs 49-75)、施工方案篇幅薄(9K vs 41K-322K字)
-
-📊 VS 真实中标标书基线:
-  南陵县三里镇(183页/41K字) + 萧县2025(892页/322K字) = 黄金标准
-  每次生成后对比: 表格密度/施工篇幅/项目针对性/填空率
+✅ API: BID_GENERATION_MODE=v2
+✅ 🔥 DOCX OOXML 原样复制: 表格边框/合并单元格/下划线/对齐 100% 保真
+⚠️ PDF: 仍走 Markdown 骨架路径（未实现原样复制）
 ```
 
-## 开发环境
+**边界（说死，不误解）:**
+- DOCX 输入 → `original_docx_format_service.py` 直接 copy 格式章 OOXML 元素
+- DOCX 复制失败 → 直接报错，**不回退 Markdown 近似**
+- PDF 输入 → Markdown 骨架路径（PDF→DOCX 原样复制是独立工程）
+- 替换：仅占位符 `（招标人名称）（项目名称）` 做有限替换，不碰格式
 
-```
-后端: localhost:8001 (BID_GENERATION_MODE=v2)
-前端: localhost:3000
-数据库: Docker (PostgreSQL + Redis + MinIO)
-测试: ./venv/bin/python3 -m pytest tests/ -q
-```
+**新文件:**
+- `backend/services/original_docx_format_service.py` — 核心
+- `backend/tests/test_original_docx_format_service.py` — 256 passed, 3 skipped
 
-## 真实 Case 覆盖
+**真实中标标书基线（对比用）:**
+- 南陵县三里镇: 183页/41K字 商务+技术+报价全有
+- 萧县2025公路: 892页/322K字 200+页施工方案工程细节
 
-| Case | 类型 | 格式页 | 验证 |
-|------|------|--------|------|
-| 长丰县罗塘乡 | 三卷 公开招标 | 32页 | ✅ |
-| 萧县2025公路 | 双信封 | 41页 | ✅ |
-| 南陵县三里镇 | 双信封 | 36页 | ✅ |
-| 颍州区袁集镇 | 竞争性磋商 DOCX | 8页 | ✅ |
-| 鸠江区日常养护 | 竞争性磋商 养护 | 9页 | ✅ |
+**原则铁律:** 结构交给原文；原文 > 代码 > LLM
