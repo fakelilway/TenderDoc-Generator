@@ -914,6 +914,9 @@ def parse_tender_response(content: str) -> TenderRequirements:
 
     result = TenderRequirements.model_validate(data)
 
+    # Ensure format_outline_tree has the three required volume keys.
+    _normalize_format_tree(result)
+
     # Reject effectively-empty results — an all-default skeleton is worse than
     # an honest failure because downstream agents treat it as valid input.
     if _is_empty_parse(result):
@@ -922,6 +925,70 @@ def parse_tender_response(content: str) -> TenderRequirements:
             "This looks like a model reliability issue rather than a real parse result."
         )
     return result
+
+
+def _normalize_format_tree(result: TenderRequirements) -> None:
+    """Ensure format_outline_tree has the three canonical keys."""
+    for key in ("commercial", "technical", "pricing"):
+        if key not in result.format_outline_tree:
+            result.format_outline_tree[key] = []
+
+
+def _build_fallback_format_tree(text: str) -> dict[str, list[Any]]:
+    """Build a flat format outline tree from the rule-based format extraction.
+    
+    Lacking the LLM's insight into nesting, this provides at least flat lists
+    of known form names per volume as a safety net.
+    """
+    # Import inline to avoid circular imports
+    from schemas.tender import FormatOutlineNode  # noqa: F811
+
+    requirements = _extract_rule_based_requirements(text)
+    fmt_req = requirements.bid_format_requirements
+    tree: dict[str, list[FormatOutlineNode]] = {
+        "commercial": [],
+        "technical": [],
+        "pricing": [],
+    }
+
+    if not fmt_req:
+        return tree
+
+    current_volume = ""
+    for line in fmt_req.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("- "):
+            continue
+        content = line[2:].strip()
+        if "商务" in content and "组成" in content:
+            current_volume = "commercial"
+            tree[current_volume] = _parse_volume_forms(content)
+        elif "技术" in content and "组成" in content:
+            current_volume = "technical"
+            tree[current_volume] = _parse_volume_forms(content)
+        elif "报价" in content and "组成" in content:
+            current_volume = "pricing"
+            tree[current_volume] = _parse_volume_forms(content)
+
+    return tree
+
+
+def _parse_volume_forms(line: str) -> list[Any]:
+    """Extract form names from a volume composition line like
+    "商务文件组成：投标函、法定代表人身份证明、投标保证金、项目管理机构"."""
+    from schemas.tender import FormatOutlineNode  # noqa: F811
+
+    index = line.find("：") if "：" in line else line.find(":")
+    if index == -1:
+        return []
+    forms_text = line[index + 1 :]
+    form_names = [name.strip(" 。；;，,") for name in forms_text.split("、") if name.strip(" 。；;，,")]
+    return [FormatOutlineNode(title=name) for name in form_names[:50]]
+
+
+def _is_format_tree_empty(tree: dict[str, list[Any]]) -> bool:
+    """True when no volume has any nodes."""
+    return all(len(tree.get(k, [])) == 0 for k in ("commercial", "technical", "pricing"))
 
 
 def _is_empty_parse(result: TenderRequirements) -> bool:
@@ -1035,4 +1102,8 @@ def parse_tender(text: str) -> TenderRequirements:
     llm_based.bid_format_requirements = _merge_format_requirements(
         llm_based.bid_format_requirements, rule_format
     )
+    # If the LLM did not produce a format outline tree (or it is empty),
+    # use the rule-based extraction to build a flat fallback.
+    if _is_format_tree_empty(llm_based.format_outline_tree):
+        llm_based.format_outline_tree = _build_fallback_format_tree(text)
     return llm_based

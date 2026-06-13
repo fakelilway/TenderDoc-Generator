@@ -171,10 +171,18 @@ def _mock_multi_agent(monkeypatch, captured: dict | None = None) -> None:
             captured.setdefault("audit_calls", []).append(kwargs)
         return {"status": "pass", "summary": "三卷符合框架。", "issues": []}
 
+    def fake_structure_audit(**kwargs):
+        if captured is not None:
+            captured.setdefault("structure_audit_calls", []).append(kwargs)
+        return {"status": "pass", "summary": "结构完全匹配。", "issues": []}
+
     monkeypatch.setattr(
         generator_agent, "_generate_volume_with_llm", fake_generate_volume
     )
     monkeypatch.setattr(generator_agent, "_revise_volume_with_llm", fake_revise_volume)
+    monkeypatch.setattr(
+        generator_agent, "_run_structure_audit_with_llm", fake_structure_audit
+    )
     monkeypatch.setattr(
         generator_agent, "_run_generation_audit_with_llm", fake_generation_audit
     )
@@ -942,6 +950,11 @@ def test_generate_bid_package_multi_agent_revises_failed_audit(
         generator_agent, "_generate_volume_with_llm", fake_generate_volume
     )
     monkeypatch.setattr(generator_agent, "_revise_volume_with_llm", fake_revise_volume)
+    monkeypatch.setattr(
+        generator_agent,
+        "_run_structure_audit_with_llm",
+        lambda **kwargs: {"status": "pass", "summary": "结构匹配。", "issues": []},
+    )
     monkeypatch.setattr(generator_agent, "_run_generation_audit_with_llm", fake_audit)
 
     package = generator_agent.generate_bid_package(_requirements(), {})

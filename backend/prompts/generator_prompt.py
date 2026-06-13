@@ -409,6 +409,68 @@ def build_volume_revision_prompt(
     ]
 
 
+def build_structure_audit_prompt(
+    *,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, Any]],
+    framework_brief: str = "",
+    commercial_markdown: str,
+    technical_markdown: str,
+    pricing_markdown: str,
+) -> list[dict[str, str]]:
+    """Pass 1 audit: format outline tree match only. No content inspection."""
+    project_name = requirements.project_name or "投标项目"
+    tree_text = _format_outline_tree(requirements.format_outline_tree)
+    user_prompt = f"""请作为投标文件结构审查 Agent，只做一件事：对比招标文件格式目录树和三卷生成的目录结构是否一致。
+
+你只审查结构，不审查内容质量、废标风险、文笔、排版。结构不对的标书，内容写再好也没有意义。
+
+项目名称：{project_name}
+投标人：{company_name}
+
+【招标文件格式目录树（唯一标准）】
+只允许以下节点，不得多、不得少、不得放错卷：
+{tree_text or framework_brief or "未能提取格式目录树，跳过结构审计"}
+
+【框架约束（分发前已确认）】
+{framework_brief or build_bid_framework_brief(requirements, document_outline)}
+
+【各卷生成内容（只检查其目录/标题结构，不读正文）】
+为节省 token，只提供每卷前 2000 字符（已含主要标题结构）：
+
+== commercial / 商务资格卷 ==
+{commercial_markdown[:2000]}
+== technical / 技术卷 ==
+{technical_markdown[:2000]}
+== pricing / 报价经济卷 ==
+{pricing_markdown[:2000]}
+
+【输出要求】
+只输出合法 JSON：
+{{
+  "status": "pass" 或 "revise",
+  "summary": "一句话结构审查结论",
+  "structural_issues": [
+    {{
+      "volume": "commercial" 或 "technical" 或 "pricing",
+      "problem": "缺失节点 / 多余节点 / 放错卷 / 层级错位",
+      "expected": "招标文件要求的是什么",
+      "actual": "生成的是什么",
+      "revision_prompt": "给该卷 Agent 的结构修改指令，只说怎么改结构，不说怎么写内容"
+    }}
+  ]
+}}
+- status=pass 当且仅当三卷结构完全匹配格式目录树（节点数量、层级、归属卷全部一致）。
+- 只要有任一卷缺失必需节点、多出未要求节点、子节点层级错位或归属卷错误，status 必须是 revise。
+- revision_prompt 只给结构层面的修改指令。不得涉及内容质量、废标风险或文笔。
+"""
+    return [
+        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def build_generation_audit_prompt(
     *,
     requirements: TenderRequirements,
@@ -421,7 +483,7 @@ def build_generation_audit_prompt(
     tender_text: str = "",
 ) -> list[dict[str, str]]:
     project_name = requirements.project_name or "投标项目"
-    user_prompt = f"""请作为投标文件总审 Agent，对三卷 Markdown 做废标风险和格式框架一致性审查。
+    user_prompt = f"""请作为投标文件内容审查 Agent（Pass 2：结构已通过），对三卷 Markdown 做废标风险、事实准确性和格式细节审查。
 
 角色边界：
 - 你不是合稿 Agent，不得输出修改后的标书正文。
@@ -469,8 +531,7 @@ def build_generation_audit_prompt(
       }}
     ]
   }}
-- 通过条件：三卷均严格服从框架；没有越卷章节；没有重复生成不属于该卷的投标函/报价函/资格表/施工组织设计；没有漏掉招标文件格式要求的必需表单；没有生成器语气或无依据事实。
-- 若招标文件明确要求双信封，商务及技术文件和报价文件各自的投标函可同时存在；这不是重复，除非某一卷生成了不属于自己的投标函。
+- 通过条件（结构已在 Pass 1 通过，此处只审内容）：没有废标/否决风险遗漏；没有生成器语气或 AI 元文本；没有编造企业事实数据；没有漏掉招标文件中的实质性资格、技术或评分要求；必填表单内容不为空。
 - 如果发现问题，status 必须是 "revise"，issues 必须逐条给出对应 volume 和可执行 revision_prompt。
 """
     return [
@@ -532,6 +593,8 @@ def build_bid_framework_brief(
         )
     lines.extend(
         [
+            "招标文件格式要求的完整目录树（必须按此结构生成，不得增减节点）：",
+            _format_outline_tree(requirements.format_outline_tree),
             "强制规则：",
             "- 三个分卷 Agent 只能生成自己分配到的节点，不得互相补写。",
             "- 同名表单必须按卷册归属区分；双信封项目允许商务及技术文件和报价文件分别存在投标函。",
@@ -539,6 +602,55 @@ def build_bid_framework_brief(
         ]
     )
     return "\n".join(lines)
+
+
+def _format_outline_tree(tree: dict[str, list[Any]], indent: int = 0) -> str:
+    """Render a format outline tree as indented ASCII-like text."""
+    import json
+
+    if not tree:
+        return "- 未提取到格式目录树；按人工确认目录生成。"
+
+    volume_labels = {"commercial": "商务文件", "technical": "技术文件", "pricing": "报价文件"}
+    lines: list[str] = []
+
+    for vol_key, vol_label in volume_labels.items():
+        nodes = tree.get(vol_key, [])
+        if not nodes:
+            continue
+        lines.append(f"{vol_label}")
+        for node in nodes:
+            if isinstance(node, dict):
+                title = node.get("title", "")
+                children = node.get("children", [])
+            else:
+                title = getattr(node, "title", "")
+                children = getattr(node, "children", [])
+            if not title:
+                continue
+            if children:
+                lines.append(f"├── {title}")
+                for child in children:
+                    if isinstance(child, dict):
+                        child_title = child.get("title", "")
+                        grand_children = child.get("children", [])
+                    else:
+                        child_title = getattr(child, "title", "")
+                        grand_children = getattr(child, "children", [])
+                    if not child_title:
+                        continue
+                    if grand_children:
+                        lines.append(f"│   ├── {child_title}")
+                        for gc in grand_children:
+                            gc_title = gc.get("title", "") if isinstance(gc, dict) else getattr(gc, "title", "")
+                            if gc_title:
+                                lines.append(f"│   │   └── {gc_title}")
+                    else:
+                        lines.append(f"│   └── {child_title}")
+            else:
+                lines.append(f"└── {title}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def _format_items(items: list[str]) -> str:

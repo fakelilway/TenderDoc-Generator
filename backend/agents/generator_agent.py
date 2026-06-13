@@ -14,6 +14,7 @@ from core.config import get_settings
 from prompts.generator_prompt import (
     build_bid_framework_brief,
     build_generation_audit_prompt,
+    build_structure_audit_prompt,
     build_long_context_prompt,
     build_section_prompt,
     build_volume_agent_prompt,
@@ -540,10 +541,59 @@ def generate_bid_package_multi_agent(
     with ThreadPoolExecutor(max_workers=len(VOLUME_ORDER)) as executor:
         volumes = dict(executor.map(build_volume, VOLUME_ORDER))
 
-    audit: dict[str, Any] = {"status": "pass", "issues": []}
+    # ---- Pass 1: Structure audit (format outline tree match) ----
+    structure_audit: dict[str, Any] = {"status": "pass", "issues": []}
     for audit_round in range(MULTI_AGENT_AUDIT_MAX_ITERATIONS + 1):
         _validate_nonempty_volumes(volumes)
-        audit = _run_generation_audit_with_llm(
+        structure_audit = _run_structure_audit_with_llm(
+            requirements=requirements,
+            company_name=company_name,
+            document_outline=document_outline,
+            framework_brief=framework_brief,
+            commercial_markdown=volumes["commercial"],
+            technical_markdown=volumes["technical"],
+            pricing_markdown=volumes["pricing"],
+        )
+        if _audit_passed(structure_audit):
+            break
+        if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
+            raise GeneratorAgentError(
+                f"Structure audit failed after {MULTI_AGENT_AUDIT_MAX_ITERATIONS + 1} attempts: "
+                f"{_audit_failure_message(structure_audit)}"
+            )
+        feedback_by_volume = _audit_feedback_by_volume(structure_audit)
+        targets = [
+            v for v in VOLUME_ORDER if feedback_by_volume.get(v, "").strip()
+        ]
+        if not targets:
+            raise GeneratorAgentError(
+                "Structure audit requested revision but did not identify a target volume."
+            )
+        with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+            volumes.update(
+                dict(
+                    executor.map(
+                        lambda v: _revise_single_volume(
+                            v,
+                            volumes[v],
+                            requirements,
+                            company_name,
+                            document_outline,
+                            framework_brief,
+                            feedback_by_volume[v],
+                            bid_plan_json,
+                            pricing_strategy_json,
+                            tender_text,
+                        ),
+                        targets,
+                    )
+                )
+            )
+
+    # ---- Pass 2: Content audit (废标风险, factual accuracy, etc.) ----
+    content_audit: dict[str, Any] = {"status": "pass", "issues": []}
+    for audit_round in range(MULTI_AGENT_AUDIT_MAX_ITERATIONS + 1):
+        content_audit = _run_generation_audit_with_llm(
             requirements=requirements,
             company_name=company_name,
             document_outline=document_outline,
@@ -553,45 +603,38 @@ def generate_bid_package_multi_agent(
             pricing_markdown=volumes["pricing"],
             tender_text=tender_text,
         )
-        if _audit_passed(audit):
+        if _audit_passed(content_audit):
             break
         if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
-            raise GeneratorAgentError(_audit_failure_message(audit))
-        feedback_by_volume = _audit_feedback_by_volume(audit)
+            raise GeneratorAgentError(_audit_failure_message(content_audit))
+        feedback_by_volume = _audit_feedback_by_volume(content_audit)
         targets = [
-            volume
-            for volume in VOLUME_ORDER
-            if feedback_by_volume.get(volume, "").strip()
+            v for v in VOLUME_ORDER if feedback_by_volume.get(v, "").strip()
         ]
         if not targets:
             raise GeneratorAgentError(
-                "Generation audit requested revision but did not identify a target volume."
+                "Content audit requested revision but did not identify a target volume."
             )
-
-        def revise_target(volume: str) -> tuple[str, str]:
-            revised = _revise_volume_with_llm(
-                volume=volume,
-                draft_markdown=sanitize_bid_markdown(volumes[volume]),
-                requirements=requirements,
-                company_name=company_name,
-                document_outline=document_outline,
-                framework_brief=framework_brief,
-                audit_feedback=feedback_by_volume[volume],
-                bid_plan=bid_plan_json,
-                pricing_strategy=pricing_strategy_json,
-                tender_text=tender_text,
-            )
-            return (
-                volume,
-                _ensure_volume_heading(
-                    volume,
-                    sanitize_bid_markdown(revised),
-                    requirements,
-                ),
-            )
-
         with ThreadPoolExecutor(max_workers=len(targets)) as executor:
-            volumes.update(dict(executor.map(revise_target, targets)))
+            volumes.update(
+                dict(
+                    executor.map(
+                        lambda v: _revise_single_volume(
+                            v,
+                            volumes[v],
+                            requirements,
+                            company_name,
+                            document_outline,
+                            framework_brief,
+                            feedback_by_volume[v],
+                            bid_plan_json,
+                            pricing_strategy_json,
+                            tender_text,
+                        ),
+                        targets,
+                    )
+                )
+            )
 
     commercial = sanitize_bid_markdown(volumes["commercial"])
     technical = sanitize_bid_markdown(volumes["technical"])
@@ -1400,6 +1443,74 @@ def _revise_volume_with_llm(
         messages,
         agent_name=f"{volume} revision agent",
         continuation_instruction="继续输出修订后的本卷 Markdown，从上次中断处继续，不要重复已输出内容。",
+    )
+
+
+def _run_structure_audit_with_llm(
+    *,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, Any]],
+    framework_brief: str = "",
+    commercial_markdown: str,
+    technical_markdown: str,
+    pricing_markdown: str,
+) -> dict[str, Any]:
+    """Pass 1: check format outline tree match. Returns audit dict with status/structural_issues."""
+    settings = get_settings()
+    api_key, base_url, model = _llm_client_config(settings)
+    messages = build_structure_audit_prompt(
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        framework_brief=framework_brief,
+        commercial_markdown=commercial_markdown,
+        technical_markdown=technical_markdown,
+        pricing_markdown=pricing_markdown,
+    )
+    raw = _generate_messages_with_llm(
+        client=OpenAI(api_key=api_key, base_url=base_url, timeout=60.0),
+        model=model,
+        messages=messages,
+        max_tokens=3000,
+    )
+    audit = _parse_generation_audit_response(raw)
+    if "structural_issues" in audit and "issues" not in audit:
+        audit["issues"] = audit.pop("structural_issues")
+    return audit
+
+
+def _revise_single_volume(
+    volume: str,
+    draft_markdown: str,
+    requirements: TenderRequirements,
+    company_name: str | None,
+    document_outline: list[dict[str, Any]],
+    framework_brief: str,
+    audit_feedback: str,
+    bid_plan: dict[str, Any] | None,
+    pricing_strategy: dict[str, Any] | None,
+    tender_text: str,
+) -> tuple[str, str]:
+    revised = _revise_volume_with_llm(
+        volume=volume,
+        draft_markdown=sanitize_bid_markdown(draft_markdown),
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        framework_brief=framework_brief,
+        audit_feedback=audit_feedback,
+        bid_plan=bid_plan,
+        pricing_strategy=pricing_strategy,
+        tender_text=tender_text,
+    )
+    return (
+        volume,
+        _ensure_volume_heading(
+            volume,
+            sanitize_bid_markdown(revised),
+            requirements,
+        ),
     )
 
 
