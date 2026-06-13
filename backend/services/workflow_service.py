@@ -249,6 +249,7 @@ def run_bid_workflow(
         bid_plan=bid_plan,
         tender_text=state.tender_text,
         company_profile=company_profile,
+        document_outline=state.document_outline,
     )
     state.draft_volumes = bid_package.volume_map()
     state.draft_markdown = bid_package.combined_markdown

@@ -3,7 +3,7 @@
 本文件只记录当前状态和未完成任务。已完成任务的详细完成标准和测试方法见 git 历史
 （`git log --follow minitasks.md` 可找回原 1100 行明细版）。
 
-**最后更新**：2026-06-12
+**最后更新**：2026-06-13
 
 ---
 
@@ -23,14 +23,16 @@
 | 9. 项目管理与输出 | M57–M60 | 历史项目恢复、DOCX 升级（封面/目录域/页眉脚）、完成通知 |
 | 10. 真实案例学习 | M61–M64 | 真实投标 PDF → 脱敏案例 JSON、风格库管理与推荐 |
 | 11. 正奇专用化 | M65–M67 | 产品范围收敛、知识库结构化标签、公路案例样本 |
+| 13. Multi-Agent 分卷生成 | M78–M84 | 框架先行、商务/技术/报价分卷 Agent、分卷 Revision、总审打回循环，保留 long_context 回滚 |
 | 架构收敛 | M75 | TemplateProfile + EvidencePack + BidPlan 三层职责边界 |
 | 知识库批量入库 | M76 | manifest 扫描/审核/导入脚本，默认 dry-run |
 
 ### 后续架构调整（不在 M 编号内）
 
-- 默认生成内核切换为**长上下文单次生成**（`BID_GENERATION_MODE=long_context`）：
-  招标文件格式要求、确认目录、招标要求、可选风格案例、招标全文、企业档案、精选资料和图片清单一次性交给
-  DeepSeek/OpenRouter 生成三卷 Markdown；解析/生成失败即失败，不再自动 fallback。
+- 生成内核新增 **Multi-Agent 分卷生成**（`BID_GENERATION_MODE=multi_agent`）：
+  保持 `generate_bid_package(...)` 外部契约不变，内部先生成框架 Skill 摘要，再由商务标 Agent、技术标 Agent、报价文件 Agent
+  分卷生成，再由分卷 Revision Agent 结合招标全文纠错，最后由总审 Agent 输出 JSON 修改意见并按卷打回循环；三卷最终由代码确定性拼接，LLM 不再合稿；`long_context`
+  仍保留为回滚模式。解析/生成失败即失败，不再自动 fallback。
 - 招标全文持久化到 `projects.tender_text`；Parser 额外抽取招标人、地点、范围、工期、
   质量标准、安全目标、截止时间七个核心字段。
 - 公司信息档案（`/company` 页 + `company_profile` 表）：企业工商/资质/账户/项目班子
@@ -42,6 +44,16 @@
   注入；格式要求为空时后端拒绝确认；历史模板退为可选公司风格案例，不再默认控制结构。
 - 大纲编辑支持手动插图位：按技术章节保存人工配图标题、插入位置和说明，生成稿保留
   `【人工插图】` 占位，后续可人工替换为施工图、现场图或流程图。
+
+### Phase 13 Mini Tasks（M78–M84）✅ 已完成代码落地
+
+- M78：固定生成契约。`generate_bid_package(...)` 仍是唯一外部入口，返回 `BidPackage` 三卷和合并稿。
+- M79：新增 Agent Context Builder。生成链路接收人工确认 `document_outline`、BidPlan、企业档案、知识库文本/图片和招标全文。
+- M80：新增分卷生成 Agent。商务/资格、技术/施工组织设计、报价/经济标分别独立生成。
+- M81：新增分卷 Revision Agent。每卷拿本卷初稿、招标全文、格式要求和确认目录做纠错，不跨卷重写。
+- M82：新增总审 Agent。总审只输出 JSON 审查结果和按卷打回指令；三卷 marker 由代码拼接，避免 LLM 合稿丢 marker。
+- M83：合并导出兼容。继续使用 `combine_delivery_volumes`、`split_delivery_markdown`、`draft_volumes`、`draft_markdown`。
+- M84：测试覆盖。新增 multi-agent prompt、分卷生成、分卷修订、总审打回循环、失败不 fallback 测试。
 
 ---
 
@@ -112,7 +124,7 @@
 
 ## 下一步优先级
 
-1. 真实验证长上下文生成质量（填 DeepSeek key，跑真实项目，看内容深度）。
+1. 真实验证 multi-agent 分卷生成质量（填 DeepSeek key，跑真实项目，看商务/技术/报价三卷深度和一致性）。
 2. 补 M72 的去重/更新策略，扩大知识库真实资料导入。
 3. M68/M73：用真实脱敏样本建立质量基线。
 4. M69–M71：内网部署、备份审计、任务队列，推向公司可控试用。

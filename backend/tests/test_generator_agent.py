@@ -5,8 +5,12 @@ import pytest
 from agents import generator_agent
 from prompts.generator_prompt import (
     GENERATOR_SYSTEM_PROMPT,
+    build_bid_framework_brief,
+    build_generation_audit_prompt,
     build_long_context_prompt,
     build_section_prompt,
+    build_volume_agent_prompt,
+    build_volume_revision_prompt,
     redact_pii,
 )
 from schemas.bid import BidSectionOutline
@@ -138,6 +142,45 @@ def _mock_long_context(
     monkeypatch.setattr(
         generator_agent, "_generate_long_context_with_llm", fake_long_context
     )
+
+
+def _mock_multi_agent(monkeypatch, captured: dict | None = None) -> None:
+    generated: list[str] = []
+    revised: list[str] = []
+
+    def fake_generate_volume(**kwargs):
+        volume = kwargs["volume"]
+        generated.append(volume)
+        if captured is not None:
+            captured.setdefault("volume_calls", []).append(kwargs)
+        return {
+            "commercial": "# 商务文件\n\n我单位承诺响应商务和资格要求。",
+            "technical": "# 技术文件\n\n施工组织设计正文，包含质量、安全、进度措施。",
+            "pricing": "# 报价文件\n\n投标报价详见已标价工程量清单，金额为________元。",
+        }[volume]
+
+    def fake_revise_volume(**kwargs):
+        volume = kwargs["volume"]
+        revised.append(volume)
+        if captured is not None:
+            captured.setdefault("revision_calls", []).append(kwargs)
+        return kwargs["draft_markdown"] + f"\n\n{volume} revision checked."
+
+    def fake_generation_audit(**kwargs):
+        if captured is not None:
+            captured.setdefault("audit_calls", []).append(kwargs)
+        return {"status": "pass", "summary": "三卷符合框架。", "issues": []}
+
+    monkeypatch.setattr(
+        generator_agent, "_generate_volume_with_llm", fake_generate_volume
+    )
+    monkeypatch.setattr(generator_agent, "_revise_volume_with_llm", fake_revise_volume)
+    monkeypatch.setattr(
+        generator_agent, "_run_generation_audit_with_llm", fake_generation_audit
+    )
+    if captured is not None:
+        captured["generated"] = generated
+        captured["revised"] = revised
 
 
 def test_build_bid_outline_uses_technical_score_items() -> None:
@@ -704,6 +747,237 @@ def test_long_context_prompt_includes_extracted_conditions_and_manual_fields() -
     assert "计划工期300日历天" in prompt
     assert "最高限价5000万元" in prompt
     assert "投标总价" in prompt
+
+
+def test_multi_agent_prompts_define_volume_scope_and_revision_boundaries() -> None:
+    document_outline = [
+        {
+            "title": "一、投标函",
+            "volume": "商务/资格标",
+            "section_type": "fixed_form",
+            "children": [],
+        },
+        {
+            "title": "五、施工组织设计",
+            "volume": "技术标",
+            "section_type": "construction_design",
+            "children": [{"title": "第一章、总体施工组织布置及规划"}],
+        },
+        {
+            "title": "报价文件",
+            "volume": "报价/经济标",
+            "section_type": "price",
+            "children": [],
+        },
+    ]
+
+    volume_messages = build_volume_agent_prompt(
+        volume="technical",
+        requirements=_requirements(),
+        company_name="安徽正奇建设有限公司",
+        document_outline=document_outline,
+        knowledge_chunks=[
+            {
+                "section_title": "五、施工组织设计",
+                "title": "施工方案.docx",
+                "content": "施工总体部署经验。",
+            }
+        ],
+        tender_text="评分办法：施工组织设计30分。",
+    )
+    revision_messages = build_volume_revision_prompt(
+        volume="technical",
+        draft_markdown="# 技术文件\n\n初稿。",
+        requirements=_requirements(),
+        company_name="安徽正奇建设有限公司",
+        document_outline=document_outline,
+        tender_text="评分办法：施工组织设计30分。",
+    )
+    framework_brief = build_bid_framework_brief(_requirements(), document_outline)
+    audit_messages = build_generation_audit_prompt(
+        requirements=_requirements(),
+        company_name="安徽正奇建设有限公司",
+        document_outline=document_outline,
+        framework_brief=framework_brief,
+        commercial_markdown="# 商务文件\n\n商务正文。",
+        technical_markdown="# 技术文件\n\n技术正文。",
+        pricing_markdown="# 报价文件\n\n报价正文。",
+    )
+
+    volume_prompt = volume_messages[1]["content"]
+    revision_prompt = revision_messages[1]["content"]
+    audit_prompt = audit_messages[1]["content"]
+
+    assert "只生成本卷" in volume_prompt
+    assert "本项目标书框架 Skill 输出" in volume_prompt
+    assert "五、施工组织设计" in volume_prompt
+    assert "商务/资格卷：一、投标函" in volume_prompt
+    assert "不得把其他卷的投标函" in volume_prompt
+    assert "只允许补齐本卷漏项" in revision_prompt
+    assert "禁止新增无依据事实" in revision_prompt
+    assert "不是合稿 Agent" in audit_prompt
+    assert "revision_prompt" in audit_prompt
+    assert "只输出合法 JSON" in audit_prompt
+
+
+def test_generate_bid_package_multi_agent_runs_volume_revision_and_audit(
+    monkeypatch,
+) -> None:
+    _enable_llm_generation(monkeypatch, mode="multi_agent")
+    captured: dict = {}
+    _mock_multi_agent(monkeypatch, captured=captured)
+    document_outline = [
+        {
+            "title": "人工确认技术目录",
+            "volume": "技术标",
+            "section_type": "construction_design",
+            "children": [],
+        }
+    ]
+
+    package = generator_agent.generate_bid_package(
+        _requirements(),
+        {},
+        document_outline=document_outline,
+        knowledge_images=[
+            {
+                "document_id": 101,
+                "caption": "营业执照",
+                "tags": ["公司证件"],
+            },
+            {
+                "document_id": 202,
+                "caption": "施工总平面图",
+                "tags": ["附图"],
+            },
+            {
+                "document_id": 303,
+                "caption": "工程量清单报价表",
+                "tags": ["报价"],
+            },
+        ],
+    )
+
+    assert set(captured["generated"]) == {"commercial", "technical", "pricing"}
+    assert set(captured["revised"]) == {"commercial", "technical", "pricing"}
+    assert len(captured["generated"]) == 3
+    assert len(captured["revised"]) == 3
+    volume_calls = {call["volume"]: call for call in captured["volume_calls"]}
+    assert all(
+        call["document_outline"] == document_outline for call in volume_calls.values()
+    )
+    assert {
+        image["document_id"] for image in volume_calls["commercial"]["knowledge_images"]
+    } == {101}
+    assert {
+        image["document_id"] for image in volume_calls["technical"]["knowledge_images"]
+    } == {202}
+    assert {
+        image["document_id"] for image in volume_calls["pricing"]["knowledge_images"]
+    } == {303}
+    assert captured["audit_calls"][0]["technical_markdown"].startswith("# 技术文件")
+    assert package.generation_mode == "multi_agent"
+    assert "commercial revision checked" in package.commercial_markdown
+    assert "technical revision checked" in package.technical_markdown
+    assert "pricing revision checked" in package.pricing_markdown
+    assert VOLUME_MARKERS["commercial"] in package.combined_markdown
+    assert VOLUME_MARKERS["technical"] in package.combined_markdown
+    assert VOLUME_MARKERS["pricing"] in package.combined_markdown
+
+
+def test_generate_bid_package_multi_agent_fails_without_silent_fallback(
+    monkeypatch,
+) -> None:
+    _enable_llm_generation(monkeypatch, mode="multi_agent")
+
+    def fail_volume(**kwargs):
+        raise generator_agent.GeneratorAgentError("commercial agent failed")
+
+    monkeypatch.setattr(generator_agent, "_generate_volume_with_llm", fail_volume)
+
+    with pytest.raises(
+        generator_agent.GeneratorAgentError, match="commercial agent failed"
+    ):
+        generator_agent.generate_bid_package(_requirements(), {})
+
+
+def test_generate_bid_package_multi_agent_revises_failed_audit(
+    monkeypatch,
+) -> None:
+    _enable_llm_generation(monkeypatch, mode="multi_agent")
+    audit_calls: list[dict] = []
+    revision_calls: list[dict] = []
+
+    def fake_generate_volume(**kwargs):
+        return {
+            "commercial": "# 商务文件\n\n## 投标函\n\n商务投标函。\n\n## 投标函（报价文件）\n\n错误越卷内容。",
+            "technical": "# 技术文件\n\n施工组织设计正文。",
+            "pricing": "# 报价文件\n\n投标报价详见已标价工程量清单。",
+        }[kwargs["volume"]]
+
+    def fake_revise_volume(**kwargs):
+        revision_calls.append(kwargs)
+        if kwargs["volume"] == "commercial" and kwargs.get("audit_feedback"):
+            return "# 商务文件\n\n## 投标函\n\n商务投标函。"
+        return kwargs["draft_markdown"]
+
+    def fake_audit(**kwargs):
+        audit_calls.append(kwargs)
+        if len(audit_calls) == 1:
+            return {
+                "status": "revise",
+                "summary": "商务卷包含报价卷投标函。",
+                "issues": [
+                    {
+                        "volume": "commercial",
+                        "severity": "major",
+                        "problem": "商务卷出现不属于本卷的投标函（报价文件）。",
+                        "revision_prompt": "删除商务卷中的报价文件投标函，只保留商务卷投标函。",
+                    }
+                ],
+            }
+        return {"status": "pass", "summary": "已修正。", "issues": []}
+
+    monkeypatch.setattr(
+        generator_agent, "_generate_volume_with_llm", fake_generate_volume
+    )
+    monkeypatch.setattr(generator_agent, "_revise_volume_with_llm", fake_revise_volume)
+    monkeypatch.setattr(generator_agent, "_run_generation_audit_with_llm", fake_audit)
+
+    package = generator_agent.generate_bid_package(_requirements(), {})
+
+    assert len(audit_calls) == 2
+    assert any(
+        call["volume"] == "commercial" and "报价文件投标函" in call["audit_feedback"]
+        for call in revision_calls
+    )
+    assert "错误越卷内容" not in package.commercial_markdown
+    assert VOLUME_MARKERS["commercial"] in package.combined_markdown
+
+
+def test_generate_bid_package_multi_agent_fails_when_audit_never_passes(
+    monkeypatch,
+) -> None:
+    _enable_llm_generation(monkeypatch, mode="multi_agent")
+    _mock_multi_agent(monkeypatch)
+    monkeypatch.setattr(
+        generator_agent,
+        "_run_generation_audit_with_llm",
+        lambda **kwargs: {
+            "status": "revise",
+            "summary": "仍有越卷内容。",
+            "issues": [
+                {
+                    "volume": "commercial",
+                    "problem": "商务卷重复出现报价文件投标函。",
+                    "revision_prompt": "删除越卷内容。",
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(generator_agent.GeneratorAgentError, match="生成总审未通过"):
+        generator_agent.generate_bid_package(_requirements(), {})
 
 
 def test_long_context_llm_continues_on_truncation(monkeypatch) -> None:

@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from openai import OpenAI
 
 from agents.parser_agent import _has_real_key, _is_placeholder_project_name
 from core.config import get_settings
-from prompts.generator_prompt import build_long_context_prompt, build_section_prompt
+from prompts.generator_prompt import (
+    build_bid_framework_brief,
+    build_generation_audit_prompt,
+    build_long_context_prompt,
+    build_section_prompt,
+    build_volume_agent_prompt,
+    build_volume_revision_prompt,
+)
 from rag.retriever import RetrievalResult
 from schemas.bid import BidDocumentOutlineSection, BidPackage, BidSectionOutline
 from schemas.bid_plan import BidPlan
@@ -18,7 +27,10 @@ from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
 from services.bid_tone_checker import line_has_forbidden_tone
 from services.company_profile_service import company_profile_prompt_block
-from utils.docx_exporter import combine_delivery_volumes, split_delivery_markdown
+from utils.docx_exporter import (
+    combine_delivery_volumes,
+    split_delivery_markdown,
+)
 
 
 class GeneratorAgentError(RuntimeError):
@@ -28,6 +40,72 @@ class GeneratorAgentError(RuntimeError):
 logger = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 LONG_CONTEXT_MAX_CONTINUATIONS = 2
+MULTI_AGENT_AUDIT_MAX_ITERATIONS = 2
+VOLUME_ORDER = ("commercial", "technical", "pricing")
+VOLUME_HEADINGS = {
+    "commercial": "商务文件",
+    "technical": "技术文件",
+    "pricing": "报价文件",
+}
+VOLUME_IMAGE_KEYWORDS = {
+    "commercial": (
+        "营业执照",
+        "资质",
+        "安全生产许可证",
+        "开户许可证",
+        "许可证",
+        "建造师",
+        "身份证",
+        "毕业证",
+        "建安",
+        "交安",
+        "职称",
+        "社保",
+        "业绩",
+        "合同",
+        "中标",
+        "验收",
+        "法人",
+        "授权",
+        "证书",
+        "公司证件",
+        "人员证件",
+    ),
+    "technical": (
+        "施工",
+        "平面图",
+        "组织",
+        "进度",
+        "计划",
+        "现场",
+        "布置",
+        "流程",
+        "机械",
+        "设备",
+        "质量",
+        "安全",
+        "环保",
+        "道路",
+        "公路",
+        "桥梁",
+        "图纸",
+        "方案",
+        "附图",
+        "附表",
+    ),
+    "pricing": (
+        "报价",
+        "清单",
+        "投标总价",
+        "计价",
+        "工程量",
+        "预算",
+        "造价",
+        "单价",
+        "合价",
+        "经济",
+    ),
+}
 
 
 # --- Output hygiene -------------------------------------------------------
@@ -284,6 +362,7 @@ def generate_bid_package(
     bid_plan: BidPlan | None = None,
     tender_text: str = "",
     company_profile: dict[str, object] | None = None,
+    document_outline: list[dict[str, object]] | None = None,
 ) -> BidPackage:
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
     settings = get_settings()
@@ -294,10 +373,24 @@ def generate_bid_package(
         raise GeneratorAgentError(
             "ENABLE_LLM_GENERATION must be true. Local fallback generation is disabled."
         )
-    if generation_mode not in {"long_context", "simple", "auto"}:
+    if generation_mode not in {"long_context", "simple", "auto", "multi_agent"}:
         raise GeneratorAgentError(
             f"Unsupported BID_GENERATION_MODE={generation_mode!r}. "
-            "Fallback section generation is disabled; use long_context/simple/auto."
+            "Fallback section generation is disabled; use long_context/simple/auto/multi_agent."
+        )
+    if generation_mode == "multi_agent":
+        return generate_bid_package_multi_agent(
+            requirements,
+            retrieved_chunks_by_section,
+            bid_template=bid_template,
+            pricing_strategy=pricing_strategy,
+            knowledge_images=knowledge_images,
+            bid_plan=bid_plan,
+            company_name=str((company_profile or {}).get("company_name") or "").strip()
+            or settings.company_name,
+            tender_text=tender_text,
+            company_profile=company_profile,
+            document_outline=document_outline,
         )
     return generate_bid_package_long_context(
         requirements,
@@ -310,6 +403,7 @@ def generate_bid_package(
         or settings.company_name,
         tender_text=tender_text,
         company_profile=company_profile,
+        document_outline=document_outline,
     )
 
 
@@ -324,6 +418,7 @@ def generate_bid_package_long_context(
     company_name: str | None = None,
     tender_text: str = "",
     company_profile: dict[str, object] | None = None,
+    document_outline: list[dict[str, object]] | None = None,
 ) -> BidPackage:
     """Generate the whole bid in one model call.
 
@@ -332,10 +427,13 @@ def generate_bid_package_long_context(
     """
     settings = get_settings()
     company_name = company_name or settings.company_name
-    document_outline = [
-        section.model_dump()
-        for section in build_bid_document_outline(requirements, bid_template)
-    ]
+    document_outline = _document_outline_dicts(
+        document_outline
+        or [
+            section.model_dump()
+            for section in build_bid_document_outline(requirements, bid_template)
+        ]
+    )
     knowledge_chunks = _long_context_chunks(retrieved_chunks_by_section)
     raw_markdown = _generate_long_context_with_llm(
         requirements=requirements,
@@ -368,6 +466,150 @@ def generate_bid_package_long_context(
         pricing_markdown=pricing,
         combined_markdown=combined,
         generation_mode="long_context",
+    )
+
+
+def generate_bid_package_multi_agent(
+    requirements: TenderRequirements,
+    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
+    *,
+    bid_template: BidTemplate | None = None,
+    pricing_strategy: PricingStrategy | None = None,
+    knowledge_images: list[dict[str, object]] | None = None,
+    bid_plan: BidPlan | None = None,
+    company_name: str | None = None,
+    tender_text: str = "",
+    company_profile: dict[str, object] | None = None,
+    document_outline: list[dict[str, object]] | None = None,
+) -> BidPackage:
+    """Generate, audit, and deterministically combine the three bid volumes."""
+    settings = get_settings()
+    company_name = company_name or settings.company_name
+    document_outline = _document_outline_dicts(
+        document_outline
+        or [
+            section.model_dump()
+            for section in build_bid_document_outline(requirements, bid_template)
+        ]
+    )
+    knowledge_chunks = _long_context_chunks(retrieved_chunks_by_section)
+    bid_plan_json = bid_plan.model_dump(mode="json") if bid_plan else None
+    pricing_strategy_json = (
+        pricing_strategy.model_dump(mode="json") if pricing_strategy else None
+    )
+    company_profile_block = company_profile_prompt_block(company_profile)
+    template_name = bid_template.template_name if bid_template else ""
+    framework_brief = build_bid_framework_brief(requirements, document_outline)
+
+    def build_volume(volume: str, audit_feedback: str = "") -> tuple[str, str]:
+        draft = _generate_volume_with_llm(
+            volume=volume,
+            requirements=requirements,
+            company_name=company_name,
+            document_outline=document_outline,
+            framework_brief=framework_brief,
+            bid_plan=bid_plan_json,
+            template_name=template_name,
+            pricing_strategy=pricing_strategy_json,
+            knowledge_chunks=knowledge_chunks,
+            knowledge_images=_knowledge_images_for_volume(knowledge_images, volume),
+            tender_text=tender_text,
+            company_profile_block=company_profile_block,
+        )
+        revised = _revise_volume_with_llm(
+            volume=volume,
+            draft_markdown=sanitize_bid_markdown(draft),
+            requirements=requirements,
+            company_name=company_name,
+            document_outline=document_outline,
+            framework_brief=framework_brief,
+            audit_feedback=audit_feedback,
+            bid_plan=bid_plan_json,
+            pricing_strategy=pricing_strategy_json,
+            tender_text=tender_text,
+        )
+        return (
+            volume,
+            _ensure_volume_heading(
+                volume,
+                sanitize_bid_markdown(revised),
+                requirements,
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=len(VOLUME_ORDER)) as executor:
+        volumes = dict(executor.map(build_volume, VOLUME_ORDER))
+
+    audit: dict[str, Any] = {"status": "pass", "issues": []}
+    for audit_round in range(MULTI_AGENT_AUDIT_MAX_ITERATIONS + 1):
+        _validate_nonempty_volumes(volumes)
+        audit = _run_generation_audit_with_llm(
+            requirements=requirements,
+            company_name=company_name,
+            document_outline=document_outline,
+            framework_brief=framework_brief,
+            commercial_markdown=volumes["commercial"],
+            technical_markdown=volumes["technical"],
+            pricing_markdown=volumes["pricing"],
+            tender_text=tender_text,
+        )
+        if _audit_passed(audit):
+            break
+        if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
+            raise GeneratorAgentError(_audit_failure_message(audit))
+        feedback_by_volume = _audit_feedback_by_volume(audit)
+        targets = [
+            volume
+            for volume in VOLUME_ORDER
+            if feedback_by_volume.get(volume, "").strip()
+        ]
+        if not targets:
+            raise GeneratorAgentError(
+                "Generation audit requested revision but did not identify a target volume."
+            )
+
+        def revise_target(volume: str) -> tuple[str, str]:
+            revised = _revise_volume_with_llm(
+                volume=volume,
+                draft_markdown=sanitize_bid_markdown(volumes[volume]),
+                requirements=requirements,
+                company_name=company_name,
+                document_outline=document_outline,
+                framework_brief=framework_brief,
+                audit_feedback=feedback_by_volume[volume],
+                bid_plan=bid_plan_json,
+                pricing_strategy=pricing_strategy_json,
+                tender_text=tender_text,
+            )
+            return (
+                volume,
+                _ensure_volume_heading(
+                    volume,
+                    sanitize_bid_markdown(revised),
+                    requirements,
+                ),
+            )
+
+        with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+            volumes.update(dict(executor.map(revise_target, targets)))
+
+    commercial = sanitize_bid_markdown(volumes["commercial"])
+    technical = sanitize_bid_markdown(volumes["technical"])
+    pricing = sanitize_bid_markdown(volumes["pricing"])
+    combined = combine_delivery_volumes(
+        f"{_project_title(requirements)} 投标文件",
+        {
+            "commercial": commercial,
+            "technical": technical,
+            "pricing": pricing,
+        },
+    )
+    return BidPackage(
+        commercial_markdown=commercial,
+        technical_markdown=technical,
+        pricing_markdown=pricing,
+        combined_markdown=combined,
+        generation_mode="multi_agent",
     )
 
 
@@ -1091,6 +1333,301 @@ def _generate_long_context_with_llm(
     if not combined:
         raise GeneratorAgentError("LLM response was empty")
     return combined
+
+
+def _generate_volume_with_llm(
+    *,
+    volume: str,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, object]],
+    framework_brief: str,
+    bid_plan: dict[str, Any] | None,
+    template_name: str,
+    pricing_strategy: dict[str, Any] | None,
+    knowledge_chunks: list[dict[str, object]],
+    knowledge_images: list[dict[str, object]] | None,
+    tender_text: str,
+    company_profile_block: str,
+) -> str:
+    messages = build_volume_agent_prompt(
+        volume=volume,
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        framework_brief=framework_brief,
+        bid_plan=bid_plan,
+        template_name=template_name,
+        pricing_strategy=pricing_strategy,
+        knowledge_chunks=knowledge_chunks,
+        knowledge_images=knowledge_images,
+        tender_text=tender_text,
+        company_profile_block=company_profile_block,
+    )
+    return _generate_messages_with_llm(
+        messages,
+        agent_name=f"{volume} volume agent",
+        continuation_instruction="继续输出本卷 Markdown，从上次中断处继续，不要重复已输出内容。",
+    )
+
+
+def _revise_volume_with_llm(
+    *,
+    volume: str,
+    draft_markdown: str,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, object]],
+    framework_brief: str,
+    bid_plan: dict[str, Any] | None,
+    pricing_strategy: dict[str, Any] | None,
+    tender_text: str,
+    audit_feedback: str = "",
+) -> str:
+    messages = build_volume_revision_prompt(
+        volume=volume,
+        draft_markdown=draft_markdown,
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        framework_brief=framework_brief,
+        audit_feedback=audit_feedback,
+        bid_plan=bid_plan,
+        pricing_strategy=pricing_strategy,
+        tender_text=tender_text,
+    )
+    return _generate_messages_with_llm(
+        messages,
+        agent_name=f"{volume} revision agent",
+        continuation_instruction="继续输出修订后的本卷 Markdown，从上次中断处继续，不要重复已输出内容。",
+    )
+
+
+def _run_generation_audit_with_llm(
+    *,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, object]],
+    framework_brief: str,
+    commercial_markdown: str,
+    technical_markdown: str,
+    pricing_markdown: str,
+    tender_text: str,
+) -> dict[str, Any]:
+    messages = build_generation_audit_prompt(
+        requirements=requirements,
+        company_name=company_name,
+        document_outline=document_outline,
+        framework_brief=framework_brief,
+        commercial_markdown=commercial_markdown,
+        technical_markdown=technical_markdown,
+        pricing_markdown=pricing_markdown,
+        tender_text=tender_text,
+    )
+    raw = _generate_messages_with_llm(
+        messages,
+        agent_name="generation audit agent",
+        continuation_instruction="继续输出同一个 JSON 对象剩余内容，不要输出 Markdown，不要重复已输出字段。",
+    )
+    return _parse_generation_audit_response(raw)
+
+
+def _generate_messages_with_llm(
+    messages: list[dict[str, str]],
+    *,
+    agent_name: str,
+    continuation_instruction: str,
+    temperature: float = 0.18,
+) -> str:
+    settings = get_settings()
+    api_key, base_url, model = _llm_client_config(settings)
+    timeout_seconds = float(
+        getattr(settings, "bid_long_context_timeout_seconds", 180.0)
+    )
+    max_tokens = int(getattr(settings, "bid_long_context_max_tokens", 100000))
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+
+    parts: list[str] = []
+    finish_reason = None
+    active_messages = list(messages)
+    for round_index in range(1 + LONG_CONTEXT_MAX_CONTINUATIONS):
+        response = client.chat.completions.create(
+            model=model,
+            messages=active_messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout_seconds,
+        )
+        if not response.choices:
+            raise GeneratorAgentError(f"{agent_name} response did not contain choices")
+        choice = response.choices[0]
+        content = (choice.message.content or "").strip("\n")
+        if not content.strip() and not parts:
+            raise GeneratorAgentError(f"{agent_name} response was empty")
+        parts.append(content)
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason != "length":
+            break
+        logger.warning(
+            "%s output truncated (round %s); requesting continuation",
+            agent_name,
+            round_index + 1,
+        )
+        active_messages = [
+            *active_messages,
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": continuation_instruction},
+        ]
+
+    if finish_reason == "length":
+        raise GeneratorAgentError(
+            f"{agent_name} output was truncated after "
+            f"{1 + LONG_CONTEXT_MAX_CONTINUATIONS} rounds "
+            f"(max_tokens={max_tokens}); fallback generation is disabled."
+        )
+    combined = "".join(parts).strip()
+    if not combined:
+        raise GeneratorAgentError(f"{agent_name} response was empty")
+    return combined
+
+
+def _parse_generation_audit_response(raw: str) -> dict[str, Any]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if match:
+        text = match.group(0)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise GeneratorAgentError(
+            f"Generation audit returned invalid JSON: {error}"
+        ) from error
+    if not isinstance(data, dict):
+        raise GeneratorAgentError("Generation audit JSON must be an object")
+    status = str(data.get("status") or "revise").strip().lower()
+    issues = data.get("issues") or []
+    if not isinstance(issues, list):
+        issues = []
+    normalized_issues: list[dict[str, str]] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        volume = str(issue.get("volume") or "all").strip().lower()
+        if volume not in {*VOLUME_ORDER, "all"}:
+            volume = "all"
+        normalized_issues.append(
+            {
+                "volume": volume,
+                "severity": str(issue.get("severity") or "major").strip() or "major",
+                "problem": str(issue.get("problem") or "").strip(),
+                "revision_prompt": str(issue.get("revision_prompt") or "").strip(),
+            }
+        )
+    return {
+        "status": status,
+        "summary": str(data.get("summary") or "").strip(),
+        "issues": normalized_issues,
+    }
+
+
+def _audit_passed(audit: dict[str, Any]) -> bool:
+    status = str(audit.get("status") or "").strip().lower()
+    return status in {"pass", "passed", "ok"} and not audit.get("issues")
+
+
+def _audit_feedback_by_volume(audit: dict[str, Any]) -> dict[str, str]:
+    feedback: dict[str, list[str]] = {volume: [] for volume in VOLUME_ORDER}
+    for index, issue in enumerate(audit.get("issues") or [], start=1):
+        if not isinstance(issue, dict):
+            continue
+        volume = str(issue.get("volume") or "all").strip().lower()
+        problem = str(issue.get("problem") or "").strip()
+        prompt = str(issue.get("revision_prompt") or "").strip()
+        line = f"{index}. {problem or '修正本卷与招标文件格式不一致的问题。'}"
+        if prompt:
+            line += f"\n修改指令：{prompt}"
+        targets = VOLUME_ORDER if volume == "all" else (volume,)
+        for target in targets:
+            if target in feedback:
+                feedback[target].append(line)
+    return {volume: "\n".join(items).strip() for volume, items in feedback.items()}
+
+
+def _audit_failure_message(audit: dict[str, Any]) -> str:
+    summary = str(audit.get("summary") or "总审仍发现格式或内容问题").strip()
+    issue_lines = []
+    for issue in (audit.get("issues") or [])[:6]:
+        if not isinstance(issue, dict):
+            continue
+        volume = str(issue.get("volume") or "all")
+        problem = str(
+            issue.get("problem") or issue.get("revision_prompt") or ""
+        ).strip()
+        if problem:
+            issue_lines.append(f"{volume}: {problem}")
+    suffix = "；".join(issue_lines)
+    return f"生成总审未通过，已自动打回重做但仍有问题：{summary}" + (f"。{suffix}" if suffix else "")
+
+
+def _validate_nonempty_volumes(volumes: dict[str, str]) -> None:
+    empty = []
+    for label in VOLUME_ORDER:
+        text = volumes.get(label, "")
+        meaningful_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if not meaningful_lines or "本卷暂无自动归类内容" in text:
+            empty.append(label)
+    if empty:
+        raise GeneratorAgentError(
+            "Multi-agent generation left required volumes empty: " + ", ".join(empty)
+        )
+
+
+def _ensure_volume_heading(
+    volume: str,
+    markdown: str,
+    requirements: TenderRequirements,
+) -> str:
+    if markdown.lstrip().startswith("# "):
+        return markdown
+    label = VOLUME_HEADINGS[volume]
+    return f"# {_project_title(requirements)} {label}\n\n{markdown.strip()}\n"
+
+
+def _knowledge_images_for_volume(
+    knowledge_images: list[dict[str, object]] | None,
+    volume: str,
+) -> list[dict[str, object]] | None:
+    if not knowledge_images:
+        return knowledge_images
+    selected = _select_knowledge_images(
+        knowledge_images,
+        VOLUME_IMAGE_KEYWORDS.get(volume, ()),
+        limit=8 if volume != "pricing" else 4,
+    )
+    if selected:
+        return selected
+    if volume == "pricing":
+        return []
+    return knowledge_images[:6]
+
+
+def _document_outline_dicts(
+    document_outline: list[dict[str, object]] | list[BidDocumentOutlineSection],
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    for section in document_outline or []:
+        if hasattr(section, "model_dump"):
+            normalized.append(section.model_dump())  # type: ignore[union-attr]
+        elif isinstance(section, dict):
+            normalized.append(dict(section))
+    return normalized
 
 
 def _llm_client_config(settings) -> tuple[str, str, str]:

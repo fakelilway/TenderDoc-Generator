@@ -477,25 +477,34 @@ def _summarize_format_chapter_lines(lines: list[str]) -> list[str]:
     in_local_toc = False
     notes: list[str] = []
     awaiting_volume_suffix = False
+    pending_envelope = ""
 
     for offset, raw in enumerate(lines[1:], start=1):
         line = re.sub(r"\s+", " ", raw).strip()
         if not line or _is_toc_line(line):
             continue
+        compact = re.sub(r"\s+", "", line)
         if line.isdigit():
             if in_local_toc and current_volume and volume_items.get(current_volume):
                 in_local_toc = False
             continue
-        if line == "投标文件":
+        if re.fullmatch(r"第[一二三四五六七八九十\d]+信封", compact):
+            pending_envelope = compact
+            continue
+        if compact == "投标文件":
             awaiting_volume_suffix = True
             continue
         if awaiting_volume_suffix:
             split_volume_match = re.fullmatch(r"[（(]([^）)]+)[）)]", line)
             if split_volume_match:
-                current_volume = split_volume_match.group(1).strip()
+                suffix = split_volume_match.group(1).strip()
+                current_volume = (
+                    f"{pending_envelope}（{suffix}）" if pending_envelope else suffix
+                )
                 volume_items.setdefault(current_volume, [])
                 in_local_toc = True
                 awaiting_volume_suffix = False
+                pending_envelope = ""
                 continue
             awaiting_volume_suffix = False
         volume_match = re.search(r"投标文件[（(]([^）)]+)[）)]", line)
@@ -531,9 +540,10 @@ def _summarize_format_chapter_lines(lines: list[str]) -> list[str]:
         if not current_volume:
             continue
         if _looks_like_form_heading(line, in_local_toc):
-            title = _clean_form_heading(line)
-            if title:
-                _append_unique(volume_items[current_volume], title)
+            if in_local_toc or not volume_items[current_volume]:
+                title = _clean_form_heading(line)
+                if title:
+                    _append_unique(volume_items[current_volume], title)
             continue
         if in_local_toc and not _looks_like_form_heading(line, True):
             # A local table of contents usually ends before the first form body.

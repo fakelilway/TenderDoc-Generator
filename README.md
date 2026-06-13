@@ -186,7 +186,7 @@ TenderDoc-Generator/
 
 - 前端：Next.js 14 App Router + React 18 + TypeScript + Tailwind，pnpm 管理，API 用原生 fetch 封装（`frontend/lib/api.ts`）。
 - 后端：FastAPI + uvicorn，Python 3.11（根目录 `.venv`），psycopg2 显式 SQL + 连接池，Pydantic v2，JWT 认证，FastAPI BackgroundTasks 跑长任务。
-- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认长上下文一次生成三卷，失败后提示修正配置、输入或提示词后重跑，不自动 fallback。
+- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；支持 `long_context` 一次生成和 `multi_agent` 商务/技术/报价分卷生成+修订+总审打回循环，最终由代码确定性拼接三卷，不让 LLM 合稿或写内部 marker；失败后提示修正配置、输入或提示词后重跑，不自动 fallback。
 - RAG：BAAI/bge-large-zh-v1.5（1024 维）+ pgvector，JSONB metadata 过滤。
 - 存储：PostgreSQL 15+（JSONB + pgvector）、Redis 7（workflow state）、MinIO（原文/资料/产物）。
 - 文档处理：pypdf/pdfplumber/PyMuPDF 解析，python-docx 导出（`backend/utils/docx_exporter.py` 统一排版）。

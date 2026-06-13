@@ -175,8 +175,8 @@ function nextStepCopy(status: string, hasProject: boolean) {
     approved: "标书已确认，可以下载 DOCX、PDF 或审查报告。",
     finished: "标书已完成，可以下载并进入新点制作软件封装。",
     generated: "标书已生成，可以预览、编辑并下载。",
-    failed: "任务失败，请查看实时状态中的失败原因。",
-    generation_failed: "生成失败，请检查模型 API、网络或重试。"
+    failed: "任务失败，请查看实时状态中的失败原因；修正配置或输入后可重新生成。",
+    generation_failed: "生成失败，请检查模型 API、网络或提示词后重新生成。"
   };
   return copy[status] ?? "按左侧流程从上到下完成上传、解析、选资料、生成、审查和下载。";
 }
@@ -361,7 +361,10 @@ export function TenderWorkspace({
       ["human_review", "needs_revision"].includes(status)
   );
   const canStartWorkflow = Boolean(
-    projectId && ["outline_confirmed", "outline_review"].includes(status)
+    projectId &&
+      ["outline_confirmed", "outline_review", "failed", "generation_failed"].includes(
+        status
+      )
   );
   const canDownload = Boolean(
     projectId && ["approved", "finished", "generated"].includes(status)
@@ -1211,7 +1214,7 @@ export function TenderWorkspace({
                 onClick={() => projectId && startWorkflow(projectId)}
               >
                 <Loader2 className={actionBusy ? "h-4 w-4 animate-spin" : "hidden"} />
-                开始生成
+                {["failed", "generation_failed"].includes(status) ? "重新生成" : "开始生成"}
               </button>
               {canConfirm ? (
                 <>
@@ -1665,6 +1668,23 @@ function buildHumanActionPrompt(
           tone: "primary" as const,
           icon: "edit" as const,
           onClick: context.onOpenCorrection
+        }
+      ]
+    };
+  }
+
+  if (["failed", "generation_failed"].includes(status)) {
+    return {
+      title: "任务失败，可重新生成",
+      message:
+        "请先查看实时状态中的失败原因。修正模型配置、招标文件解析结果或目录后，可以重新发起生成流程。",
+      actions: [
+        {
+          label: "重新生成",
+          tone: "primary" as const,
+          icon: "play" as const,
+          disabled: !context.canStartWorkflow || context.actionBusy,
+          onClick: context.onStartWorkflow
         }
       ]
     };

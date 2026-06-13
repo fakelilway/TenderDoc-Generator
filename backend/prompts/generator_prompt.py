@@ -237,6 +237,310 @@ def build_long_context_prompt(
     ]
 
 
+_VOLUME_LABELS = {
+    "commercial": "商务/资格文件",
+    "technical": "技术文件/施工组织设计",
+    "pricing": "报价文件/经济标",
+}
+
+
+def build_volume_agent_prompt(
+    *,
+    volume: str,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, Any]],
+    framework_brief: str = "",
+    bid_plan: dict[str, Any] | None = None,
+    template_name: str = "",
+    pricing_strategy: dict[str, Any] | None = None,
+    knowledge_chunks: list[dict[str, Any]] | None = None,
+    knowledge_images: list[dict[str, Any]] | None = None,
+    tender_text: str = "",
+    company_profile_block: str = "",
+) -> list[dict[str, str]]:
+    label = _volume_label(volume)
+    volume_outline = _format_volume_outline(document_outline, volume)
+    chunks = _format_long_context_chunks(
+        _filter_chunks_for_volume(knowledge_chunks or [], volume)
+    )
+    images = _format_knowledge_images(knowledge_images)
+    agent_profile = _volume_agent_profile(volume)
+    profile_section = (
+        "\n【投标人企业档案（已人工核实，必须原样使用）】\n" f"{company_profile_block}\n"
+        if company_profile_block
+        else ""
+    )
+    user_prompt = f"""请作为{label}分卷主笔，只生成本卷 Markdown 初稿。
+
+{agent_profile}
+
+项目名称：{requirements.project_name or "投标项目"}
+投标人：{company_name}
+公司风格案例：{template_name or "未选择，完全按招标文件格式和系统确认目录生成"}
+{profile_section}
+
+【项目核心字段】
+- 招标人/采购人：{requirements.tenderer_name or "________"}
+- 建设地点：{requirements.project_location or "________"}
+- 招标范围/工程内容：{requirements.tender_scope or "________"}
+- 计划工期：{requirements.planned_duration or "________"}
+- 质量标准：{requirements.quality_standard or "________"}
+- 安全目标：{requirements.safety_target or "________"}
+- 投标截止时间：{requirements.bid_deadline or "________"}
+
+【招标文件格式要求（最高权威）】
+{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按本卷人工确认目录输出。"}
+
+【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
+{framework_brief or build_bid_framework_brief(requirements, document_outline)}
+
+【本卷人工确认目录】
+{volume_outline}
+
+【生成计划/BidPlan】
+{_format_bid_plan(bid_plan)}
+
+【招标文件解析要求】
+资格要求：
+{_format_items([item.description for item in requirements.qualification_list])}
+
+技术评分/评审要求：
+{_format_items([item.description for item in requirements.technical_score_items])}
+
+废标/否决风险：
+{_format_items([item.description for item in requirements.invalid_bid_items])}
+
+【招标文件全文关键内容】
+{_format_tender_text(tender_text)}
+
+【商务/报价约束】
+{_format_pricing_strategy(pricing_strategy)}
+
+【本卷可用企业资料】
+{chunks or "暂无文本资料。请按招标文件要求和企业常规投标文件深度生成，不得编造企业事实。"}
+
+{images}
+
+【输出要求】
+- 只输出{label}，禁止输出其他卷内容。
+- 第一行必须是一级标题 `# {requirements.project_name or "投标项目"} {label}`。
+- 必须覆盖【本卷人工确认目录】中的全部必需节点。
+- 若同名表单在不同卷册中出现，必须按【本项目标书框架 Skill 输出】区分归属；不得把其他卷的投标函、报价表、资格表、施工组织设计复制到本卷。
+- 不得编造企业名称、人员、证书编号、业绩金额、报价金额、保证金金额、银行账号；无依据处使用“________”或“详见已标价工程量清单”。
+- 需要插入知识库图片时，单独一行使用 `{{{{knowledge_image:document_id=数字 caption="说明"}}}}`，只能使用【可插入知识库图片资料】列出的 document_id。
+- 禁止输出页眉页脚、页码、目录点线、RAG 残片、自查表、AI 说明、生成器语气、“人工确认点/待补充/系统不自动生成”等提示词。
+"""
+    return [
+        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_volume_revision_prompt(
+    *,
+    volume: str,
+    draft_markdown: str,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, Any]],
+    framework_brief: str = "",
+    audit_feedback: str = "",
+    bid_plan: dict[str, Any] | None = None,
+    pricing_strategy: dict[str, Any] | None = None,
+    tender_text: str = "",
+) -> list[dict[str, str]]:
+    label = _volume_label(volume)
+    user_prompt = f"""请作为{label}复核修订 Agent，基于招标全文和格式要求，只修订本卷 Markdown。
+
+角色边界：
+- 你是本卷终审编辑，不是重新生成整份标书的助手。
+- 只允许补齐本卷漏项、修正不真实语气、修正格式响应、删除元话语。
+- 禁止新增无依据事实，禁止改写成其他卷，禁止输出解释。
+
+项目名称：{requirements.project_name or "投标项目"}
+投标人：{company_name}
+
+【招标文件格式要求（最高权威）】
+{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按本卷人工确认目录输出。"}
+
+【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
+{framework_brief or build_bid_framework_brief(requirements, document_outline)}
+
+【本卷人工确认目录】
+{_format_volume_outline(document_outline, volume)}
+
+【总审打回修改意见】
+{audit_feedback or "- 首轮本卷自查：补齐漏项、删除越卷内容、修正生成器语气。"}
+
+【生成计划/BidPlan】
+{_format_bid_plan(bid_plan)}
+
+【招标文件解析要求】
+资格要求：
+{_format_items([item.description for item in requirements.qualification_list])}
+
+技术评分/评审要求：
+{_format_items([item.description for item in requirements.technical_score_items])}
+
+废标/否决风险：
+{_format_items([item.description for item in requirements.invalid_bid_items])}
+
+【招标文件全文关键内容】
+{_format_tender_text(tender_text)}
+
+【商务/报价约束】
+{_format_pricing_strategy(pricing_strategy)}
+
+【待修订本卷初稿】
+{draft_markdown}
+
+【输出要求】
+- 只输出修订后的{label} Markdown。
+- 第一行仍必须是一级标题。
+- 保留合法的知识库图片标记。
+- 必须落实【总审打回修改意见】；如果意见指出本卷出现不该有的其他卷表单，应直接删除该越卷表单。
+- 删除“人工确认点/待补充/系统不自动生成/由模型生成/以下为”等元话语。
+- 无依据金额、证书编号、人员姓名、日期等继续留“________”，不得编造。
+"""
+    return [
+        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_generation_audit_prompt(
+    *,
+    requirements: TenderRequirements,
+    company_name: str,
+    document_outline: list[dict[str, Any]],
+    framework_brief: str = "",
+    commercial_markdown: str,
+    technical_markdown: str,
+    pricing_markdown: str,
+    tender_text: str = "",
+) -> list[dict[str, str]]:
+    project_name = requirements.project_name or "投标项目"
+    user_prompt = f"""请作为投标文件总审 Agent，对三卷 Markdown 做废标风险和格式框架一致性审查。
+
+角色边界：
+- 你不是合稿 Agent，不得输出修改后的标书正文。
+- 你的任务是对照招标全文、招标文件格式要求、框架 Skill 输出和三卷正文，判断是否通过。
+- 如果不通过，只输出可直接打回给对应分卷 Agent 的修改建议 prompt。
+- 不得新增无依据事实；不得要求删除招标文件明确需要的表单。
+
+项目名称：{project_name}
+投标人：{company_name}
+
+【招标文件格式要求（最高权威）】
+{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按人工确认目录输出。"}
+
+【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
+{framework_brief or build_bid_framework_brief(requirements, document_outline)}
+
+【完整标书目录/人工确认结构】
+{_format_outline(document_outline)}
+
+【招标文件全文关键内容】
+{_format_tender_text(tender_text)}
+
+【待审查三卷】
+【commercial / 商务资格卷】
+{commercial_markdown}
+
+【technical / 技术卷】
+{technical_markdown}
+
+【pricing / 报价经济卷】
+{pricing_markdown}
+
+【输出要求】
+- 只输出合法 JSON，不要 Markdown，不要解释。
+- JSON 格式必须为：
+  {{
+    "status": "pass" 或 "revise",
+    "summary": "一句话审查结论",
+    "issues": [
+      {{
+        "volume": "commercial" 或 "technical" 或 "pricing" 或 "all",
+        "severity": "critical" 或 "major" 或 "minor",
+        "problem": "发现的问题",
+        "revision_prompt": "给该分卷 Agent 的具体修改指令"
+      }}
+    ]
+  }}
+- 通过条件：三卷均严格服从框架；没有越卷章节；没有重复生成不属于该卷的投标函/报价函/资格表/施工组织设计；没有漏掉招标文件格式要求的必需表单；没有生成器语气或无依据事实。
+- 若招标文件明确要求双信封，商务及技术文件和报价文件各自的投标函可同时存在；这不是重复，除非某一卷生成了不属于自己的投标函。
+- 如果发现问题，status 必须是 "revise"，issues 必须逐条给出对应 volume 和可执行 revision_prompt。
+"""
+    return [
+        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_chief_editor_prompt(**kwargs: Any) -> list[dict[str, str]]:
+    """Backward-compatible alias: chief editor now audits and never merges."""
+    return build_generation_audit_prompt(**kwargs)
+
+
+def build_bid_framework_brief(
+    requirements: TenderRequirements,
+    document_outline: list[dict[str, Any]],
+) -> str:
+    """Summarise the tender-native bid frame before dispatching volume agents."""
+    volume_lines: dict[str, list[str]] = {
+        "commercial": [],
+        "technical": [],
+        "pricing": [],
+    }
+
+    def walk(items: list[dict[str, Any]], inherited_volume: str = "") -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            volume = str(item.get("volume") or inherited_volume or "")
+            label = _outline_volume_key(
+                " ".join(
+                    str(item.get(key) or "")
+                    for key in ("title", "volume", "section_type")
+                )
+                + f" {volume}"
+            )
+            title = str(item.get("title") or "").strip()
+            if title:
+                volume_lines[label].append(title)
+            children = item.get("children") or []
+            if isinstance(children, list):
+                walk(children, volume)
+
+    walk(document_outline)
+    lines = [
+        "框架来源：招标文件格式要求 + 人工确认目录；该框架优先于风格案例和知识库。",
+        "格式要求摘要：",
+        requirements.bid_format_requirements.strip() or "未提取到明确格式要求，必须按人工确认目录生成。",
+        "分卷任务边界：",
+    ]
+    for key, label in (
+        ("commercial", "商务/资格卷"),
+        ("technical", "技术卷"),
+        ("pricing", "报价/经济卷"),
+    ):
+        titles = _dedupe_text(volume_lines[key])
+        lines.append(
+            f"- {label}：{'、'.join(titles[:30]) if titles else '本卷无明确节点；不得自行增加越卷表单。'}"
+        )
+    lines.extend(
+        [
+            "强制规则：",
+            "- 三个分卷 Agent 只能生成自己分配到的节点，不得互相补写。",
+            "- 同名表单必须按卷册归属区分；双信封项目允许商务及技术文件和报价文件分别存在投标函。",
+            "- 系统负责最终拼接和 DOCX 分卷标记，任何 Agent 不得输出内部 marker 或合稿说明。",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _format_items(items: list[str]) -> str:
     if not items:
         return "- 未明确"
@@ -265,6 +569,100 @@ def _format_outline(document_outline: list[dict[str, Any]]) -> str:
 
     walk(document_outline)
     return "\n".join(lines) if lines else "- 系统未传入确认目录。"
+
+
+def _format_volume_outline(document_outline: list[dict[str, Any]], volume: str) -> str:
+    selected: list[dict[str, Any]] = []
+
+    def walk(items: list[dict[str, Any]], parent_matches: bool = False) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            matches = _outline_item_matches_volume(item, volume) or parent_matches
+            children = item.get("children") or []
+            if matches:
+                selected.append(item)
+            if isinstance(children, list):
+                walk(children, matches)
+
+    walk(document_outline)
+    return _format_outline(selected) if selected else _fallback_volume_outline(volume)
+
+
+def _outline_item_matches_volume(item: dict[str, Any], volume: str) -> bool:
+    text = " ".join(
+        str(item.get(key) or "") for key in ("title", "volume", "section_type")
+    )
+    return _outline_volume_key(text) == volume
+
+
+def _outline_volume_key(text: str) -> str:
+    if any(keyword in text for keyword in ("报价", "经济", "清单", "price")):
+        return "pricing"
+    if any(
+        keyword in text for keyword in ("技术", "施工组织", "施工方案", "附图", "附表", "appendix")
+    ):
+        return "technical"
+    return "commercial"
+
+
+def _dedupe_text(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        key = re.sub(r"\s+", "", item)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _fallback_volume_outline(volume: str) -> str:
+    if volume == "pricing":
+        return "- 报价文件\n  - 投标总价\n  - 已标价工程量清单\n  - 报价编制说明"
+    if volume == "technical":
+        return "- 技术文件\n  - 施工组织设计\n  - 附图附表"
+    return "- 商务/资格文件\n  - 投标函\n  - 法定代表人身份证明或授权委托书\n  - 资格审查资料\n  - 投标保证金\n  - 承诺函"
+
+
+def _filter_chunks_for_volume(
+    chunks: list[dict[str, Any]],
+    volume: str,
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for chunk in chunks:
+        section = str(chunk.get("section_title") or "")
+        title = str(chunk.get("title") or "")
+        content = str(chunk.get("content") or "")
+        text = f"{section} {title} {content[:240]}"
+        if _text_matches_volume(text, volume):
+            selected.append(chunk)
+    return selected or chunks[:8]
+
+
+def _text_matches_volume(text: str, volume: str) -> bool:
+    if volume == "pricing":
+        return any(keyword in text for keyword in ("报价", "清单", "投标总价", "计价"))
+    if volume == "technical":
+        return any(keyword in text for keyword in ("施工", "技术", "质量", "安全", "环保", "进度"))
+    return any(
+        keyword in text for keyword in ("商务", "资格", "证书", "营业执照", "授权", "保证金", "承诺")
+    )
+
+
+def _volume_label(volume: str) -> str:
+    return _VOLUME_LABELS.get(volume, volume)
+
+
+def _volume_agent_profile(volume: str) -> str:
+    if volume == "pricing":
+        return "你是报价文件合规主笔，熟悉工程量清单、计价规范、投标总价扉页和报价编制说明。你的任务是生成报价卷的目录、依据和响应说明；没有正式清单和造价数据时必须留空白，不得编造金额。"
+    if volume == "technical":
+        return (
+            "你是技术标/施工组织设计主笔，熟悉施工部署、主要施工方案、进度、质量、安全、环保、文明施工、应急和附图附表。你的任务是写出有项目针对性的技术标成稿。"
+        )
+    return "你是商务/资格文件合规主笔，熟悉投标函、法人授权、资格审查、保证金、承诺函、企业资料和电子标上传格式。你的任务是按招标文件格式生成商务/资格卷。"
 
 
 def _format_long_context_chunks(chunks: list[dict[str, Any]]) -> str:

@@ -58,9 +58,9 @@ OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 BID_LLM_PROVIDER=auto
-BID_GENERATION_MODE=long_context
+BID_GENERATION_MODE=multi_agent
 PARSER_LLM_TIMEOUT_SECONDS=180
-# 生成跑在后台线程，超时给足、输出预算给足，质量优先
+# 生成跑在后台线程，multi_agent 会先确认框架，再分卷生成、分卷修订、总审打回；最终由代码拼接三卷，质量优先
 BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
 BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
@@ -324,7 +324,7 @@ Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `ba
 - `OPENROUTER_API_KEY` 是否正确。
 - OpenRouter 账户是否有额度。
 - `OPENROUTER_MODEL` 是否可用。
-- `BID_GENERATION_MODE` 是否为 `long_context`；如需临时回旧链路可改为 `section`。
+- `BID_GENERATION_MODE` 是否为 `multi_agent` 或 `long_context`；如需回滚可临时改为 `long_context`。
 - 公司网络是否拦截外部 API。
 
 ### MinIO 下载链接打不开
