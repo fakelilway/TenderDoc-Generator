@@ -149,87 +149,83 @@ def build_original_format_docx_from_pdf(
     output_path: str | Path,
     *,
     profile: dict[str, Any] | None = None,
-    dpi: int = 200,
 ) -> str:
-    """Render the PDF format chapter as full-page images in a DOCX.
+    """Convert the PDF format chapter to DOCX with full table/layout preservation.
 
-    Each format chapter page is rendered at the given DPI and inserted as a locked,
-    full-page image.  This preserves every pixel of the original PDF — tables, borders,
-    underlines, signature positions, page numbers — exactly as the tender issuer designed it.
-
-    After the locked format pages, a blank final section is added for the construction
-    plan content to be filled by the Content Writer.
+    Uses pdf2docx for true paragraph/table/font conversion — not image embedding.
+    Tables become real DOCX tables, paragraphs keep alignment, and we replace
+    known placeholder text (招标人, 项目名称, etc.) after conversion.
     """
+    import tempfile
+    from pdf2docx import Converter
+
     profile = profile or {}
-    pdf = fitz.open("pdf", tender_pdf_bytes)
-    page_range = _find_format_page_range(pdf)
 
-    if not page_range:
-        pdf.close()
-        raise ValueError("未能在 PDF 招标文件中定位“投标文件格式”章节，不能原样复制。")
+    # Write PDF bytes to temp file
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+        tmp_pdf.write(tender_pdf_bytes)
+        pdf_path = tmp_pdf.name
 
-    target = Document()
-    _clear_document_body(target)
+    try:
+        # Find format chapter page range
+        page_range = _find_format_page_range_in_pdf(pdf_path)
+        if not page_range:
+            raise ValueError("未能在 PDF 中定位“投标文件格式”章节")
 
-    # Set page size to A4 portrait
-    section = target.sections[0]
-    section.page_width = Cm(21.0)
-    section.page_height = Cm(29.7)
-    section.orientation = WD_ORIENT.PORTRAIT
+        # Convert using pdf2docx
+        cv = Converter(pdf_path)
+        cv.convert(str(output_path), start=page_range[0], end=page_range[1])
+        cv.close()
 
-    for page_num in range(page_range[0], page_range[1]):
-        page = pdf[page_num]
-        # Render at specified DPI
-        pix = page.get_pixmap(dpi=dpi)
-        img_bytes = pix.tobytes("png")
+        # Replace known placeholders in the resulting DOCX
+        _replace_known_fields_in_docx(output_path, profile)
 
-        # Insert as full-page image
-        paragraph = target.add_paragraph()
-        run = paragraph.add_run()
-        stream = BytesIO(img_bytes)
-        run.add_picture(stream, width=Cm(17.5))  # A4 width minus margins
-
-        # Page break after each page
-        if page_num < page_range[1] - 1:
-            target.add_page_break()
-
-    pdf.close()
-
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    target.save(path)
-    return str(path)
+        return str(output_path)
+    finally:
+        import os
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
 
 
-def _find_format_page_range(pdf: fitz.Document) -> tuple[int, int] | None:
-    """Find the page range of the format chapter in a PDF."""
-    format_start: int | None = None
-    format_end: int | None = None
+def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
+    """Find format chapter page range using text search."""
+    doc = fitz.open(pdf_path)
+    try:
+        format_start: int | None = None
+        format_end: int | None = None
 
-    for page_num in range(pdf.page_count):
-        text = pdf[page_num].get_text()
-        compact = re.sub(r"\s+", "", text)
+        for page_num in range(doc.page_count):
+            text = doc[page_num].get_text()
+            compact = re.sub(r"\s+", "", text)
 
-        # Find format chapter start
-        if format_start is None and FORMAT_CHAPTER_RE.search(compact):
-            # Skip past TOC line — find the actual content
-            actual_start = _skip_toc_pages(pdf, page_num)
-            format_start = actual_start
+            if format_start is None and FORMAT_CHAPTER_RE.search(compact):
+                # Skip TOC pages
+                format_start = _skip_toc_pages(doc, page_num)
 
-        # Find next chapter end
-        if format_start is not None and format_end is None and page_num > format_start:
-            # Check if this page starts a new chapter (not format chapter)
-            if NEXT_CHAPTER_RE.match(compact) and not FORMAT_CHAPTER_RE.search(compact):
-                format_end = page_num
-                break
+            if format_start is not None and format_end is None and page_num > format_start:
+                if NEXT_CHAPTER_RE.match(compact) and not FORMAT_CHAPTER_RE.search(compact):
+                    format_end = page_num
+                    break
 
-    if format_start is None:
-        return None
+        if format_start is None:
+            return None
+        if format_end is None:
+            format_end = doc.page_count
 
-    if format_end is None:
-        format_end = pdf.page_count
+        # Convert to 1-based page numbers for pdf2docx
+        return (format_start + 1, format_end + 1)
+    finally:
+        doc.close()
 
-    return (format_start, format_end)
+
+def _replace_known_fields_in_docx(docx_path: str | Path, profile: dict[str, Any]) -> None:
+    """Replace placeholder text throughout a DOCX (paragraphs AND tables)."""
+    from docx import Document
+    doc = Document(str(docx_path))
+    _replace_known_fields(doc, profile)
+    doc.save(str(docx_path))
 
 
 def _skip_toc_pages(pdf: fitz.Document, from_page: int) -> int:
