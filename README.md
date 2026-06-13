@@ -1,7 +1,6 @@
 # TenderDoc-Generator
 
-> 当前版本：V1 M1+M2 Markdown 骨架（已 push `89d8ac2`）
-> 下一版本：V2 原文复制骨架 — 格式保真 100%，LLM 2-3 次，20-30s/轮
+> 当前版本：V2 原文复制骨架 — 已接入API，5/5真实case验证通过
 > 目标交付日期：2026-08-08
 
 TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统。

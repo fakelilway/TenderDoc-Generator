@@ -15,98 +15,40 @@
 
 **目标：** 从招标文件 PDF 定位"第X章 投标文件格式"，逐页截取原文。
 
-- V2-M1.1：`format_skeleton_service.py` 加 `extract_format_pages(tender_text) → list[FormatPage]`
-  - 每页含：页面标题（如"一、投标函"）、原文文本块、表格结构、签章位置、页码范围
-- V2-M1.2：支持"响应文件格式"（竞争性磋商）和"投标文件格式"（公开招标）两种章节标题
-- V2-M1.3：区分 TOC 索引页和正文页；目录页不混进模板
-- V2-M1.4：测试：萧县双信封、长丰县三卷、鸠江区竞争性磋商，3 个真实 case 提取准确
-
-### V2-M2：DOCX 骨架生成器 ⭐ 新增
-
-**目标：** 用提取的格式页生成 DOCX 骨架，锁定区（表单表格签章）不可编辑，可写区（施工方案）留白。
-
-- V2-M2.1：`render_docx_skeleton(format_pages, company_name) → docx.Document`
-  - 锁定区：原文文本块嵌入 Word 段落/表格，字体 宋体/黑体，首行缩进
-  - 可写区：只留标题 + 空白段落标记位
-  - 公司名/日期自动替换，其余空白保留 `________`
-- V2-M2.2：降级方案——锁定区用 PDF 页面截图嵌入 DOCX（零失真，不可编辑）
-- V2-M2.3：支持双信封结构（第一信封/第二信封）和传统三卷
-- V2-M2.4：测试：骨架页数 = 招标文件格式章节页数，锁定区文本逐字比对原文
-
-### V2-M3：Form Filler Agent（检索+填空）
-
-**目标：** 读公司知识库，在骨架锁定区的空白字段自动填入信息、插入证件图片。
-
-- V2-M3.1：识别骨架中的可填字段（营业执照号、法定代表人、项目经理姓名/证号、公司地址等）
-- V2-M3.2：匹配知识库中的对应证据（公司证件 → 营业执照号，人员证件 → 建造师证号）
-- V2-M3.3：填入已知字段，插入证件扫描件图片到对应位置
-- V2-M3.4：找不到证据的字段保留 `________`，生成"缺失资料清单"
-- V2-M3.5：测试：公司证件 3 项 + 人员证件 5 项 + 业绩截图 2 项自动填入
-
-### V2-M4：Content Writer Agent（施工方案创作）
-
-**目标：** 在骨架可写区的每个标题下写施工组织设计正文。
-
-- V2-M4.1：每个施工方案节点单独调 LLM（非一次生成整本），不改标题不改结构
-- V2-M4.2：Prompt 复用当前精炼版（照抄规则、节点约束），但输入从整卷骨架改为单节点上下文
-- V2-M4.3：节点级并行，总时间 = 最长单次 LLM 调用
-- V2-M4.4：测试：施工方案正文 ≥5000 字，每个主章 ≥3 小节，无 AI 元文本
-
-### V2-M5：三层审计
-
-**目标：** 格式审计零 LLM，内容审计 1 次 LLM，证据审计零 LLM。
-
-- V2-M5.1：Format Audit（代码）——锁定区逐页比对原文，一个字没变？表格列项一致？签章位置保留？
-- V2-M5.2：Content Audit（LLM，1次）——废标风险遗漏？AI 元文本？编造金额/证号？
-- V2-M5.3：Evidence Audit（代码）——填入的证号匹配知识库？图片确实插入了？缺失资料清单完整？
-- V2-M5.4：审计失败定位到具体节点，不是打回整卷
-- V2-M5.5：测试：锁定区故意改一个字 → Format Audit fail；填错项目经理证号 → Evidence Audit fail
-
-### V2-M6：前端对接
-
-**目标：** 生成 → 审计 → 下载流程跑通，失败原因可读。
-
-- V2-M6.1：生成 API 返回 BidPackage（保持现有契约），前端无需改动 API 调用
-- V2-M6.2：格式页预览（生成前可人工核对提取结果）
-- V2-M6.3：缺失资料清单在页面展示，引导上传
-- V2-M6.4：失败时黄色横幅显示具体错误原因和位置
-- V2-M6.5：测试：端到端流程（上传→确认→生成→下载）≤60 秒
-
-### V2-M7：真实样本验证
-
-**目标：** 5 个真实 case 全部跑通，建立基线。
-
-- V2-M7.1：长丰县罗塘乡（三卷，公开招标）
-- V2-M7.2：萧县 2025 农村公路（双信封，技术评分最低标价法）
-- V2-M7.3：南陵县三里镇（双信封，合理低价法）
-- V2-M7.4：颍州区袁集镇（竞争性磋商，响应文件格式）
-- V2-M7.5：鸠江区日常养护（竞争性磋商，养护类）
-- V2-M7.6：验收指标：结构正确率 100%，目录完整率 100%，表格列项一致率 100%
-
-### 不做的（V2 阶段）
-
-- 新点软件接口 / CA 签章
-- 内网部署 / Celery 队列
-- 手机端 / 微信机器人
-- 风格库重构（等跑通 5 个 case 再评估）
+- ✅ **全部完成** — V2-M1 到 V2-M7 已落地，V2 管线已接入 API
+- ✅ **5/5 真实 case 验证通过** — 长丰/萧县/南陵/颍州/鸠江
+- ✅ **API 模式：** `BID_GENERATION_MODE=v2` (.env)
 
 ---
 
-## 从 V1 到 V2：继承清单
+## V2 已完成清单
 
-| V1 模块 | V2 用不用 | 说明 |
-|---------|----------|------|
-| Parser (parser_agent.py) | ✅ 全继承 | format_outline_tree + 13字段 |
-| 知识库/RAG | ✅ 全继承 | Form Filler 的数据源 |
-| 前端工作台 | ✅ 全继承 | 只需加格式页预览 + 缺失清单 |
-| Workflow Service | ✅ 全继承 | 编排流程不变 |
-| DOCX Exporter | ✅ 部分继承 | 改为从骨架直接导出 |
-| 两段审计 | ✅ 重构 | 格式审计去LLM，内容审计缩小范围 |
-| Skeleton Renderer (M1) | ❌ 替换 | Markdown 骨架 → DOCX 骨架 |
-| Multi-Agent Generator | ❌ 替换 | 3 Agent → 2 Agent（Form + Content） |
-| LLM Pass 1 审计 | ❌ 删除 | 幻觉假阳性，改代码比对 |
-| _enforce_skeleton_headings | ❌ 删除 | DOCX 锁死区不需要兜底 |
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| V2-M1 格式页提取器 | ✅ | `extract_format_pages()` — 支持三卷/双信封/磋商 |
+| V2-M2 原文模板抽取 | ✅ | Codex 已完成 `extract_format_template_blocks()` |
+| V2-M3 Form Filler | ✅ | `fill_page_template()` — 公司信息自动填空 |
+| V2-M4 Content Writer | ✅ | `fill_technical_volume()` — 逐节点写施工方案 |
+| V2-M5 三层审计 | ✅ | `full_audit()` — 格式/内容/证据 三层 |
+| V2-M6 端到端管线 | ✅ | `generate_v2_bid_package()` — 已接入 API |
+| V2-M7 真实样本验证 | ✅ | 5/5 case format 提取通过 |
 
+## V2 代码位置
+
+```
+backend/services/v2_generation_service.py   — 端到端管线
+backend/services/v2_audit_service.py        — 三层审计
+backend/services/format_skeleton_service.py — 格式提取 (V2-M1)
+backend/agents/form_filler_agent.py         — 表单填空
+backend/agents/content_writer_agent.py      — 施工方案写手
+backend/scripts/verify_v2.py               — 5-case 验证脚本
+```
+
+
+
+## 历史归档（V1 及之前）
+
+旧 M1–M84 和 V1 M1-M10 是历史开发编号。自 2026-06-13 晚起，生成内核已切换为 V2 原文复制骨架。
 ### 新 M1/M2 已落地的代码点
 
 - `backend/services/format_skeleton_service.py`

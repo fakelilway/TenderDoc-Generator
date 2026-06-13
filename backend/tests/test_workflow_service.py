@@ -139,6 +139,7 @@ def test_start_bid_workflow_waits_for_outline_confirmation(monkeypatch) -> None:
 
 
 def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) -> None:
+    monkeypatch.setattr(workflow_service.settings, "bid_generation_mode", "multi_agent")
     saved_states = []
     persisted_states = []
     status_updates = []
