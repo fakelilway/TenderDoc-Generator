@@ -53,6 +53,7 @@ class V2BidPackage:
     missing_checklist: list[str] = field(default_factory=list)
     audit_result: AuditResult | None = None
     format_docx_path: str | None = None  # Pre-built format DOCX from PDF
+    audit_blocked: bool = False  # True when critical audit issues found (content still saved for preview)
 
     VOLUME_ORDER = ("commercial", "technical", "pricing")
     VOLUME_HEADINGS = {
@@ -290,16 +291,21 @@ def generate_v2_bid_package(
         filled_fields=_collect_filled_fields(fill_results),
         profile=profile,
     )
+    audit_blocked = False
     if not audit.passed:
-        # Only block generation on critical issues.
-        # Major/minor issues are surfaced as warnings but don't stop the pipeline —
-        # the user can review them in the audit report and decide.
+        # Critical issues block the downstream review/export pipeline,
+        # but we still return the generated content so the user can preview it.
         has_critical = any(
             issue.severity == "critical"
             for issue in audit.all_issues
         )
         if has_critical:
-            raise ValueError(_format_audit_failure_message(audit))
+            logger.warning(
+                "Audit found critical issues — blocking review pipeline, "
+                "but returning content for preview: %s",
+                _format_audit_failure_message(audit),
+            )
+            audit_blocked = True
 
     # ── Phase 6: Assemble final package ──
     missing = generate_missing_checklist(fill_results)
@@ -327,6 +333,7 @@ def generate_v2_bid_package(
         missing_checklist=missing,
         audit_result=audit,
         format_docx_path=built_format_docx,
+        audit_blocked=audit_blocked,
     )
 
 

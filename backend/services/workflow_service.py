@@ -276,6 +276,26 @@ def run_bid_workflow(
         audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
     else:
         audit_summary = "审查未执行"
+
+    # If audit blocked due to critical issues, save content for preview
+    # but skip the review loop and mark as generation_failed.
+    if v2_pkg.audit_blocked:
+        critical_issues = [
+            i for i in (v2_pkg.audit_result.all_issues if v2_pkg.audit_result else [])
+            if i.severity == "critical"
+        ]
+        issue_details = "；".join(f"{i.location}: {i.problem}" for i in critical_issues[:5])
+        _append_trace(
+            state,
+            "review",
+            "failed",
+            f"审查发现严重问题，已暂停后续流程（内容已保存供预览）：{issue_details}",
+            project_status="generation_failed",
+        )
+        # Persist the draft so user can preview it
+        save_workflow_state(state)
+        _persist_state(project_id, state)
+        return state
     mode_note = f"生成模式：{generation_mode}"
     if audit_summary:
         mode_note += f" | {audit_summary}"
