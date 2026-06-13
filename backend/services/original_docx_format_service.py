@@ -135,3 +135,118 @@ def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
     for run in paragraph.runs[1:]:
         run.text = ""
     first_run.text = updated
+
+
+# ── PDF original copy ──────────────────────────────────────────────────
+
+import fitz  # noqa: E402
+from docx.shared import Inches, Cm  # noqa: E402
+from docx.enum.section import WD_ORIENT  # noqa: E402
+
+
+def build_original_format_docx_from_pdf(
+    tender_pdf_bytes: bytes,
+    output_path: str | Path,
+    *,
+    profile: dict[str, Any] | None = None,
+    dpi: int = 200,
+) -> str:
+    """Render the PDF format chapter as full-page images in a DOCX.
+
+    Each format chapter page is rendered at the given DPI and inserted as a locked,
+    full-page image.  This preserves every pixel of the original PDF — tables, borders,
+    underlines, signature positions, page numbers — exactly as the tender issuer designed it.
+
+    After the locked format pages, a blank final section is added for the construction
+    plan content to be filled by the Content Writer.
+    """
+    profile = profile or {}
+    pdf = fitz.open("pdf", tender_pdf_bytes)
+    page_range = _find_format_page_range(pdf)
+
+    if not page_range:
+        pdf.close()
+        raise ValueError("未能在 PDF 招标文件中定位“投标文件格式”章节，不能原样复制。")
+
+    target = Document()
+    _clear_document_body(target)
+
+    # Set page size to A4 portrait
+    section = target.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
+    section.orientation = WD_ORIENT.PORTRAIT
+
+    for page_num in range(page_range[0], page_range[1]):
+        page = pdf[page_num]
+        # Render at specified DPI
+        pix = page.get_pixmap(dpi=dpi)
+        img_bytes = pix.tobytes("png")
+
+        # Insert as full-page image
+        paragraph = target.add_paragraph()
+        run = paragraph.add_run()
+        stream = BytesIO(img_bytes)
+        run.add_picture(stream, width=Cm(17.5))  # A4 width minus margins
+
+        # Page break after each page
+        if page_num < page_range[1] - 1:
+            target.add_page_break()
+
+    pdf.close()
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    target.save(path)
+    return str(path)
+
+
+def _find_format_page_range(pdf: fitz.Document) -> tuple[int, int] | None:
+    """Find the page range of the format chapter in a PDF."""
+    format_start: int | None = None
+    format_end: int | None = None
+
+    for page_num in range(pdf.page_count):
+        text = pdf[page_num].get_text()
+        compact = re.sub(r"\s+", "", text)
+
+        # Find format chapter start
+        if format_start is None and FORMAT_CHAPTER_RE.search(compact):
+            # Skip past TOC line — find the actual content
+            actual_start = _skip_toc_pages(pdf, page_num)
+            format_start = actual_start
+
+        # Find next chapter end
+        if format_start is not None and format_end is None and page_num > format_start:
+            # Check if this page starts a new chapter (not format chapter)
+            if NEXT_CHAPTER_RE.match(compact) and not FORMAT_CHAPTER_RE.search(compact):
+                format_end = page_num
+                break
+
+    if format_start is None:
+        return None
+
+    if format_end is None:
+        format_end = pdf.page_count
+
+    return (format_start, format_end)
+
+
+def _skip_toc_pages(pdf: fitz.Document, from_page: int) -> int:
+    """Skip TOC pages after finding the format chapter heading."""
+    # Check next few pages — if they're TOC (contain "........" dots), skip them
+    for offset in range(5):
+        page_num = from_page + offset
+        if page_num >= pdf.page_count:
+            return from_page
+        text = pdf[page_num].get_text()
+        # If page contains actual form content markers, it's not TOC
+        if any(marker in text for marker in FORMAT_BODY_MARKERS):
+            return page_num
+        # If page has lots of dot leaders, it's TOC — skip
+        if text.count("........") + text.count("……") + text.count("....") > 3:
+            continue
+        # If page has substantial unique text, it's probably content
+        if len(set(text)) > 100:
+            return page_num
+    return from_page

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
+import tempfile
+from pathlib import Path
 from threading import Thread
 from uuid import uuid4
 
@@ -379,6 +381,7 @@ def run_bid_workflow(
             project_id,
             delivery_markdown,
             generation_service.evaluate_generation_quality(delivery_markdown),
+            original_format_path=_prepare_original_format_for_export(project, state),
         )
         if exported:
             markdown_path, docx_path = exported
@@ -495,6 +498,44 @@ def _delivery_markdown(markdown: str) -> str:
 def _is_original_tender_docx(project: dict) -> bool:
     tender_path = str(project.get("tender_file_path") or "").lower()
     return tender_path.endswith(".docx")
+
+
+def _is_original_tender_pdf(project: dict) -> bool:
+    tender_path = str(project.get("tender_file_path") or "").lower()
+    return tender_path.endswith(".pdf")
+
+
+def _prepare_original_format_for_export(
+    project: dict,
+    state: WorkflowState,
+) -> str | None:
+    """Generate original-format DOCX for PDF tenders.
+
+    For PDF tenders: render the format chapter pages as images → DOCX.
+    For DOCX tenders: handled by the OOXML path in docx_exporter.
+    Returns the path to the generated format DOCX, or None if not applicable.
+    """
+    if _is_original_tender_pdf(project):
+        tender_path = str(project.get("tender_file_path") or "")
+        if not tender_path or not Path(tender_path).exists():
+            return None
+        try:
+            tender_bytes = Path(tender_path).read_bytes()
+            from services.original_docx_format_service import build_original_format_docx_from_pdf
+            tmp_path = str(Path(tempfile.gettempdir()) / f"format_{project.get('id', '0')}.docx")
+            profile = {}
+            try:
+                cp = get_company_profile()["profile"]
+                profile["company_name"] = str(cp.get("company_name", ""))
+            except Exception:
+                pass
+            return build_original_format_docx_from_pdf(
+                tender_bytes, tmp_path, profile=profile
+            )
+        except Exception as e:
+            logger.error(f"PDF original format copy failed: {e}")
+            raise
+    return None
 
 
 def _append_meta_block(markdown: str, block: str) -> str:

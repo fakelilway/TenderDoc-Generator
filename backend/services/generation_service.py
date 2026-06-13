@@ -24,6 +24,8 @@ def export_markdown_for_project(
     project_id: int,
     markdown: str,
     quality_report: dict[str, float | int],
+    *,
+    original_format_path: str | None = None,
 ) -> tuple[str, str]:
     # Defense in depth: workflow meta sections and tdg volume markers must
     # never reach the delivered document, even if the caller forgot to strip.
@@ -34,7 +36,11 @@ def export_markdown_for_project(
         markdown_path = tmp_path / f"project_{project_id}_bid.md"
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
         markdown_path.write_text(markdown, encoding="utf-8")
-        if not _try_export_original_docx_format(project_id, docx_path):
+        if original_format_path and Path(original_format_path).exists():
+            # Use externally-generated original format DOCX (PDF image pages)
+            import shutil
+            shutil.copy2(original_format_path, docx_path)
+        elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 markdown,
                 docx_path,
