@@ -1280,15 +1280,6 @@ export function TenderWorkspace({
                   </button>
                 </>
               ) : null}
-              <button
-                type="button"
-                disabled={!canDownload || actionBusy}
-                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-[#007aff] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(0,122,255,0.24)] transition hover:bg-[#006ee6] disabled:cursor-not-allowed disabled:bg-[#b7d9ff] disabled:shadow-none"
-                onClick={() => handleDownload("docx")}
-              >
-                <Download className="h-4 w-4" />
-                下载标书
-              </button>
             </div>
           </div>
         </div>
