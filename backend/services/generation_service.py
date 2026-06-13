@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -36,10 +37,11 @@ def export_markdown_for_project(
         markdown_path = tmp_path / f"project_{project_id}_bid.md"
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
         markdown_path.write_text(markdown, encoding="utf-8")
-        if original_format_path and Path(original_format_path).exists():
-            # Use externally-generated original format DOCX (PDF/ DOCX image pages)
-            # then append prose content from the markdown
+        if original_format_path and os.path.exists(original_format_path):
             import shutil
+            import logging
+            lg = logging.getLogger(__name__)
+            lg.info(f"Using original format DOCX: {original_format_path} ({os.path.getsize(original_format_path)} bytes)")
             shutil.copy2(original_format_path, docx_path)
             _append_prose_to_docx(docx_path, markdown)
         elif not _try_export_original_docx_format(project_id, docx_path):
