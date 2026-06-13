@@ -624,6 +624,9 @@ def _split_into_volumes(chapter_text: str) -> dict[str, list[FormatPage]]:
 
 def _extract_section_pages(text: str, default_volume: str) -> list[FormatPage]:
     """Extract individual form/section pages from volume text."""
+    # Strip PDF page numbers — standalone 1-3 digit numbers on their own line
+    text = re.sub(r'(?:^|\n)\s*\d{1,3}\s*(?:\n|$)', '\n', text)
+
     pages: list[FormatPage] = []
 
     # Split by Chinese numbered headings (一、二、三、...)
