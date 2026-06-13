@@ -78,14 +78,18 @@ def generate_v2_bid_package(
     profile["company_name"] = company_name
     retrieved = retrieved_chunks_by_section or {}
 
-    # ── Phase 1: Extract format pages ──
-    all_pages = extract_format_pages(tender_text)
-    if not all_pages.get("commercial"):
-        raise ValueError("V2 生成失败：未能从招标文件提取格式章节。请确认格式章节存在。")
+    # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
+    if original_format_docx_available:
+        # Original format (OOXML copy or PDF images) is pixel-perfect.
+        # Skip text-based format extraction — only need prose content.
+        all_pages: dict = {"commercial": [], "technical": [], "pricing": []}
+    else:
+        all_pages = extract_format_pages(tender_text)
+        if not all_pages.get("commercial"):
+            raise ValueError("V2 生成失败：未能从招标文件提取格式章节。请确认格式章节存在。")
 
     classified = assign_page_volumes(all_pages["commercial"], requirements)
 
-    # ── Phase 2: Fill form templates ──
     # Build combined profile with project-specific fields from requirements
     project_fields = {
         "招标人": str(requirements.tenderer_name or ""),
@@ -94,34 +98,52 @@ def generate_v2_bid_package(
         "质量": "符合国家现行工程质量验收标准规范合格标准",
         "安全": "无安全责任事故发生",
     }
+
+    # ── Phase 2: Fill form templates (skip in original format mode) ──
     combined_profile = {**profile, **project_fields}
 
     filled_pages: dict[str, list[tuple[str, str, str]]] = {
         "commercial": [], "technical": [], "pricing": []
     }
     fill_results: list[FillResult] = []
-    page_pairs: list[tuple[str, str]] = []  # (title, original) for audit
+    page_pairs: list[tuple[str, str]] = []
 
-    for vol in ("commercial", "technical", "pricing"):
-        for page in classified.get(vol, []):
-            if page.raw_template:
-                result = fill_page_template(page.raw_template, combined_profile, page.title)
-                filled_pages[vol].append((page.title, page.raw_template, result.filled_template))
-                fill_results.append(result)
-                if page.page_type != "prose_section":
-                    page_pairs.append((page.title, page.raw_template))
+    if not original_format_docx_available:
+        for vol in ("commercial", "technical", "pricing"):
+            for page in classified.get(vol, []):
+                if page.raw_template:
+                    result = fill_page_template(page.raw_template, combined_profile, page.title)
+                    filled_pages[vol].append((page.title, page.raw_template, result.filled_template))
+                    fill_results.append(result)
+                    if page.page_type != "prose_section":
+                        page_pairs.append((page.title, page.raw_template))
 
-    # ── Phase 3: Write prose content (technical volume only) ──
+    # ── Phase 3: Write prose content ──
     tech_content = ""
     prose_results: VolumeFillResult | None = None
-    for page in classified.get("technical", []):
-        if page.page_type == "prose_section" or "施工" in page.title:
-            # Collect sub-section titles from format tree
-            tech_titles = _collect_technical_titles(requirements)
-            if not tech_titles:
-                tech_titles = [page.title]
-
-            chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+    if not original_format_docx_available and classified.get("technical"):
+        for page in classified["technical"]:
+            if page.page_type == "prose_section" or "施工" in page.title:
+                tech_titles = _collect_technical_titles(requirements)
+                if not tech_titles:
+                    tech_titles = [page.title]
+                chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+                prose_results = fill_technical_volume(
+                    node_titles=tech_titles,
+                    project_name=requirements.project_name or "投标项目",
+                    requirements=requirements.model_dump(),
+                    company_name=company_name,
+                    knowledge_chunks=[{"content": str(c) if isinstance(c, str) else str(getattr(c, "content", c))}
+                                      for c in chunks[:10]],
+                    tender_text=tender_text,
+                )
+                tech_content = prose_results.combined
+                break
+    elif original_format_docx_available:
+        # Still generate prose for original format — appended after format pages
+        tech_titles = _collect_technical_titles(requirements) or ["施工组织设计"]
+        chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+        try:
             prose_results = fill_technical_volume(
                 node_titles=tech_titles,
                 project_name=requirements.project_name or "投标项目",
@@ -132,7 +154,8 @@ def generate_v2_bid_package(
                 tender_text=tender_text,
             )
             tech_content = prose_results.combined
-            break
+        except Exception:
+            tech_content = "施工方案生成中，请人工编写或重新生成。"
 
     # ── Phase 4: Assemble markdown per volume ──
 
