@@ -124,36 +124,24 @@ def generate_v2_bid_package(
             break
 
     # ── Phase 4: Assemble markdown per volume ──
-    PAGE_BREAK = '\n\n<div style="page-break-after: always;"></div>\n\n'
 
     def _assemble_markdown(vol: str) -> str:
         lines: list[str] = []
         project = requirements.project_name or "投标项目"
         label = V2BidPackage.VOLUME_HEADINGS.get(vol, vol)
-
-        # Cover page placeholder
-        lines.append(f'<div style="text-align:center; margin-top:40%;">\n\n')
-        lines.append(f'# {project}\n\n')
-        lines.append(f'## {label}\n\n')
-        lines.append(f'**投标人：{company_name}**\n\n')
-        lines.append(f'</div>{PAGE_BREAK}')
+        lines.append(f"# {project} {label}\n")
 
         for idx, (title, original, filled) in enumerate(filled_pages.get(vol, [])):
-            # Use prose content for technical construction plan sections
             if vol == "technical" and ("施工" in title or _is_prose_page(title)):
-                if tech_content and idx == 0:
-                    content = tech_content
-                else:
-                    content = filled
+                content = tech_content if tech_content and idx == 0 else filled
             else:
                 content = filled
 
-            # Underline blanks for DOCX rendering
-            content = content.replace('________', '<u>        </u>')
-            content = content.replace('＿＿＿＿', '<u>        </u>')
+            # Clean content: strip HTML, keep plain markdown
+            content = _clean_for_markdown(content)
+            content = re.sub(r'_{3,}', '________', content)
 
-            # Page break before each major section
-            lines.append(f'{PAGE_BREAK}## {title}\n\n{content}\n')
+            lines.append(f"\n## {title}\n\n{content}\n")
 
         return "\n".join(lines)
 
@@ -235,3 +223,17 @@ def _collect_filled_fields(results: list[FillResult]) -> list[dict[str, Any]]:
                 "profile_key": "",
             })
     return fields
+
+
+def _clean_for_markdown(text: str) -> str:
+    """Strip HTML tags and normalize text for Markdown/DOCX rendering."""
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Normalize line endings
+    text = re.sub(r'\r\n', '\n', text)
+    text = re.sub(r'\r', '\n', text)
+    # Collapse multiple blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Remove page numbers (standalone digits at line start/end)
+    text = re.sub(r'\n\s*\d{1,3}\s*\n', '\n', text)
+    return text.strip()
