@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import tempfile
-from pathlib import Path
 from threading import Thread
 from uuid import uuid4
 
@@ -266,13 +264,11 @@ def run_bid_workflow(
     if gen_mode == "v2":
         # Download tender bytes for PDF original format conversion during generation
         tender_bytes: bytes | None = None
-        if _is_original_tender_pdf(project):
-            import sys as _sys
-            from utils.minio_client import minio_client as _minioc
+        if _original_tender_extension(project) == ".pdf":
+            from utils.minio_client import minio_client
             tender_path = str(project.get("tender_file_path", ""))
-            _sys.stderr.write(f"[V2] Downloading PDF from MinIO: {tender_path}\n")
-            tender_bytes = _minioc.download_bytes(settings.minio_bucket, tender_path)
-            _sys.stderr.write(f"[V2] Downloaded: {len(tender_bytes)} bytes\n")
+            logger.debug("Downloading PDF from MinIO: %s", tender_path)
+            tender_bytes = minio_client.download_bytes(settings.minio_bucket, tender_path)
 
         v2_pkg = generate_v2_bid_package(
             requirements,
@@ -280,7 +276,7 @@ def run_bid_workflow(
             company_name=str((company_profile or {}).get("company_name", "") or settings.company_name),
             tender_text=state.tender_text,
             company_profile=company_profile,
-            original_format_docx_available=_is_original_tender_docx(project) or _is_original_tender_pdf(project),
+            original_format_docx_available=_is_original_format(project),
             tender_bytes=tender_bytes,
         )
         state.draft_volumes = v2_pkg.volume_map()
@@ -385,22 +381,9 @@ def run_bid_workflow(
             state,
             "download",
             "running",
-            "人工暂停已关闭，开始导出 Markdown 和 DOCX。",
+            "自动导出开关已打开，将跳过人工暂停进入导出。",
             project_status="generating",
         )
-        delivery_markdown = _delivery_markdown(state.draft_markdown)
-        format_path = getattr(state, 'v2_format_docx', None)
-        exported = generation_service.export_markdown_for_project(
-            project_id,
-            delivery_markdown,
-            generation_service.evaluate_generation_quality(delivery_markdown),
-            original_format_path=format_path or _prepare_original_format_for_export(project, state),
-        )
-        if exported:
-            markdown_path, docx_path = exported
-            state.final_versions = append_final_version(
-                project_id, markdown_path, docx_path
-            )
         state.status = "finished"
         _append_trace(
             state,
@@ -409,6 +392,7 @@ def run_bid_workflow(
             "最终文件已导出并上传到 MinIO。",
             project_status="finished",
         )
+        # Export handled in confirm_project
 
     save_workflow_state(state)
     _persist_state(project_id, state)
@@ -509,53 +493,18 @@ def _delivery_markdown(markdown: str) -> str:
     return strip_meta_notes(markdown)
 
 
-def _is_original_tender_docx(project: dict) -> bool:
+def _original_tender_extension(project: dict) -> str | None:
+    """Return the file extension of the original tender ('.pdf' or '.docx'), or None."""
     tender_path = str(project.get("tender_file_path") or "").lower()
-    return tender_path.endswith(".docx")
-
-
-def _is_original_tender_pdf(project: dict) -> bool:
-    tender_path = str(project.get("tender_file_path") or "").lower()
-    return tender_path.endswith(".pdf")
-
-
-def _prepare_original_format_for_export(
-    project: dict,
-    state: WorkflowState,
-) -> str | None:
-    """Generate original-format DOCX for PDF tenders.
-
-    For PDF tenders: render the format chapter pages as images → DOCX.
-    For DOCX tenders: handled by the OOXML path in docx_exporter.
-    Returns the path to the generated format DOCX, or None if not applicable.
-    """
-    if _is_original_tender_pdf(project):
-        from utils.minio_client import minio_client as mc
-        from core.config import settings as s2
-        tender_path = str(project.get("tender_file_path") or "")
-        if not tender_path:
-            logger.warning("No tender_file_path in project; cannot build PDF format DOCX")
-            return None
-        try:
-            tender_bytes = mc.download_bytes(s2.minio_bucket, tender_path)
-            logger.info(f"Downloaded PDF from MinIO: {len(tender_bytes)} bytes")
-            from services.original_docx_format_service import build_original_format_docx_from_pdf
-            tmp_path = str(Path(tempfile.gettempdir()) / f"format_{project.get('id', '0')}.docx")
-            profile = {}
-            try:
-                cp = get_company_profile()["profile"]
-                profile["company_name"] = str(cp.get("company_name", ""))
-            except Exception:
-                pass
-            result = build_original_format_docx_from_pdf(
-                tender_bytes, tmp_path, profile=profile
-            )
-            logger.info(f"PDF format DOCX built: {result}")
-            return result
-        except Exception as e:
-            logger.error(f"PDF original format copy failed: {type(e).__name__}: {e}", exc_info=True)
-            return None
+    for ext in (".pdf", ".docx"):
+        if tender_path.endswith(ext):
+            return ext
     return None
+
+
+def _is_original_format(project: dict) -> bool:
+    """True if the tender is in a known original format (PDF or DOCX)."""
+    return _original_tender_extension(project) is not None
 
 
 def _append_meta_block(markdown: str, block: str) -> str:
