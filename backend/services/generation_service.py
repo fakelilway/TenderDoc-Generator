@@ -46,7 +46,7 @@ def export_markdown_for_project(
                     _append_prose_to_docx(vol_path, markdown)
             # Main docx = technical (has prose), or commercial as fallback
             shutil.copy2(original_format_path, docx_path)
-            _append_prose_to_docx(docx_path, markdown)
+            _append_prose_to_docx(docx_path, markdown)  # Prose content for technical volume
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 markdown,

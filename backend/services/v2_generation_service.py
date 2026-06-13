@@ -94,6 +94,7 @@ def generate_v2_bid_package(
                 tender_bytes, tmp.name, profile=profile
             )
         except Exception:
+            logging.getLogger(__name__).error("PDF format conversion failed", exc_info=True)
             built_format_docx = None
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
@@ -139,40 +140,34 @@ def generate_v2_bid_package(
     # ── Phase 3: Write prose content ──
     tech_content = ""
     prose_results: VolumeFillResult | None = None
+
+    def _call_content_writer(titles: list[str]) -> tuple[VolumeFillResult | None, str]:
+        chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+        result = fill_technical_volume(
+            node_titles=titles,
+            project_name=requirements.project_name or "投标项目",
+            requirements=requirements.model_dump(),
+            company_name=company_name,
+            knowledge_chunks=[{"content": str(c) if isinstance(c, str) else str(getattr(c, "content", c))}
+                              for c in chunks[:10]],
+            tender_text=tender_text,
+        )
+        return result, result.combined
+
     if not original_format_docx_available and classified.get("technical"):
         for page in classified["technical"]:
             if page.page_type == "prose_section" or "施工" in page.title:
                 tech_titles = _collect_technical_titles(requirements)
                 if not tech_titles:
                     tech_titles = [page.title]
-                chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
-                prose_results = fill_technical_volume(
-                    node_titles=tech_titles,
-                    project_name=requirements.project_name or "投标项目",
-                    requirements=requirements.model_dump(),
-                    company_name=company_name,
-                    knowledge_chunks=[{"content": str(c) if isinstance(c, str) else str(getattr(c, "content", c))}
-                                      for c in chunks[:10]],
-                    tender_text=tender_text,
-                )
-                tech_content = prose_results.combined
+                prose_results, tech_content = _call_content_writer(tech_titles)
                 break
     elif original_format_docx_available:
-        # Still generate prose for original format — appended after format pages
         tech_titles = _collect_technical_titles(requirements) or ["施工组织设计"]
-        chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
         try:
-            prose_results = fill_technical_volume(
-                node_titles=tech_titles,
-                project_name=requirements.project_name or "投标项目",
-                requirements=requirements.model_dump(),
-                company_name=company_name,
-                knowledge_chunks=[{"content": str(c) if isinstance(c, str) else str(getattr(c, "content", c))}
-                                  for c in chunks[:10]],
-                tender_text=tender_text,
-            )
-            tech_content = prose_results.combined
+            prose_results, tech_content = _call_content_writer(tech_titles)
         except Exception:
+            logging.getLogger(__name__).warning("Content writer failed in original format mode", exc_info=True)
             tech_content = "施工方案生成中，请人工编写或重新生成。"
 
     # ── Phase 4: Assemble markdown per volume ──
@@ -334,8 +329,6 @@ def _render_locked_format_content(
         return content
     if _requires_figure_placeholder(title, original):
         return "【图表占位：请按招标文件要求插入对应组织机构图、进度计划图、施工总平面图或知识库图片资料】"
-    if _is_locked_letter_or_clause(title):
-        return content
     return content
 
 
@@ -373,20 +366,6 @@ def _has_markdown_table(content: str) -> bool:
             return True
     return False
 
-
-def _looks_like_locked_table(title: str, original: str) -> bool:
-    text = f"{title}\n{original}"
-    return any(
-        keyword in text
-        for keyword in (
-            "清单",
-            "汇总",
-            "明细",
-            "一览",
-            "人员组成",
-            "拟分包",
-        )
-    ) or bool(re.search(r"(?:情况表|组成表|汇总表|明细表|一览表|附表)", text))
 
 
 def _is_locked_letter_or_clause(title: str) -> bool:
