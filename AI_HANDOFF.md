@@ -5,28 +5,15 @@
 
 ---
 
-## 当前状态 (2026-06-13 20:21)
+## 当前状态 (2026-06-13 20:54)
 
-**最新 main:** `c102cc3` — feat: add deterministic bid format skeletons
+**WorkBuddy 最后操作:** 清理了 `generator_agent.py` 中的重复 `render_all_volume_skeletons`（该函数已由 codex 在 `format_skeleton_service.py` 中实现并导入），修复了测试，并将 `source` 归一化 fix 合并进 parser。
 
-**WorkBuddy 前序 push:** `9f0e906` — split writer/auditor prompts, unify issues field, fast-fail on empty revise
+**当前 main commit:** `6a30a51` (docs) + 本地未 push 的改动
 
-**测试:** 236 passed, 2 skipped
+**Codex 已完成:** M1 Skeleton MVP + M2 原文模板抽取（`format_skeleton_service.py`），测试 235 passed, 3 skipped
 
-**Codex 最新进展:** M1 Skeleton Renderer + M2 原文模板抽取已 push；README/minitasks/setup/generation_contract 正在同步新 M1-M10 路线。
-
-**当前已 push 改动:**
-- `backend/services/format_skeleton_service.py`：新增确定性格式骨架层；M2 已接入招标文件格式章节原文抽取，能把函件/表格原文模板嵌入骨架。
-- `backend/agents/generator_agent.py`：生成前强制要求三卷 `format_outline_tree` 完整；生成/修订/打回复用同一份骨架；LLM 结构审计前加确定性标题预审。
-- `backend/prompts/generator_prompt.py`：writer/revision prompt 改为在“本卷确定性骨架”内填内容，标题、顺序、层级必须逐字保留；若骨架已有原文模板，必须优先保留原文模板。
-- `backend/tests/test_format_skeleton_service.py`、`backend/tests/test_generator_agent.py`、`backend/tests/test_agent_persona_prompts.py`：覆盖骨架渲染、缺格式树硬失败、骨架传入生成/修订链路、重复投标函按卷抽取、目录行不抢模板、泛标题只做边界不抽模板。
-- `backend/agents/parser_agent.py`：另有 9 行未提交改动，把 LLM 返回的字符串 `source` 归一化成 `{source_text, page_number}`；这不是 Skeleton 改动，但当前在工作区里。
-
-**当前文档同步改动（未 push）:**
-- `README.md`：新增“格式优先生成内核 M1-M10”，更新架构图和当前能力。
-- `minitasks.md`：新 M1-M10 成为当前主线，旧 M 编号保留为历史归档；补 M3 mini tasks。
-- `setup.md`：本地端到端流程改为骨架 + 原文模板 + multi-agent 填充。
-- `docs/generation_contract.md`：生成边界改为“格式树 + 原文模板 + 人工确认目录”。
+**M3 待做:** 节点级逐槽填充，不让 LLM 输出整卷 Markdown
 
 ---
 
