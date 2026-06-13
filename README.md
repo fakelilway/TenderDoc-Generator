@@ -20,7 +20,7 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 公司风格案例库保留历史投标 PDF 资产，生成案例画像，记录写作深度、表格/图片位、禁用语气等风格资产；只有用户主动选择时才作为参考。
 - 生成前会构建 `EvidencePack`，把公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据分开。
 - 生成时会构建 `BidPlan`，统一决定章节顺序、可用知识片段、可插入图片、表格需求和文风边界。
-- 默认生成内核已切为长上下文模式：一次性把招标文件格式要求、确认目录、招标要求、可选风格案例、精选企业资料和图片清单交给 DeepSeek/OpenRouter 生成三卷 Markdown；解析/生成失败即失败，不再自动降级生成看似可用但可能废标的内容。
+- 默认生成模式为 multi_agent：商务/技术/报价三个 Agent 并行生成并各自对照招标全文修改，总审双段检查（结构→内容），打回返修最多两轮，最终确定性拼接导出。解析/生成失败即失败，不自动降级生成可能废标的内容。
 - 商务文件、技术文件、报价文件三卷生成与预览，完整标书作为按需合并稿。
 - Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
 - DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
@@ -38,12 +38,50 @@ TenderDoc-Generator 是面向正奇建设投标场景的智能标书生成系统
 - 公司信息档案：`/company` 页维护企业工商、资质、账户和拟派项目班子信息，生成时自动注入投标人基本状况表、投标函落款等商务内容。
 - 招标全文持久化（`projects.tender_text`），Parser 额外抽取招标人、建设地点、招标范围、计划工期、质量标准、安全目标、投标截止时间七个核心字段。
 
-最近一次架构验证（2026-06-12）：
+最近一次架构验证（2026-06-13）：
 
-- 后端完整回归：`232 passed, 2 skipped`
+- 后端完整回归：`256 passed, 2 skipped`
 - 前端类型检查：通过
 
-## 产品范围
+## 当前架构
+
+```mermaid
+flowchart TD
+    U[上传招标文件 PDF/DOCX] --> P[Parser LLM<br/>全文一次提取 13 字段]
+    P --> T[format_outline_tree<br/>三卷树形目录]
+    P --> F[bid_format_requirements<br/>格式章节摘要]
+    T --> H[人工确认]
+    F --> H
+    H --> S[build_bid_framework_brief<br/>框架预计算 · 全员约束]
+
+    S --> CA[商务卷 Agent<br/>生成→对照全文修改]
+    S --> TA[技术卷 Agent<br/>生成→对照全文修改]
+    S --> PA[报价卷 Agent<br/>生成→对照全文修改]
+
+    CA --> A1{Pass 1: 结构审计<br/>format_outline_tree 匹配}
+    TA --> A1
+    PA --> A1
+
+    A1 -->|fail| RV[返修对应卷<br/>最多 2 轮]
+    RV --> A1
+    A1 -->|pass| A2{Pass 2: 内容审计<br/>废标风险·事实·AI 元文本}
+
+    A2 -->|fail| RV2[返修对应卷<br/>最多 2 轮]
+    RV2 --> A2
+    A2 -->|pass| E[确定性拼接 · DOCX 导出]
+```
+
+**五阶段流水线：**
+
+| 阶段 | 做什么 | 关键技术 |
+|------|--------|---------|
+| 解析 | 全文直传 DeepSeek，一次提取项目名/资格/评分/废标/格式树 | `format_outline_tree` 树形目录 + 规则兜底 |
+| 框架先行 | 格式树 + 人工目录 → 预计算约束文档，所有 Agent 共同遵守 | `build_bid_framework_brief()` 确定性输出 |
+| Multi-Agent 生成 | 商务/技术/报价三 Agent 并行，每人独立人格+独立 context | ThreadPoolExecutor，`_volume_agent_profile()` |
+| 双段审计 | Pass 1 查结构（树匹配），Pass 2 查内容（废标/事实/AI 元文本） | 两段独立 LLM 调用，结构不过不跑内容 |
+| 导出 | 按卷册标记确定性拼接，不靠 LLM 合稿 | `split_delivery_markdown()` → DOCX |
+
+## 现有能力
 
 第一版默认支持：
 
@@ -186,7 +224,7 @@ TenderDoc-Generator/
 
 - 前端：Next.js 14 App Router + React 18 + TypeScript + Tailwind，pnpm 管理，API 用原生 fetch 封装（`frontend/lib/api.ts`）。
 - 后端：FastAPI + uvicorn，Python 3.11（根目录 `.venv`），psycopg2 显式 SQL + 连接池，Pydantic v2，JWT 认证，FastAPI BackgroundTasks 跑长任务。
-- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；支持 `long_context` 一次生成和 `multi_agent` 商务/技术/报价分卷生成+修订+总审打回循环，最终由代码确定性拼接三卷，不让 LLM 合稿或写内部 marker；失败后提示修正配置、输入或提示词后重跑，不自动 fallback。
+- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认 `multi_agent` 模式（商务/技术/报价三 Agent 并行 + 双段审计 + 确定性拼接），失败后无 fallback。
 - RAG：BAAI/bge-large-zh-v1.5（1024 维）+ pgvector，JSONB metadata 过滤。
 - 存储：PostgreSQL 15+（JSONB + pgvector）、Redis 7（workflow state）、MinIO（原文/资料/产物）。
 - 文档处理：pypdf/pdfplumber/PyMuPDF 解析，python-docx 导出（`backend/utils/docx_exporter.py` 统一排版）。
