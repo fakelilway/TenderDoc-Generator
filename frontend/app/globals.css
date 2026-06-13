@@ -13,13 +13,13 @@
 
 body {
   margin: 0;
-  background:
-    linear-gradient(180deg, #fbfbfa 0%, #f3f4f6 42%, #eef1f4 100%);
+  background: #f5f5f7;
   color: #17202a;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "SF Pro Text", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -31,7 +31,7 @@ textarea {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #2563eb;
+  outline: 2px solid rgba(0, 122, 255, 0.72);
   outline-offset: 2px;
 }
 
@@ -47,6 +47,27 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: #dbeafe;
+  background: rgba(0, 122, 255, 0.18);
   color: #111827;
+}
+
+.ios-glass {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.68));
+  border-color: rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 18px 50px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(28px) saturate(1.35);
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+}
+
+.ios-panel {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(209, 213, 219, 0.72);
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }

@@ -14,9 +14,9 @@ export function AppLogo({ className = "", imageClassName = "" }: AppLogoProps) {
       ].join(" ")}
     >
       <img
-        src="/logo.png"
+        src="/zhengqi-logo-mark.png"
         alt="正奇建设"
-        className={["h-full w-full object-cover", imageClassName].join(" ")}
+        className={["h-full w-full object-contain", imageClassName].join(" ")}
       />
     </span>
   );

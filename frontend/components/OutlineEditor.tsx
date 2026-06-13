@@ -80,14 +80,14 @@ export function OutlineEditor({
   }
 
   return (
-    <section className="rounded-lg border border-line bg-white p-4">
+    <section className="ios-panel rounded-[26px] border p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-ink">大纲编辑</h2>
         <div className="flex gap-2">
           <button
             type="button"
             disabled={busy}
-            className="inline-flex h-8 items-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-medium text-ink hover:bg-field disabled:text-muted"
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/68 px-3.5 text-xs font-medium text-[#1d1d1f] hover:bg-white disabled:text-muted"
             onClick={onBuild}
           >
             <Plus className="h-4 w-4" />
@@ -96,7 +96,7 @@ export function OutlineEditor({
           <button
             type="button"
             disabled={busy || outline.length === 0}
-            className="inline-flex h-8 items-center gap-2 rounded-md bg-ok px-3 text-xs font-semibold text-white hover:bg-green-700 disabled:bg-green-300"
+            className="inline-flex h-9 items-center gap-2 rounded-full bg-[#34c759] px-3.5 text-xs font-semibold text-white shadow-[0_10px_22px_rgba(52,199,89,0.16)] hover:bg-[#2fb34f] disabled:bg-[#b8e8c3]"
             onClick={onSave}
           >
             <Save className="h-4 w-4" />
@@ -105,13 +105,13 @@ export function OutlineEditor({
         </div>
       </div>
       {documentOutline.length > 0 ? (
-        <div className="mt-3 rounded-md border border-line bg-field p-3">
+        <div className="mt-3 rounded-[22px] border border-black/[0.06] bg-white/42 p-3">
           <div className="text-xs font-semibold text-ink">完整标书目录</div>
           <div className="mt-2 space-y-2">
             {documentOutline.map((section, index) => (
               <div key={`${section.title}-${index}`} className="text-xs text-muted">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded bg-white px-2 py-0.5 font-medium text-ink">
+                  <span className="rounded-full bg-white/78 px-2.5 py-0.5 font-medium text-ink">
                     {section.volume}
                   </span>
                   <span className="text-ink">{section.title}</span>
@@ -139,31 +139,31 @@ export function OutlineEditor({
         {outline.map((section, index) => (
           // The title is editable, so it must not be part of the key:
           // typing would remount the input and drop focus on every keystroke.
-          <div key={index} className="rounded-md border border-line bg-field p-3">
+          <div key={index} className="rounded-[22px] border border-black/[0.06] bg-white/48 p-3">
             <div className="flex gap-2">
               <input
                 value={section.title}
                 disabled={busy}
                 onChange={(event) => update(index, { title: event.target.value })}
-                className="h-9 min-w-0 flex-1 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand"
+                className="h-10 min-w-0 flex-1 rounded-[16px] border border-black/[0.08] bg-white/76 px-3 text-sm text-ink outline-none focus:border-[#007aff]"
               />
               <button
                 type="button"
-                className="grid h-9 w-9 place-items-center rounded-md border border-line bg-white text-ink hover:bg-field"
+                className="grid h-9 w-9 place-items-center rounded-full border border-black/[0.06] bg-white/70 text-ink hover:bg-white"
                 onClick={() => move(index, -1)}
               >
                 <ArrowUp className="h-4 w-4" />
               </button>
               <button
                 type="button"
-                className="grid h-9 w-9 place-items-center rounded-md border border-line bg-white text-ink hover:bg-field"
+                className="grid h-9 w-9 place-items-center rounded-full border border-black/[0.06] bg-white/70 text-ink hover:bg-white"
                 onClick={() => move(index, 1)}
               >
                 <ArrowDown className="h-4 w-4" />
               </button>
               <button
                 type="button"
-                className="grid h-9 w-9 place-items-center rounded-md border border-line bg-white text-danger hover:bg-field"
+                className="grid h-9 w-9 place-items-center rounded-full border border-black/[0.06] bg-white/70 text-danger hover:bg-white"
                 onClick={() => remove(index)}
               >
                 <Trash2 className="h-4 w-4" />
@@ -180,9 +180,9 @@ export function OutlineEditor({
                     .filter(Boolean)
                 })
               }
-              className="mt-2 min-h-16 w-full resize-y rounded-md border border-line bg-white px-3 py-2 text-xs text-ink outline-none focus:border-brand"
+              className="mt-2 min-h-16 w-full resize-y rounded-[16px] border border-black/[0.08] bg-white/76 px-3 py-2 text-xs text-ink outline-none focus:border-[#007aff]"
             />
-            <div className="mt-3 rounded-md border border-dashed border-line bg-white p-3">
+            <div className="mt-3 rounded-[18px] border border-dashed border-black/[0.08] bg-white/50 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold text-ink">手动插图位</div>
@@ -193,7 +193,7 @@ export function OutlineEditor({
                 <button
                   type="button"
                   disabled={busy}
-                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-medium text-ink hover:bg-field disabled:text-muted"
+                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-black/[0.06] bg-white/70 px-2.5 text-xs font-medium text-ink hover:bg-white disabled:text-muted"
                   onClick={() => addImageSlot(index)}
                 >
                   <ImagePlus className="h-4 w-4" />
@@ -205,7 +205,7 @@ export function OutlineEditor({
                   {(section.manual_image_slots ?? []).map((slot, slotIndex) => (
                     <div
                       key={slotIndex}
-                      className="grid gap-2 rounded-md border border-line bg-field p-2"
+                      className="grid gap-2 rounded-[16px] border border-black/[0.06] bg-white/54 p-2"
                     >
                       <div className="flex items-center gap-2">
                         <span className="shrink-0 text-[11px] font-semibold text-muted">
@@ -220,12 +220,12 @@ export function OutlineEditor({
                               title: event.target.value
                             })
                           }
-                          className="h-8 min-w-0 flex-1 rounded-md border border-line bg-white px-2 text-xs text-ink outline-none focus:border-brand"
+                          className="h-8 min-w-0 flex-1 rounded-[12px] border border-black/[0.08] bg-white/80 px-2 text-xs text-ink outline-none focus:border-[#007aff]"
                         />
                         <button
                           type="button"
                           disabled={busy}
-                          className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-white text-danger hover:bg-field disabled:text-muted"
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-black/[0.06] bg-white/70 text-danger hover:bg-white disabled:text-muted"
                           onClick={() => removeImageSlot(index, slotIndex)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -240,7 +240,7 @@ export function OutlineEditor({
                             placement: event.target.value
                           })
                         }
-                        className="h-8 rounded-md border border-line bg-white px-2 text-xs text-ink outline-none focus:border-brand"
+                        className="h-8 rounded-[12px] border border-black/[0.08] bg-white/80 px-2 text-xs text-ink outline-none focus:border-[#007aff]"
                       />
                       <textarea
                         value={slot.description ?? ""}
@@ -251,7 +251,7 @@ export function OutlineEditor({
                             description: event.target.value
                           })
                         }
-                        className="min-h-14 resize-y rounded-md border border-line bg-white px-2 py-1.5 text-xs text-ink outline-none focus:border-brand"
+                        className="min-h-14 resize-y rounded-[12px] border border-black/[0.08] bg-white/80 px-2 py-1.5 text-xs text-ink outline-none focus:border-[#007aff]"
                       />
                     </div>
                   ))}

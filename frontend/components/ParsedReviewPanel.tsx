@@ -27,7 +27,7 @@ export function ParsedReviewPanel({
   const hasFormatRequirements = formatLines.length > 0;
 
   return (
-    <section className="rounded-lg border border-line bg-white p-4">
+    <section className="ios-panel rounded-[26px] border p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-ink">解析与格式确认</h2>
@@ -38,7 +38,7 @@ export function ParsedReviewPanel({
         <button
           type="button"
           disabled={!parsed || busy || !hasFormatRequirements}
-          className="inline-flex h-8 items-center gap-2 rounded-md bg-brand px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+          className="inline-flex h-9 items-center gap-2 rounded-full bg-[#007aff] px-3.5 text-xs font-semibold text-white shadow-[0_10px_22px_rgba(0,122,255,0.18)] hover:bg-[#006ee6] disabled:cursor-not-allowed disabled:bg-[#b7d9ff] disabled:shadow-none"
           onClick={onSave}
         >
           <Save className="h-4 w-4" />
@@ -48,10 +48,10 @@ export function ParsedReviewPanel({
 
       <div
         className={[
-          "mt-4 rounded-lg border p-3",
+          "mt-4 rounded-[22px] border p-3",
           hasFormatRequirements
-            ? "border-green-200 bg-green-50"
-            : "border-amber-200 bg-amber-50"
+            ? "border-[#34c759]/20 bg-[#34c759]/10"
+            : "border-[#ff9f0a]/20 bg-[#ff9f0a]/10"
         ].join(" ")}
       >
         <div className="flex items-start gap-2">
@@ -88,7 +88,7 @@ export function ParsedReviewPanel({
         value={value}
         disabled={!parsed || busy}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-3 min-h-64 w-full resize-y rounded-md border border-line bg-field p-3 font-mono text-xs leading-5 text-ink outline-none focus:border-brand"
+        className="mt-3 min-h-64 w-full resize-y rounded-[20px] border border-black/[0.08] bg-white/62 p-3 font-mono text-xs leading-5 text-ink outline-none focus:border-[#007aff]"
       />
     </section>
   );

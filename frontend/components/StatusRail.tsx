@@ -277,10 +277,10 @@ export function StatusRail({
   }
 
   return (
-    <section className="rounded-lg border border-line bg-panel p-4 shadow-panel">
+    <section className="ios-panel rounded-[26px] border p-4">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ink">实时状态</h2>
-        <span className="rounded-md border border-line bg-field px-2 py-1 text-xs font-medium text-muted">
+        <h2 className="text-sm font-semibold text-[#1d1d1f]">实时状态</h2>
+        <span className="rounded-full border border-black/[0.06] bg-white/70 px-3 py-1 text-xs font-medium text-[#6e6e73]">
           {readableStatus(status || "idle")}
         </span>
       </div>
@@ -303,12 +303,12 @@ export function StatusRail({
               <div className="flex items-center gap-3">
                 <span
                   className={[
-                    "grid h-8 w-8 shrink-0 place-items-center rounded-md border",
+                    "grid h-8 w-8 shrink-0 place-items-center rounded-full border",
                     complete
-                      ? "border-ok bg-ok text-white"
+                      ? "border-[#34c759] bg-[#34c759] text-white"
                       : active
-                        ? "border-brand bg-blue-50 text-brand"
-                        : "border-line bg-field text-muted"
+                        ? "border-[#007aff]/20 bg-[#007aff]/10 text-[#007aff]"
+                        : "border-black/[0.08] bg-white/52 text-[#8e8e93]"
                   ].join(" ")}
                 >
                   {busy && active ? (
@@ -335,7 +335,7 @@ export function StatusRail({
                       {progress}%
                     </span>
                   </div>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-field">
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/[0.06]">
                     <div
                       className={[
                         "h-full rounded-full transition-all duration-500",
@@ -375,5 +375,113 @@ export function StatusRail({
         })}
       </ol>
     </section>
+  );
+}
+
+export function StatusProgressOverlay({
+  open,
+  status,
+  busy,
+  traceEvents = []
+}: {
+  open: boolean;
+  status: string;
+  busy: boolean;
+  traceEvents?: WorkflowTraceEvent[];
+}) {
+  const current = statusIndex(status);
+  const activeIndex = current >= 0 ? current : 0;
+  const activeStage = stages[activeIndex] ?? stages[0];
+  const ActiveIcon = activeStage.icon;
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!open) {
+      setElapsedSeconds(0);
+      return undefined;
+    }
+
+    const startedAt = Date.now();
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [open, status]);
+
+  if (!open) {
+    return null;
+  }
+
+  const progress = stageProgress(
+    status,
+    activeIndex,
+    activeIndex,
+    busy,
+    elapsedSeconds
+  );
+  const matched = traceEvents
+    .filter((event) => activeStage.traceStages.includes(event.stage))
+    .slice(-3);
+  const activeMessage =
+    matched.at(-1)?.message ||
+    (progress >= 100
+      ? activeStage.doneText
+      : `${activeStage.activeText}，已等待 ${formatElapsed(elapsedSeconds)}`);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-2xl backdrop-saturate-50">
+      <div className="absolute inset-0 bg-black/20" />
+      <section className="ios-glass relative w-full max-w-[520px] rounded-[32px] border p-6 text-[#1d1d1f] shadow-[0_34px_90px_rgba(0,0,0,0.34)]">
+        <div className="flex items-start gap-4">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[18px] bg-[#007aff]/10 text-[#007aff]">
+            {progress >= 100 ? (
+              <CheckCircle2 className="h-6 w-6" />
+            ) : busy ? (
+              <Loader2 className="h-6 w-6 animate-spin" />
+            ) : (
+              <ActiveIcon className="h-6 w-6" />
+            )}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[15px] font-semibold">{activeStage.label}</p>
+                <p className="mt-0.5 text-xs text-[#6e6e73]">
+                  {readableStatus(status || "idle")}
+                </p>
+              </div>
+              <span className="text-xl font-semibold tabular-nums text-[#1d1d1f]">
+                {progress}%
+              </span>
+            </div>
+            <div className="mt-5 h-2 overflow-hidden rounded-full bg-black/[0.08]">
+              <div
+                className={[
+                  "h-full rounded-full transition-all duration-500",
+                  progress >= 100 ? "bg-[#34c759]" : "bg-[#007aff]"
+                ].join(" ")}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-4 text-sm leading-6 text-[#3a3a3c]">
+              {activeMessage}
+            </p>
+            {matched.length > 1 ? (
+              <div className="mt-3 space-y-1.5 rounded-[18px] bg-white/48 px-3 py-2">
+                {matched.slice(0, -1).map((event, index) => (
+                  <p
+                    key={`${event.stage}-${event.message}-${index}`}
+                    className="line-clamp-1 text-xs text-[#6e6e73]"
+                  >
+                    {event.message}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

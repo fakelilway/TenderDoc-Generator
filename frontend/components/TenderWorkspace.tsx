@@ -27,7 +27,7 @@ import { OutlineEditor } from "@/components/OutlineEditor";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
-import { StatusRail } from "@/components/StatusRail";
+import { StatusProgressOverlay } from "@/components/StatusRail";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { UploadPanel } from "@/components/UploadPanel";
 import {
@@ -375,6 +375,11 @@ export function TenderWorkspace({
     [projectId, status]
   );
   const statusBusy = busy || actionBusy || runningStatuses.has(status);
+  const progressOverlayOpen = Boolean(
+    busy ||
+      runningStatuses.has(status) ||
+      ["processing", "generating", "reviewing"].includes(status)
+  );
   const clearWorkflowDerivedState = useCallback(() => {
     setWorkflowState(null);
     setReviewReport(null);
@@ -1132,30 +1137,37 @@ export function TenderWorkspace({
   }
 
   return (
-    <main className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-line bg-white/90 shadow-sm backdrop-blur-xl">
-        <div className="flex min-h-16 flex-col gap-3 px-4 py-3 lg:px-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-3">
-                <AppLogo className="h-10 w-10 border border-line shadow-sm" />
-                <div>
-                  <h1 className="text-lg font-semibold text-ink">
-                    TenderDoc Generator
-                  </h1>
-                  <p className="text-xs text-muted">
-                    Project {projectId ?? "-"} · {nextStepText}
-                  </p>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.96),rgba(245,245,247,0)_34%),linear-gradient(180deg,#f9f9fb_0%,#f5f5f7_42%,#eef0f4_100%)] text-[#1d1d1f]">
+      <header className="sticky top-0 z-20 border-b border-white/60 bg-white/54 backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-[1840px] flex-col gap-3 px-4 py-3 lg:px-6">
+          <div className="ios-glass flex flex-col gap-3 rounded-[28px] border px-3 py-3 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3.5">
+              <AppLogo className="h-14 w-14 rounded-[18px] border border-white/80 bg-white/90 p-1 shadow-[0_10px_24px_rgba(15,23,42,0.12)]" />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div
+                    className="inline-block origin-bottom-left -rotate-2 -skew-x-6 bg-[linear-gradient(105deg,#082a55_0%,#082a55_46%,#b88a45_48%,#c99d5b_100%)] bg-clip-text text-[25px] font-black leading-none tracking-[0.16em] text-transparent"
+                    style={{
+                      fontFamily:
+                        '"Songti SC", "STSong", "SimSun", "PingFang SC", serif'
+                    }}
+                  >
+                    正奇建设
+                  </div>
+                  <span className="mb-0.5 truncate text-[13px] font-semibold text-[#3a3a3c]">
+                    标书生成工作台
+                  </span>
+                  <span className="rounded-full bg-black/[0.06] px-2.5 py-1 text-xs font-medium text-[#636366]">
+                    Project {projectId ?? "-"}
+                  </span>
                 </div>
+                <p className="mt-0.5 line-clamp-1 text-[13px] leading-5 text-[#6e6e73]">
+                  {nextStepText}
+                </p>
               </div>
             </div>
 
-            <nav className="flex flex-wrap items-center gap-2">
-              {username ? (
-                <span className="inline-flex h-9 items-center rounded-full border border-line bg-field px-3 text-sm font-medium text-muted">
-                  {username}
-                </span>
-              ) : null}
+            <nav className="flex items-center gap-2 overflow-x-auto pb-1 lg:justify-end lg:pb-0">
               <NavLinkButton href="/projects" icon={FolderOpen}>
                 历史项目
               </NavLinkButton>
@@ -1175,9 +1187,14 @@ export function TenderWorkspace({
                   </NavLinkButton>
                 </>
               ) : null}
+              {username ? (
+                <span className="inline-flex h-10 shrink-0 items-center rounded-full border border-white/70 bg-white/56 px-3.5 text-sm font-medium text-[#6e6e73]">
+                  {username}
+                </span>
+              ) : null}
               <button
                 type="button"
-                className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field"
+                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-white/70 bg-white/56 px-3.5 text-sm font-medium text-[#1d1d1f] transition hover:bg-white/86"
                 onClick={handleLogout}
               >
                 <LogOut className="h-4 w-4" />
@@ -1186,18 +1203,35 @@ export function TenderWorkspace({
             </nav>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-2xl border border-line bg-field/80 p-2 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted">
-              <span className="rounded-full border border-line bg-white px-3 py-1.5 font-semibold text-ink">
-                {statusText}
-              </span>
-              <span>{statusBusy ? "任务运行中" : "等待操作"}</span>
+          <div className="flex flex-col gap-3 rounded-[24px] border border-white/70 bg-white/58 px-3 py-3 shadow-[0_12px_34px_rgba(15,23,42,0.055)] backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <span
+                className={[
+                  "h-2.5 w-2.5 shrink-0 rounded-full",
+                  ["failed", "generation_failed"].includes(status)
+                    ? "bg-[#ff3b30]"
+                    : statusBusy
+                      ? "bg-[#ff9f0a]"
+                      : canDownload
+                        ? "bg-[#34c759]"
+                        : "bg-[#007aff]"
+                ].join(" ")}
+              />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-[#1d1d1f]">
+                  {statusText}
+                </p>
+                <p className="truncate text-xs text-[#6e6e73]">
+                  {statusBusy ? "任务正在运行，请保持页面打开" : "当前等待人工操作"}
+                </p>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:justify-end lg:pb-0">
               <button
                 type="button"
                 disabled={!projectId || actionBusy}
-                className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
+                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] transition hover:bg-white disabled:cursor-not-allowed disabled:text-[#a1a1a6]"
                 onClick={handleRefresh}
               >
                 {actionBusy ? (
@@ -1205,12 +1239,12 @@ export function TenderWorkspace({
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                刷新状态
+                刷新
               </button>
               <button
                 type="button"
                 disabled={!canStartWorkflow || actionBusy}
-                className="inline-flex h-9 items-center gap-2 rounded-full bg-ink px-4 text-sm font-semibold text-white hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-[#1d1d1f] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(29,29,31,0.18)] transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#d1d1d6] disabled:shadow-none"
                 onClick={() => projectId && startWorkflow(projectId)}
               >
                 <Loader2 className={actionBusy ? "h-4 w-4 animate-spin" : "hidden"} />
@@ -1221,7 +1255,7 @@ export function TenderWorkspace({
                   <button
                     type="button"
                     disabled={actionBusy}
-                    className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-field disabled:cursor-not-allowed disabled:text-muted"
+                    className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] transition hover:bg-white disabled:cursor-not-allowed disabled:text-[#a1a1a6]"
                     onClick={() => setModalOpen(true)}
                   >
                     <PencilLine className="h-4 w-4" />
@@ -1230,7 +1264,7 @@ export function TenderWorkspace({
                   <button
                     type="button"
                     disabled={actionBusy}
-                    className="inline-flex h-9 items-center gap-2 rounded-full bg-ok px-4 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                    className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-[#34c759] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(52,199,89,0.22)] transition hover:bg-[#2fb34f] disabled:cursor-not-allowed disabled:bg-[#b8e8c3] disabled:shadow-none"
                     onClick={handleApprove}
                   >
                     <CheckCircle2 className="h-4 w-4" />
@@ -1241,7 +1275,7 @@ export function TenderWorkspace({
               <button
                 type="button"
                 disabled={!canDownload || actionBusy}
-                className="inline-flex h-9 items-center gap-2 rounded-full bg-brand px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-[#007aff] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(0,122,255,0.24)] transition hover:bg-[#006ee6] disabled:cursor-not-allowed disabled:bg-[#b7d9ff] disabled:shadow-none"
                 onClick={() => handleDownload("docx")}
               >
                 <Download className="h-4 w-4" />
@@ -1253,12 +1287,12 @@ export function TenderWorkspace({
       </header>
 
       {visibleError ? (
-        <div className="mx-4 mt-4 flex items-start gap-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-danger lg:mx-6">
+        <div className="mx-auto mt-4 flex max-w-[1840px] items-start gap-3 rounded-[22px] border border-[#ff9f0a]/20 bg-[#fff4df]/85 px-4 py-3 text-sm text-[#b45309] shadow-[0_12px_30px_rgba(180,83,9,0.08)] backdrop-blur lg:px-5">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <p className="flex-1 whitespace-pre-wrap">{visibleError}</p>
           <button
             type="button"
-            className="rounded-md border border-orange-200 bg-white px-2 py-1 text-xs font-semibold text-danger hover:bg-orange-100"
+            className="rounded-full border border-[#ff9f0a]/20 bg-white/70 px-3 py-1 text-xs font-semibold text-[#b45309] hover:bg-white"
             onClick={() => {
               setPersistentError(null);
               setError(null);
@@ -1270,12 +1304,12 @@ export function TenderWorkspace({
       ) : null}
 
       {canDownload ? (
-        <div className="mx-4 mt-4 flex flex-col gap-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-ok lg:mx-6">
+        <div className="ios-panel mx-auto mt-4 flex max-w-[1840px] flex-col gap-4 rounded-[26px] border px-4 py-4 text-sm text-[#1d1d1f] lg:px-5">
           <div className="flex items-start gap-2">
-            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#34c759]" />
             <div>
               <p className="font-semibold">标书已完成，可按投递网站要求下载</p>
-              <p className="text-xs text-green-700">
+              <p className="text-xs text-[#6e6e73]">
                 合并文件顺序固定为商务文件、技术文件、报价文件；也可按分卷分别投递。
               </p>
             </div>
@@ -1283,34 +1317,34 @@ export function TenderWorkspace({
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-md border border-green-300 bg-white p-1">
+              <div className="inline-flex rounded-full border border-black/[0.06] bg-black/[0.045] p-1">
                 {(["combined", "split"] as DeliveryMode[]).map((mode) => (
                   <button
                     key={mode}
                     type="button"
                     onClick={() => setDeliveryMode(mode)}
                     className={[
-                      "h-8 rounded px-3 text-xs font-semibold transition",
+                      "h-8 rounded-full px-3 text-xs font-semibold transition",
                       deliveryMode === mode
-                        ? "bg-ok text-white"
-                        : "text-ok hover:bg-green-50"
+                        ? "bg-white text-[#1d1d1f] shadow-sm"
+                        : "text-[#6e6e73] hover:bg-white/60"
                     ].join(" ")}
                   >
                     {mode === "combined" ? "合并投递" : "分开投递"}
                   </button>
                 ))}
               </div>
-              <div className="inline-flex rounded-md border border-green-300 bg-white p-1">
+              <div className="inline-flex rounded-full border border-black/[0.06] bg-black/[0.045] p-1">
                 {(["docx", "pdf"] as DeliveryFormat[]).map((format) => (
                   <button
                     key={format}
                     type="button"
                     onClick={() => setDeliveryFormat(format)}
                     className={[
-                      "h-8 rounded px-3 text-xs font-semibold uppercase transition",
+                      "h-8 rounded-full px-3 text-xs font-semibold uppercase transition",
                       deliveryFormat === format
-                        ? "bg-ok text-white"
-                        : "text-ok hover:bg-green-50"
+                        ? "bg-white text-[#1d1d1f] shadow-sm"
+                        : "text-[#6e6e73] hover:bg-white/60"
                     ].join(" ")}
                   >
                     {format}
@@ -1327,7 +1361,7 @@ export function TenderWorkspace({
                   onClick={() =>
                     handleDownload(deliveryArtifact("combined", deliveryFormat))
                   }
-                  className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                  className="inline-flex h-10 items-center gap-2 rounded-full bg-[#34c759] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(52,199,89,0.18)] hover:bg-[#2fb34f] disabled:cursor-not-allowed disabled:bg-[#b8e8c3]"
                 >
                   <Download className="h-4 w-4" />
                   合并{deliveryFormat.toUpperCase()}
@@ -1343,7 +1377,7 @@ export function TenderWorkspace({
                         deliveryArtifact("split", deliveryFormat, volume.key)
                       )
                     }
-                    className="inline-flex h-9 items-center gap-2 rounded-md bg-ok px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                    className="inline-flex h-10 items-center gap-2 rounded-full bg-[#34c759] px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(52,199,89,0.18)] hover:bg-[#2fb34f] disabled:cursor-not-allowed disabled:bg-[#b8e8c3]"
                   >
                     <Download className="h-4 w-4" />
                     {volume.label}
@@ -1353,12 +1387,12 @@ export function TenderWorkspace({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-green-200 pt-3">
+          <div className="flex flex-wrap items-center gap-2 border-t border-black/[0.06] pt-3">
             <button
               type="button"
               disabled={actionBusy}
               onClick={() => handleDownload("docx")}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-green-300 bg-white px-3 text-sm font-medium text-ok hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download className="h-4 w-4" />
               原始DOCX
@@ -1367,7 +1401,7 @@ export function TenderWorkspace({
               type="button"
               disabled={actionBusy}
               onClick={() => handleDownload("markdown")}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-green-300 bg-white px-3 text-sm font-medium text-ok hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download className="h-4 w-4" />
               Markdown
@@ -1376,7 +1410,7 @@ export function TenderWorkspace({
               type="button"
               disabled={actionBusy}
               onClick={() => handleDownload("review")}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-green-300 bg-white px-3 text-sm font-medium text-ok hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download className="h-4 w-4" />
               审查报告
@@ -1385,7 +1419,7 @@ export function TenderWorkspace({
         </div>
       ) : null}
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)_360px] lg:p-6">
+      <div className="mx-auto grid max-w-[1840px] gap-4 p-4 lg:grid-cols-[330px_minmax(0,1fr)_380px] lg:p-6">
         <div className="space-y-4">
           <UploadPanel
             projectName={projectName}
@@ -1398,11 +1432,6 @@ export function TenderWorkspace({
             onFileChange={handleFileChange}
             onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
-          />
-          <StatusRail
-            status={status}
-            busy={statusBusy}
-            traceEvents={workflowState?.trace_events}
           />
           <RagSelectionPanel
             query={ragQuery}
@@ -1509,6 +1538,12 @@ export function TenderWorkspace({
           onClose={() => setHumanPromptOpen(false)}
         />
       ) : null}
+      <StatusProgressOverlay
+        open={progressOverlayOpen}
+        status={status}
+        busy={statusBusy}
+        traceEvents={workflowState?.trace_events}
+      />
     </main>
   );
 }
@@ -1525,18 +1560,22 @@ function DeliveryVolumePanel({
   const active = volumes?.[activeVolume] ?? null;
 
   return (
-    <section className="flex max-h-[640px] flex-col rounded-lg border border-line bg-panel shadow-panel">
-      <div className="flex h-12 items-center justify-between border-b border-line px-4">
+    <section className="ios-panel flex max-h-[640px] flex-col rounded-[26px] border">
+      <div className="flex h-14 items-center justify-between border-b border-black/[0.06] px-4">
         <div className="flex items-center gap-2">
-          <FileText className="h-4 w-4 text-brand" />
-          <h2 className="text-sm font-semibold text-ink">分卷文件</h2>
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-[#007aff]/10 text-[#007aff]">
+            <FileText className="h-4 w-4" />
+          </span>
+          <h2 className="text-sm font-semibold text-[#1d1d1f]">分卷文件</h2>
         </div>
         {active ? (
-          <span className="text-xs text-muted">{active.char_count} 字</span>
+          <span className="rounded-full bg-black/[0.05] px-2.5 py-1 text-xs text-[#6e6e73]">
+            {active.char_count} 字
+          </span>
         ) : null}
       </div>
 
-      <div className="border-b border-line p-3">
+      <div className="border-b border-black/[0.06] p-3">
         <div className="grid grid-cols-3 gap-2">
           {deliveryVolumes.map((volume) => {
             const item = volumes?.[volume.key] ?? null;
@@ -1546,10 +1585,10 @@ function DeliveryVolumePanel({
                 type="button"
                 onClick={() => onActiveVolumeChange(volume.key)}
                 className={[
-                  "rounded-md border px-2 py-2 text-left transition",
+                  "rounded-[18px] border px-3 py-2 text-left transition",
                   activeVolume === volume.key
-                    ? "border-brand bg-blue-50 text-brand"
-                    : "border-line bg-white text-ink hover:border-brand"
+                    ? "border-[#007aff]/20 bg-white text-[#007aff] shadow-sm"
+                    : "border-black/[0.06] bg-white/48 text-[#1d1d1f] hover:bg-white"
                 ].join(" ")}
               >
                 <span className="block text-xs font-semibold">{volume.label}</span>
@@ -1562,13 +1601,13 @@ function DeliveryVolumePanel({
         </div>
       </div>
 
-      <div className="min-h-[280px] flex-1 overflow-auto bg-field px-4 py-3">
+      <div className="min-h-[280px] flex-1 overflow-auto bg-white/28 px-4 py-3">
         {active ? (
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-ink">
             {active.markdown}
           </pre>
         ) : (
-          <div className="grid h-full min-h-64 place-items-center rounded-md border border-dashed border-line bg-white text-sm text-muted">
+          <div className="grid h-full min-h-64 place-items-center rounded-[20px] border border-dashed border-black/[0.08] bg-white/54 text-sm text-[#8e8e93]">
             等待生成后预览分卷内容
           </div>
         )}
