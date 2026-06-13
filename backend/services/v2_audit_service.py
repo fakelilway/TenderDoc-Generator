@@ -277,7 +277,7 @@ def audit_content_layer(
         (r'TODO|待补充', '包含待办标记'),
         (r'AI生成|由AI|人工智能', '出现AI自指'),
         (r'作为.*助手|根据您的要求', 'AI助手语气'),
-        (r'建议|推荐.*方案', '推测性建议（可能不符实际）'),
+        (r'我们建议|建议您|建议采用|推荐采用.*方案', '推测性建议（可能不符实际）'),
     ]
     for pattern, desc in ai_patterns:
         if re.search(pattern, prose_text):

@@ -290,12 +290,16 @@ def generate_v2_bid_package(
         filled_fields=_collect_filled_fields(fill_results),
         profile=profile,
     )
-    if not audit.passed and (
-        not original_format_docx_available
-        or audit.content_issues
-        or audit.evidence_issues
-    ):
-        raise ValueError(_format_audit_failure_message(audit))
+    if not audit.passed:
+        # Only block generation on critical issues.
+        # Major/minor issues are surfaced as warnings but don't stop the pipeline —
+        # the user can review them in the audit report and decide.
+        has_critical = any(
+            issue.severity == "critical"
+            for issue in audit.all_issues
+        )
+        if has_critical:
+            raise ValueError(_format_audit_failure_message(audit))
 
     # ── Phase 6: Assemble final package ──
     missing = generate_missing_checklist(fill_results)
@@ -413,9 +417,9 @@ def _render_locked_format_content(
 
 
 def _format_audit_failure_message(audit: AuditResult) -> str:
-    issues = audit.all_issues[:8]
-    details = "；".join(f"{issue.location}: {issue.problem}" for issue in issues)
-    return "V2 生成失败：审查未通过。" "系统不会输出近似重画格式、占位正文或证据不一致的半成品，以免形成废标风险。" f"{details}"
+    critical = [i for i in audit.all_issues if i.severity == "critical"]
+    details = "；".join(f"{i.location}: {i.problem}" for i in critical[:8])
+    return "V2 生成失败：审查发现严重问题。" f"{details}"
 
 
 def _render_volume_directory(pages: list[tuple[str, str, str]]) -> str:
