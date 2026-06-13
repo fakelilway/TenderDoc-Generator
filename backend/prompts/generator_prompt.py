@@ -129,7 +129,7 @@ def build_volume_agent_prompt(
 {images}
 
 ## 输出
-直接输出填充后的完整{label}卷 Markdown。第一行必须与【本卷确定性骨架】第一行一致。不得输出解释、JSON、自查表、元话语。
+直接输出填充后的完整{label}卷 Markdown。第一行必须与【本卷确定性骨架】第一行一致。必须在骨架的每个标题节点下填充内容，不得删除、跳过、合并任何骨架节点。"其他内容""其他材料"等兜底节点必须保留标题，至少写一行说明。不得输出解释、JSON、自查表、元话语。
 """
     return [
         {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},
@@ -191,7 +191,7 @@ def build_volume_revision_prompt(
 {draft_markdown}
 
 ## 输出
-只输出修订后的完整{label}卷 Markdown。第一行必须与【本卷确定性骨架】第一行一致。补齐所有缺失节点（包括"其他内容"类兜底节点——必须保留标题占位）。删除越卷表单。不输出解释。
+只输出修订后的完整{label}卷 Markdown。第一行必须与【本卷确定性骨架】第一行一致。你必须先比对骨架和待修订初稿——如果初稿缺失了骨架中的任何标题节点，从骨架原样复制该节点（含标题层级和空白位），不得跳过。包括"其他内容""其他材料"类兜底节点必须保留标题占位。删除越卷表单。不输出解释。
 """
     return [
         {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},

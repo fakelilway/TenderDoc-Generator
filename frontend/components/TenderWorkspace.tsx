@@ -414,6 +414,14 @@ export function TenderWorkspace({
         if (state.status) {
           setStatus(state.status);
         }
+        // Surface failed trace message as persistent error so user can see
+        // why generation failed on page reload.
+        if (["failed", "generation_failed"].includes(state.status)) {
+          const msg = latestFailedTraceMessage(state);
+          if (msg) {
+            setPersistentError(msg);
+          }
+        }
         if (state.draft_markdown && !dirtyFields.current.has("markdown")) {
           setStateIfChanged(setMarkdown, state.draft_markdown);
         }

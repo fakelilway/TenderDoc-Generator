@@ -469,7 +469,10 @@ def generate_bid_package_multi_agent(
             volume,
             _ensure_volume_heading(
                 volume,
-                sanitize_bid_markdown(revised),
+                _enforce_skeleton_headings(
+                    sanitize_bid_markdown(revised),
+                    volume_skeletons.get(volume, ""),
+                ),
                 requirements,
             ),
         )
@@ -1248,7 +1251,10 @@ def _revise_single_volume(
         volume,
         _ensure_volume_heading(
             volume,
-            sanitize_bid_markdown(revised),
+            _enforce_skeleton_headings(
+                sanitize_bid_markdown(revised),
+                volume_skeleton,
+            ),
             requirements,
         ),
     )
@@ -1463,6 +1469,39 @@ def _ensure_volume_heading(
         return markdown
     label = VOLUME_HEADINGS[volume]
     return f"# {_project_title(requirements)} {label}\n\n{markdown.strip()}\n"
+
+
+def _enforce_skeleton_headings(markdown: str, skeleton: str) -> str:
+    """Ensure every heading from skeleton exists as a real heading in markdown.
+
+    Checks that each skeleton heading line (starting with #) appears as an
+    actual heading in the output, not just as body text.  Missing headings
+    are appended with placeholder content.
+    """
+    import re
+
+    # Extract headings from skeleton: lines starting with # (any level)
+    skeleton_headings = re.findall(r"^(#{1,6}\s+.+)$", skeleton, re.MULTILINE)
+    if not skeleton_headings:
+        return markdown
+
+    # Extract existing heading lines from markdown
+    existing_headings = {
+        h.strip() for h in re.findall(r"^#{1,6}\s+.+$", markdown, re.MULTILINE)
+    }
+
+    missing: list[str] = []
+    for heading in skeleton_headings:
+        heading_clean = heading.strip()
+        if heading_clean not in existing_headings:
+            missing.append(heading_clean)
+
+    if not missing:
+        return markdown
+
+    # Append missing headings with placeholder
+    appendix = "\n\n".join([f"{h}\n\n________\n" for h in missing])
+    return markdown.rstrip() + "\n\n" + appendix + "\n"
 
 
 def _knowledge_images_for_volume(
