@@ -273,7 +273,7 @@ def run_bid_workflow(
         state.draft_markdown = v2_pkg.combined_markdown
         generation_mode = "v2_format_copy"
         if v2_pkg.audit_result:
-            audit_summary = v2_pkg.audit_result.summary
+            audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
         else:
             audit_summary = "审查未执行"
     else:
