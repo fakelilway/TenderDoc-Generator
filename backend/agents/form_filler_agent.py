@@ -34,6 +34,14 @@ class FillResult:
 
 # patterns: (regex to find in template, label, profile_key)
 FILLABLE_FIELDS: list[tuple[str, str, str]] = [
+    # Tender-specific fields (filled from project context)
+    (r'（招标人名称）', '招标人', '招标人'),
+    (r'（项目名称）', '项目名称', '项目名称'),
+    (r'招标项目名称[：:]\s*[_＿]{2,}', '招标项目名称', '项目名称'),
+    (r'工程质量[：:]\s*[_＿]{2,}|质量[标要][准求][：:]\s*[_＿]{2,}', '质量标准', '质量'),
+    (r'安全目标[：:]\s*[_＿]{2,}|安全[标要][准求][：:]\s*[_＿]{2,}', '安全目标', '安全'),
+    (r'工期[：:]\s*[_＿]{2,}|计划工期[：:]\s*[_＿]{2,}', '工期', '工期'),
+
     # Company identity
     (r'投标人[：:]\s*[（(]盖单位章[）)]', '投标人', 'company_name'),
     (r'投标人[：:]\s*[_＿]{2,}|投标人[：:]\s*$', '投标人', 'company_name'),
@@ -97,14 +105,16 @@ def fill_page_template(
 
         value = profile.get(profile_key, "")
         if value:
-            # Replace the blank line pattern with the value
             old = m.group(0)
-            # Find the blank portion and replace
-            blank_pos = max(old.rfind('_'), old.rfind('＿'), old.rfind('（'), old.rfind('('))
-            if blank_pos < 0:
-                blank_pos = len(old)
-            prefix = old[:blank_pos]
-            new_text = f"{prefix}：{value}" if '：' not in prefix and ':' not in prefix[-3:] else f"{prefix} {value}"
+            # Handle parenthesized placeholders like （招标人名称）
+            if '（' in old or '(' in old:
+                new_text = old.replace(m.group(1) if m.lastindex else old, value)
+            else:
+                blank_pos = max(old.rfind('_'), old.rfind('＿'))
+                if blank_pos < 0:
+                    blank_pos = len(old)
+                prefix = old[:blank_pos]
+                new_text = f"{prefix}：{value}" if '：' not in prefix and ':' not in prefix[-3:] else f"{prefix} {value}"
             filled = filled.replace(old, new_text, 1)
             fields.append(FilledField(label=label, raw_text=old[:60], matched=True, value=value))
         else:

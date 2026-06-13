@@ -85,6 +85,16 @@ def generate_v2_bid_package(
     classified = assign_page_volumes(all_pages["commercial"], requirements)
 
     # ── Phase 2: Fill form templates ──
+    # Build combined profile with project-specific fields from requirements
+    project_fields = {
+        "招标人": str(requirements.tenderer_name or ""),
+        "项目名称": str(requirements.project_name or ""),
+        "工期": str(requirements.planned_duration or ""),
+        "质量": "符合国家现行工程质量验收标准规范合格标准",
+        "安全": "无安全责任事故发生",
+    }
+    combined_profile = {**profile, **project_fields}
+
     filled_pages: dict[str, list[tuple[str, str, str]]] = {
         "commercial": [], "technical": [], "pricing": []
     }
@@ -94,7 +104,7 @@ def generate_v2_bid_package(
     for vol in ("commercial", "technical", "pricing"):
         for page in classified.get(vol, []):
             if page.raw_template:
-                result = fill_page_template(page.raw_template, profile, page.title)
+                result = fill_page_template(page.raw_template, combined_profile, page.title)
                 filled_pages[vol].append((page.title, page.raw_template, result.filled_template))
                 fill_results.append(result)
                 if page.page_type != "prose_section":
