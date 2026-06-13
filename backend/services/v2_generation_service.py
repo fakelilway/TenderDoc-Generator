@@ -142,17 +142,26 @@ def generate_v2_bid_package(
     prose_results: VolumeFillResult | None = None
 
     def _call_content_writer(titles: list[str]) -> tuple[VolumeFillResult | None, str]:
+        """Write prose content per-node for depth. Each node gets a dedicated LLM call
+        for 2000+ character sections with engineering parameters and emergency plans."""
         chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
-        result = fill_technical_volume(
-            node_titles=titles,
-            project_name=requirements.project_name or "投标项目",
-            requirements=requirements.model_dump(),
-            company_name=company_name,
-            knowledge_chunks=[{"content": str(c) if isinstance(c, str) else str(getattr(c, "content", c))}
-                              for c in chunks[:10]],
-            tender_text=tender_text,
-        )
-        return result, result.combined
+        all_results: list[str] = []
+        first_result = None
+        for title in titles:
+            result = fill_technical_volume(
+                node_titles=[title],  # Single node for deep coverage
+                project_name=requirements.project_name or "投标项目",
+                requirements=requirements.model_dump(),
+                company_name=company_name,
+                knowledge_chunks=[{"content": str(c) if isinstance(c, str) else str(getattr(c, "content", c))}
+                                  for c in chunks[:10]],
+                tender_text=tender_text,
+            )
+            if first_result is None:
+                first_result = result
+            all_results.append(f"## {title}\n\n{result.combined}")
+        combined = "\n\n".join(all_results)
+        return first_result, combined
 
     if not original_format_docx_available and classified.get("technical"):
         for page in classified["technical"]:
