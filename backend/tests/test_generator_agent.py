@@ -201,14 +201,21 @@ def test_build_bid_outline_uses_technical_score_items() -> None:
 
 
 def test_generator_prompt_defines_role_experience_and_task() -> None:
-    assert "角色扮演" in GENERATOR_SYSTEM_PROMPT
-    assert "经验背书" in GENERATOR_SYSTEM_PROMPT
-    assert "你的任务" in GENERATOR_SYSTEM_PROMPT
+    assert "投标文件生成 Agent" in GENERATOR_SYSTEM_PROMPT
+    assert "Markdown" in GENERATOR_SYSTEM_PROMPT
 
 
 def test_generator_prompt_forbids_reusing_sample_personal_data() -> None:
-    assert "知识库/RAG 样本中出现的人名、身份证号、电话、证书编号、具体金额等只属于历史样本" in GENERATOR_SYSTEM_PROMPT
-    assert "一律不得作为本项目事实写入正文，相应位置使用下划线空白" in GENERATOR_SYSTEM_PROMPT
+    prompt = build_volume_agent_prompt(
+        volume="technical",
+        requirements=_requirements(),
+        company_name="正奇建设",
+        document_outline=[],
+        tender_text="测试招标文件全文",
+    )
+    user = prompt[1]["content"]
+    assert "不编造" in user
+    assert "________" in user
 
 
 def test_redact_pii_masks_citizen_ids_and_mobile_numbers() -> None:

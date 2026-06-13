@@ -6,48 +6,7 @@ from typing import Any
 from schemas.tender import TenderRequirements
 
 
-# Textual summary of how a real, submittable Chinese bid reads. The document
-# structure comes from the tender's confirmed format requirements and the
-# human-confirmed outline; DOCX visual styling comes from utils.docx_exporter.
-# This prompt must not become another structural template.
-REAL_BID_WRITING_SPEC = """真实投标文件文风与正文规范（务必逐条遵守）：
-1. 文风：通篇正式、书面、承诺性工程语言，主语用“我单位／本公司／本项目部”。禁止口语、解释性旁白、对话语气以及“以下是／作为AI／本文档”等元话语。
-2. 标题写法：沿用系统给出的招标文件格式要求和人工确认目录；若某章内部需要小节，使用真实标书常见层级“第X节、 → 一、 → （一） → 1. → （1）”。标题简洁，不带说明性后缀。
-3. 正文：每个小节由完整段落组成（每段约3–6句），围绕施工部署、施工工艺、质量、安全、进度、环境保护、文明施工、应急保障等展开，写成连贯论述，不要写成要点清单或评分点摘要。
-4. 表格：进度计划、劳动力／机械设备配置、项目管理机构、资格响应清单、附表等必须优先用 Markdown 表格表达，表头清晰、列项规范，避免把天然表格内容写成散文。
-5. 图片：需要插入营业执照、资质证书、建造师证、建安证、交安证、职称证、业绩证明、施工平面图等知识库图片时，只能使用系统提供的 `{{knowledge_image:document_id=数字 caption="图片说明"}}` 标记。不得编造 document_id，不得引用清单外图片。
-6. 排版由系统导出 DOCX 时统一套用（正文宋体小四、标题黑体加粗、首行缩进两字、1.5 倍行距、页眉页脚与页码自动生成）。因此正文中禁止自行书写页眉、页脚、页码或“第X页/共X页”。
-
-【严禁输出（出现即视为错误）】
-- “人工确认点”“待补充”“占位”“TODO”“本章响应度自查”“废标风险逐条响应自查表”等任何元注释、自查或提示性用语；
-- 复制检索片段中的页码（如“第13页/共892页”）、页眉页脚、目录点线（…… 或 ......）、残缺词句、乱码或无关碎片；
-- 将招标文件的评分规则、计分公式、招标条款原文大段照抄进投标正文（应转化为我方响应与承诺）。
-
-【缺少企业真实数据时的处理】
-报价、项目经理姓名、证书编号、业绩金额、保证金金额、招标人名称等企业事实数据若无依据：在该处保留下划线空白“________”，或采用真实表单写法（如“详见已标价工程量清单”）。绝不编造数据，也绝不写“人工确认点”之类的提示词——这些内容由投标人在工作台中自行填写。"""
-
-
-GENERATOR_SYSTEM_PROMPT = f"""角色扮演：你是一位“真实投标文件总编 + 施工组织设计主笔 + 商务标合规顾问”。
-经验背书：你拥有15年以上施工总承包、专业分包、市政道路、公路工程和政府采购工程项目投标文件编制经验，长期为施工企业编制可直接递交的一信封/二信封投标文件。你熟悉《招标投标法》《建筑工程施工组织设计规范》《建设工程工程量清单计价规范》、公路工程标准施工招标文件、地方公共资源交易中心电子标格式、资格审查资料组织方式、技术评分最低标价法和综合评分法常见评审口径。
-
-人格化工作方式：
-- 你不是写通用说明书的助手，而是对废标风险负责的投标文件主笔。你写出的每一段都要像真实投标文件正文，使用正式、承诺性、工程化语言。
-- 你必须主动站在评标专家、招标代理和投标企业三方视角检查内容：是否响应招标文件、是否有依据、是否可落地、是否会触发废标。
-- 你输出的是可直接排版递交的成稿，不是带批注的草稿。绝不在正文中加入任何提示、自查、确认点或解释性旁白。
-
-你的任务：基于 parser agent 抽取并经人工确认的招标文件关键信息、投标文件格式要求、系统传入的人工确认目录、以及检索到的企业真实投标文件/企业自有素材，生成一份可直接套用 DOCX 排版、继续补充真实数据后递交的正式投标文件正文。招标文件格式要求决定卷册、表单和签章等强制结构；人工确认目录决定本次生成的章节顺序；公司风格案例只提供写作深度、表格习惯、图片位和语气参考；知识库/RAG 只提供真实资料和措辞素材；DOCX exporter 统一负责最终视觉排版。
-
-{REAL_BID_WRITING_SPEC}
-
-硬性原则：
-1. 严格响应招标文件解析出的资格要求、评分办法、废标/否决条款，不能漏掉实质性要求，但要转化为我方承诺与措施，而非照抄条款。
-2. 不得编造企业名称、人员姓名、证书编号、业绩金额、投标报价、保证金金额、银行账号等事实数据；缺少依据时按上文“缺少企业真实数据时的处理”留空白。
-3. 知识库/RAG 样本中出现的人名、身份证号、电话、证书编号、具体金额等只属于历史样本，一律不得作为本项目事实写入正文，相应位置使用下划线空白。
-4. 投标文件卷册、表单清单、签字盖章、正副本、密封/电子标要求必须以【招标文件格式要求】为最高权威；若招标文件采用第一信封/第二信封或资格标/技术标/商务标拆分，必须沿用对应顺序，不得强行改成技术标先行。
-5. 完整标书必须覆盖资格/商务固定表单、技术标/施工组织设计、附表和报价/经济标说明；报价只生成目录和编制说明，具体数值留空白由投标人填写。
-6. 不得从 prompt、RAG 或历史案例里自行发明本项目目录；系统已经传入的【招标文件格式要求】和【完整标书目录/人工确认结构】是本次生成的结构来源。
-7. 公司风格案例不得覆盖招标文件格式要求；若案例目录与招标文件格式冲突，必须服从招标文件和人工确认目录。
-"""
+GENERATOR_SYSTEM_PROMPT = """你是投标文件生成 Agent。只输出 Markdown 正文，不输出 JSON、解释、自查文字、评分表、AI 元文本、页眉页脚、页码。"""
 
 
 # Sample personal data leaked from historical bid documents must never reach
@@ -102,94 +61,64 @@ def build_volume_agent_prompt(
     company_profile_block: str = "",
 ) -> list[dict[str, str]]:
     label = _volume_label(volume)
-    volume_outline = _format_volume_outline(document_outline, volume)
+    node_tree = _format_volume_node_tree(requirements, volume)
     chunks = _format_long_context_chunks(
         _filter_chunks_for_volume(knowledge_chunks or [], volume)
     )
     images = _format_knowledge_images(knowledge_images)
-    agent_profile = _volume_agent_profile(volume)
     profile_section = (
-        "\n【投标人企业档案（已人工核实，必须原样使用）】\n" f"{company_profile_block}\n"
+        "\n### 企业档案（已人工核实）\n" f"{company_profile_block}\n"
         if company_profile_block
         else ""
     )
-    user_prompt = f"""请作为{label}分卷主笔，只生成本卷 Markdown 初稿。
 
-{agent_profile}
+    user_prompt = f"""## 任务
+生成{label}卷的投标文件正文。
 
-项目名称：{requirements.project_name or "投标项目"}
-投标人：{company_name}
-公司风格案例：{template_name or "未选择，完全按招标文件格式和系统确认目录生成"}
-{profile_section}
+## 你必须输出的节点（逐字照抄以下标题。一个不能多、一个不能少。此规则高于一切其他指令，由系统 Pass 1 自动审计核查。）
+{node_tree}
 
-【项目核心字段】
-- 招标人/采购人：{requirements.tenderer_name or "________"}
+## 规则（优先级从高到低）
+
+### 规则1：节点不可变
+上面列出的节点是唯一允许的结构。不得新增、删除、合并或重命名任何节点。"其他内容""其他材料"等只有标题的兜底节点也必须保留标题占位，哪怕只有一行。如果节点树和下面任何规则或信息冲突，以节点树为准。违反此规则会被 Pass 1 审计打回重写。
+
+### 规则2：表单照抄
+投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、资格审查表格、各类声明→从下面【招标文件关键内容】找模板原文，逐字照抄。表格原样复制表头和列项，不改顺序不增删列。只替换公司名（→{company_name}）、法人代表、日期等已提供字段。无依据的留"________"。禁止改写。
+
+### 规则3：方案自由写
+施工组织设计、技术方案、施工部署→工程化连贯论述，每节≥2段。吸收工期/质量/安全信息。不写评分点摘要。正文用 Markdown 表格表达进度计划/人员配置/机械配置等列表型内容。
+
+### 规则4：不知道的留空
+金额、人名、证号、日期无依据→"________"或"详见已标价工程量清单"。不编造。不写"人工确认点""待补充""TODO""AI生成"等元话语。不输出知识库页码、目录点线、页眉页脚。
+
+## 你应该知道的信息
+
+### 项目核心字段
+- 招标人：{requirements.tenderer_name or "________"}
 - 建设地点：{requirements.project_location or "________"}
-- 招标范围/工程内容：{requirements.tender_scope or "________"}
+- 招标范围：{requirements.tender_scope or "________"}
 - 计划工期：{requirements.planned_duration or "________"}
 - 质量标准：{requirements.quality_standard or "________"}
 - 安全目标：{requirements.safety_target or "________"}
 - 投标截止时间：{requirements.bid_deadline or "________"}
 
-【招标文件格式要求（最高权威）】
-{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按本卷人工确认目录输出。"}
-
-【本卷必需节点（从格式章节提取，逐项生成，不得增减）】
-{_format_volume_node_tree(requirements, volume)}
-
-【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
-{framework_brief or build_bid_framework_brief(requirements, document_outline)}
-
-【本卷人工确认目录】
-{volume_outline}
-
-【生成计划/BidPlan】
-{_format_bid_plan(bid_plan)}
-
-【招标文件解析要求】
-资格要求：
-{_format_items([item.description for item in requirements.qualification_list])}
-
-技术评分/评审要求：
-{_format_items([item.description for item in requirements.technical_score_items])}
-
-废标/否决风险：
-{_format_items([item.description for item in requirements.invalid_bid_items])}
-
-【招标文件全文关键内容】
+### 招标文件格式要求
+{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按节点树生成。"}
+{profile_section}
+### 招标文件关键内容
 {_format_tender_text(tender_text)}
 
-【生成规则——区分"照抄表单"和"自由撰写"】
-本卷节点分为两类，你必须严格遵守各自的规则：
+### 分卷任务边界
+{framework_brief or build_bid_framework_brief(requirements, document_outline)}
 
-1. 照抄表单（投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、各类表格等）：
-   - 必须从招标文件全文关键内容中定位对应的模板原文，逐字照抄。
-   - 表格必须原样复制表头和列项，不得改顺序、不得增删列。
-   - 只允许替换公司信息（投标人名称→{company_name}、日期、法人代表等已提供的企业档案字段）。
-   - 公司档案未提供的、无依据的事实数据，保留招标文件原文的下划线空白"________"。
-   - 禁止改写、简写、用自己的话重述。
-
-2. 自由撰写（施工组织设计、技术方案、施工部署等）：
-   - 必须是成稿的连贯论述，不是评分点摘要。
-   - 必须吸收招标文件全文中的工程范围、工期、质量标准、安全目标。
-   - 每个主章至少3个小节，每节至少2段连贯论述。
-
-【商务/报价约束】
-{_format_pricing_strategy(pricing_strategy)}
-
-【本卷可用企业资料】
+### 可用企业资料
 {chunks or "暂无文本资料。请按招标文件要求和企业常规投标文件深度生成，不得编造企业事实。"}
 
 {images}
 
-【输出要求】
-- 只输出{label}，禁止输出其他卷内容。
-- 第一行必须是一级标题 `# {requirements.project_name or "投标项目"} {label}`。
-- 必须覆盖【本卷人工确认目录】中的全部必需节点。
-- 若同名表单在不同卷册中出现，必须按【本项目标书框架 Skill 输出】区分归属；不得把其他卷的投标函、报价表、资格表、施工组织设计复制到本卷。
-- 不得编造企业名称、人员、证书编号、业绩金额、报价金额、保证金金额、银行账号；无依据处使用“________”或“详见已标价工程量清单”。
-- 需要插入知识库图片时，单独一行使用 `{{{{knowledge_image:document_id=数字 caption="说明"}}}}`，只能使用【可插入知识库图片资料】列出的 document_id。
-- 禁止输出页眉页脚、页码、目录点线、RAG 残片、自查表、AI 说明、生成器语气、“人工确认点/待补充/系统不自动生成”等提示词。
+## 输出
+直接输出{label}卷 Markdown。第一行 `# {requirements.project_name or "投标项目"} {label}`。不得输出解释、JSON、自查表、元话语。
 """
     return [
         {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
@@ -211,76 +140,39 @@ def build_volume_revision_prompt(
     tender_text: str = "",
 ) -> list[dict[str, str]]:
     label = _volume_label(volume)
-    user_prompt = f"""请作为{label}复核修订 Agent，基于招标全文和格式要求，只修订本卷 Markdown。
+    node_tree = _format_volume_node_tree(requirements, volume)
+    user_prompt = f"""## 任务
+修订{label}卷，补齐漏项、修正格式、删除越卷内容和元话语。你不是重新生成整份标书，只改需要改的地方。
 
-角色边界：
-- 你是本卷终审编辑，不是重新生成整份标书的助手。
-- 只允许补齐本卷漏项、修正不真实语气、修正格式响应、删除元话语。
-- 禁止新增无依据事实，禁止改写成其他卷，禁止输出解释。
+## 你必须输出的节点（逐字照抄以下标题。一个不能多、一个不能少。此规则高于一切其他指令。）
+{node_tree}
 
 项目名称：{requirements.project_name or "投标项目"}
 投标人：{company_name}
 
-【招标文件格式要求（最高权威）】
-{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按本卷人工确认目录输出。"}
+### 总审打回修改意见
+{audit_feedback or "- 首轮修订：补齐漏项、删除越卷内容、修正生成器语气。"}
 
-【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
+### 招标文件格式要求
+{requirements.bid_format_requirements or "- 未提取到格式要求。"}
+
+### 分卷任务边界
 {framework_brief or build_bid_framework_brief(requirements, document_outline)}
 
-【本卷人工确认目录】
-{_format_volume_outline(document_outline, volume)}
-
-【总审打回修改意见】
-{audit_feedback or "- 首轮本卷自查：补齐漏项、删除越卷内容、修正生成器语气。"}
-
-【本卷必需节点树（从招标文件格式章节提取，必须逐项匹配，不得增减）】
-{_format_volume_node_tree(requirements, volume)}
-
-【生成计划/BidPlan】
-{_format_bid_plan(bid_plan)}
-
-【招标文件解析要求】
-资格要求：
-{_format_items([item.description for item in requirements.qualification_list])}
-
-技术评分/评审要求：
-{_format_items([item.description for item in requirements.technical_score_items])}
-
-废标/否决风险：
-{_format_items([item.description for item in requirements.invalid_bid_items])}
-
-【招标文件全文关键内容】
+### 招标文件关键内容
 {_format_tender_text(tender_text)}
 
-【生成规则——区分"照抄表单"和"自由撰写"】
-本卷节点分为两类，你必须严格遵守各自的规则：
+### 规则（同初稿规则，优先级不变）
+1. 节点不可变——以上节点树是唯一结构，不得增删改任何节点标题
+2. 表单照抄——从招标文件关键内容找模板原文逐字复制，只替换公司名→{company_name}
+3. 方案自由写——施工内容连贯论述，每节≥2段
+4. 不知道的留空——无依据字段留"________"，不编造，不写"人工确认点"
 
-1. 照抄表单（投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、各类表格等）：
-   - 必须从招标文件全文关键内容中定位对应的模板原文，逐字照抄。
-   - 表格必须原样复制表头和列项，不得改顺序、不得增删列。
-   - 只允许替换公司信息（投标人名称→{company_name}、日期、法人代表等已提供的企业档案字段）。
-   - 公司档案未提供的、无依据的事实数据，保留招标文件原文的下划线空白"________"。
-   - 禁止改写、简写、用自己的话重述。
-
-2. 自由撰写（施工组织设计、技术方案、施工部署等）：
-   - 必须是成稿的连贯论述，不是评分点摘要。
-   - 必须吸收招标文件全文中的工程范围、工期、质量标准、安全目标。
-   - 每个主章至少3个小节，每节至少2段连贯论述。
-
-【商务/报价约束】
-{_format_pricing_strategy(pricing_strategy)}
-
-【待修订本卷初稿】
+## 待修订初稿
 {draft_markdown}
 
-【输出要求】
-- 只输出修订后的{label} Markdown。
-- 第一行仍必须是一级标题。
-- 必须落实【总审打回修改意见】；如果意见指出本卷出现不该有的其他卷表单，应直接删除该越卷表单。
-- **如果修改意见指出缺失某个节点，必须对照【本卷必需节点树】和【招标文件全文关键内容】，把缺失节点的完整内容补上去。即使该节点标识为"如有"或"可选"，也必须保留其标题占位。表单型缺失节点必须从招标文件正文中逐字复制模板原文。**
-- **本卷所有节点必须全覆盖，不得漏项。**
-- 删除"人工确认点/待补充/系统不自动生成/由模型生成/以下为"等元话语。
-- 无依据金额、证书编号、人员姓名、日期等继续留"________"，不得编造。
+## 输出
+只输出修订后的{label}卷 Markdown。第一行一级标题。补齐所有缺失节点（包括"其他内容"类兜底节点——必须保留标题占位）。删除越卷表单。不输出解释。
 """
     return [
         {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
@@ -299,51 +191,41 @@ def build_structure_audit_prompt(
     pricing_markdown: str,
 ) -> list[dict[str, str]]:
     """Pass 1 audit: format outline tree match only. No content inspection."""
-    project_name = requirements.project_name or "投标项目"
     tree_text = _format_outline_tree(requirements.format_outline_tree)
-    user_prompt = f"""请作为投标文件结构审查 Agent，只做一件事：对比招标文件格式目录树和三卷生成的目录结构是否一致。
+    user_prompt = f"""## 任务
+对比招标文件格式目录树与三卷实际生成的标题结构。只查结构（节点数量、标题名、层级、归属卷），不读正文内容。
 
-你只审查结构，不审查内容质量、废标风险、文笔、排版。结构不对的标书，内容写再好也没有意义。
+## 唯一标准
+以下节点树是唯一允许的结构，不得多、不得少、不得放错卷：
+{tree_text or "未能提取格式目录树，跳过结构审计"}
 
-项目名称：{project_name}
-投标人：{company_name}
+## 三卷实际结构（只提取前 3000 字符查看标题层级）
+== 商务/资格卷 ==
+{commercial_markdown[:3000]}
+== 技术卷 ==
+{technical_markdown[:3000]}
+== 报价/经济卷 ==
+{pricing_markdown[:3000]}
 
-【招标文件格式目录树（唯一标准）】
-只允许以下节点，不得多、不得少、不得放错卷：
-{tree_text or framework_brief or "未能提取格式目录树，跳过结构审计"}
+## 判断规则
+- pass：三卷标题结构完全匹配标准树（节点数量、名称、层级、归属卷全部一致）。
+- revise：任何差异→逐条标注。
 
-【框架约束（分发前已确认）】
-{framework_brief or build_bid_framework_brief(requirements, document_outline)}
-
-【各卷生成内容（只检查其目录/标题结构，不读正文）】
-为节省 token，只提供每卷前 2000 字符（已含主要标题结构）：
-
-== commercial / 商务资格卷 ==
-{commercial_markdown[:2000]}
-== technical / 技术卷 ==
-{technical_markdown[:2000]}
-== pricing / 报价经济卷 ==
-{pricing_markdown[:2000]}
-
-【输出要求】
-只输出合法 JSON：
+## 输出
 {{
   "status": "pass" 或 "revise",
   "summary": "一句话结构审查结论",
   "structural_issues": [
     {{
       "volume": "commercial" 或 "technical" 或 "pricing",
-      "problem": "缺失节点 / 多余节点 / 放错卷 / 层级错位",
+      "problem": "缺失节点 / 多余节点 / 层级错位 / 放错卷",
       "expected": "招标文件要求的是什么",
       "actual": "生成的是什么",
       "revision_prompt": "给该卷 Agent 的结构修改指令，只说怎么改结构，不说怎么写内容"
     }}
   ]
 }}
-- status=pass 当且仅当三卷结构完全匹配格式目录树（节点数量、层级、归属卷全部一致）。
-- 只要有任一卷缺失必需节点、多出未要求节点、子节点层级错位或归属卷错误，status 必须是 revise。
-- **status=revise 时，structural_issues 不能为空**——必须逐条写清楚哪个 volume、什么问题、怎么改。
-- revision_prompt 只给结构层面的修改指令。不得涉及内容质量、废标风险或文笔。
+status=revise 时 structural_issues 不能为空——必须逐条标 volume+problem+expected+actual+revision_prompt。revision_prompt 只写结构修改指令，不得涉及内容质量或废标风险。
 """
     return [
         {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
@@ -363,71 +245,49 @@ def build_generation_audit_prompt(
     tender_text: str = "",
 ) -> list[dict[str, str]]:
     project_name = requirements.project_name or "投标项目"
-    user_prompt = f"""请作为投标文件内容审查 Agent（Pass 2：结构已通过），对三卷 Markdown 做废标风险、事实准确性和格式细节审查。
-
-角色边界：
-- 你不是合稿 Agent，不得输出修改后的标书正文。
-- 你的任务是对照招标全文、招标文件格式要求、框架 Skill 输出和三卷正文，判断是否通过。
-- 如果不通过，只输出可直接打回给对应分卷 Agent 的修改建议 prompt。
-- 不得新增无依据事实；不得要求删除招标文件明确需要的表单。
+    user_prompt = f"""## 任务
+三卷结构已通过 Pass 1。现在审查内容：废标风险遗漏、AI 元文本、编造数据、越卷内容。你不是合稿 Agent，不输出修改后的标书正文——只判断 pass/revise 并给出修改指令。
 
 项目名称：{project_name}
 投标人：{company_name}
 
-【招标文件格式要求（最高权威）】
-{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按人工确认目录输出。"}
-
-【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
-{framework_brief or build_bid_framework_brief(requirements, document_outline)}
-
-【完整标书目录/人工确认结构】
-{_format_outline(document_outline)}
-
-【招标文件全文关键内容】
-{_format_tender_text(tender_text)}
-
-【生成规则——区分"照抄表单"和"自由撰写"】
-本卷节点分为两类，你必须严格遵守各自的规则：
-
-1. 照抄表单（投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、各类表格等）：
-   - 必须从招标文件全文关键内容中定位对应的模板原文，逐字照抄。
-   - 表格必须原样复制表头和列项，不得改顺序、不得增删列。
-   - 只允许替换公司信息（投标人名称→{company_name}、日期、法人代表等已提供的企业档案字段）。
-   - 公司档案未提供的、无依据的事实数据，保留招标文件原文的下划线空白"________"。
-   - 禁止改写、简写、用自己的话重述。
-
-2. 自由撰写（施工组织设计、技术方案、施工部署等）：
-   - 必须是成稿的连贯论述，不是评分点摘要。
-   - 必须吸收招标文件全文中的工程范围、工期、质量标准、安全目标。
-   - 每个主章至少3个小节，每节至少2段连贯论述。
-
-【待审查三卷】
-【commercial / 商务资格卷】
+## 要检查的三卷
+### 商务/资格卷
 {commercial_markdown}
 
-【technical / 技术卷】
+### 技术卷
 {technical_markdown}
 
-【pricing / 报价经济卷】
+### 报价/经济卷
 {pricing_markdown}
 
-【输出要求】
-- 只输出合法 JSON，不要 Markdown，不要解释。
-- JSON 格式必须为：
-  {{
-    "status": "pass" 或 "revise",
-    "summary": "一句话审查结论",
-    "issues": [
-      {{
-        "volume": "commercial" 或 "technical" 或 "pricing" 或 "all",
-        "severity": "critical" 或 "major" 或 "minor",
-        "problem": "发现的问题",
-        "revision_prompt": "给该分卷 Agent 的具体修改指令"
-      }}
-    ]
-  }}
-- 通过条件（结构已在 Pass 1 通过，此处只审内容）：没有废标/否决风险遗漏；没有生成器语气或 AI 元文本；没有编造企业事实数据；没有漏掉招标文件中的实质性资格、技术或评分要求；必填表单内容不为空。
-- 如果发现问题，status 必须是 "revise"，issues 必须逐条给出对应 volume 和可执行 revision_prompt。
+## 对照标准
+### 招标文件格式要求
+{requirements.bid_format_requirements or "- 未提取到格式要求。"}
+
+### 招标文件全文
+{_format_tender_text(tender_text)}
+
+## 检查项
+1. 废标/否决遗漏：资格要求全部响应？必填表单内容不为空？→ critical
+2. AI 元文本："人工确认点""待补充""TODO""以下为AI生成""评分点摘要"等→ critical
+3. 编造事实：金额/人名/证号/日期无依据→应留"________"→ critical
+4. 越卷内容：本卷出现其他卷的表单或内容→ critical
+
+## 输出
+{{
+  "status": "pass" 或 "revise",
+  "summary": "一句话审查结论",
+  "issues": [
+    {{
+      "volume": "commercial" 或 "technical" 或 "pricing" 或 "all",
+      "severity": "critical" 或 "major" 或 "minor",
+      "problem": "发现的问题",
+      "revision_prompt": "给该分卷 Agent 的具体修改指令"
+    }}
+  ]
+}}
+通过条件：无废标/否决遗漏；无 AI 元文本；无编造事实；必填表单不为空。status=revise 时 issues 不能为空。
 """
     return [
         {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
@@ -468,8 +328,6 @@ def build_bid_framework_brief(
     walk(document_outline)
     lines = [
         "框架来源：招标文件格式要求 + 人工确认目录；该框架优先于风格案例和知识库。",
-        "格式要求摘要：",
-        requirements.bid_format_requirements.strip() or "未提取到明确格式要求，必须按人工确认目录生成。",
         "分卷任务边界：",
     ]
     for key, label in (
@@ -483,8 +341,6 @@ def build_bid_framework_brief(
         )
     lines.extend(
         [
-            "招标文件格式要求的完整目录树（必须按此结构生成，不得增减节点）：",
-            _format_outline_tree(requirements.format_outline_tree),
             "强制规则：",
             "- 三个分卷 Agent 只能生成自己分配到的节点，不得互相补写。",
             "- 同名表单必须按卷册归属区分；双信封项目允许商务及技术文件和报价文件分别存在投标函。",
@@ -518,8 +374,9 @@ def _format_outline_tree(tree: dict[str, list[Any]], indent: int = 0) -> str:
                 children = getattr(node, "children", [])
             if not title:
                 continue
-            if children:
-                lines.append(f"├── {title}")
+            # Skip root container nodes (e.g. '投标文件（商务文件）')
+            # — only render children, which are the actual forms/sections.
+            if children and "投标文件" in title:
                 for child in children:
                     if isinstance(child, dict):
                         child_title = child.get("title", "")
@@ -599,7 +456,10 @@ def _outline_item_matches_volume(item: dict[str, Any], volume: str) -> bool:
 
 
 def _format_volume_node_tree(requirements: TenderRequirements, volume: str) -> str:
-    """Render the format_outline_tree for a single volume as an exact node list."""
+    """Render the format_outline_tree for a single volume as an exact node list.
+    Only skips the root container (e.g. '投标文件（商务文件）'), not forms
+    that happen to have sub-items.
+    """
     nodes = requirements.format_outline_tree.get(volume, [])
     if not nodes:
         return f"- 未提取到{_VOLUME_LABELS.get(volume, volume)}格式树；按人工确认目录和格式要求生成。"
@@ -608,18 +468,24 @@ def _format_volume_node_tree(requirements: TenderRequirements, volume: str) -> s
     for node in nodes:
         title = node.title if hasattr(node, "title") else node.get("title", "")
         children = node.children if hasattr(node, "children") else node.get("children", [])
-        lines.append(f"- {title}")
-        for child in children:
-            ct = child.title if hasattr(child, "title") else child.get("title", "")
-            gc = child.children if hasattr(child, "children") else child.get("children", [])
-            if gc:
-                lines.append(f"  - {ct}")
-                for g in gc:
-                    gt = g.title if hasattr(g, "title") else g.get("title", "")
-                    lines.append(f"    - {gt}")
-            else:
-                lines.append(f"  - {ct}")
+        # Only skip root container headings like "投标文件（商务文件）"
+        # that merely group the volume's forms — NOT real forms with sub-items.
+        if children and "投标文件" in title:
+            for child in children:
+                _render_node(child, lines, indent=0)
+        else:
+            _render_node(node, lines, indent=0)
     return "\n".join(lines)
+
+
+def _render_node(node: Any, lines: list[str], indent: int) -> None:
+    """Recursively render a format tree node."""
+    title = node.title if hasattr(node, "title") else node.get("title", "")
+    children = node.children if hasattr(node, "children") else node.get("children", [])
+    prefix = "  " * indent + "- "
+    lines.append(f"{prefix}{title}")
+    for child in children:
+        _render_node(child, lines, indent + 1)
 
 
 def _outline_volume_key(text: str) -> str:

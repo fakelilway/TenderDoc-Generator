@@ -510,16 +510,21 @@ def generate_bid_package_multi_agent(
     # ---- Pass 2: Content audit (废标风险, factual accuracy, etc.) ----
     content_audit: dict[str, Any] = {"status": "pass", "issues": []}
     for audit_round in range(MULTI_AGENT_AUDIT_MAX_ITERATIONS + 1):
-        content_audit = _run_generation_audit_with_llm(
-            requirements=requirements,
-            company_name=company_name,
-            document_outline=document_outline,
-            framework_brief=framework_brief,
-            commercial_markdown=volumes["commercial"],
-            technical_markdown=volumes["technical"],
-            pricing_markdown=volumes["pricing"],
-            tender_text=tender_text,
-        )
+        try:
+            content_audit = _run_generation_audit_with_llm(
+                requirements=requirements,
+                company_name=company_name,
+                document_outline=document_outline,
+                framework_brief=framework_brief,
+                commercial_markdown=volumes["commercial"],
+                technical_markdown=volumes["technical"],
+                pricing_markdown=volumes["pricing"],
+                tender_text=tender_text,
+            )
+        except GeneratorAgentError:
+            if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
+                raise
+            continue
         if _audit_passed(content_audit):
             break
         if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
@@ -1269,8 +1274,13 @@ def _generate_messages_with_llm(
         if not response.choices:
             raise GeneratorAgentError(f"{agent_name} response did not contain choices")
         choice = response.choices[0]
-        content = (choice.message.content or "").strip("\n")
-        if not content.strip() and not parts:
+        content = (choice.message.content or "").strip()
+        if not content and not parts:
+            # DeepSeek occasionally returns empty; retry once before giving up
+            if round_index == 0:
+                import time
+                time.sleep(2)
+                continue
             raise GeneratorAgentError(f"{agent_name} response was empty")
         parts.append(content)
         finish_reason = getattr(choice, "finish_reason", None)

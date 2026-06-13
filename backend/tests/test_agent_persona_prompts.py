@@ -3,15 +3,21 @@ from __future__ import annotations
 from agents.pricing_agent import PRICING_SYSTEM_PROMPT
 from agents.reviewer_agent import REVIEWER_SYSTEM_PROMPT
 from agents.scoring_agent import SCORING_SYSTEM_PROMPT
-from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT
+from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT, build_volume_agent_prompt
 from prompts.parser_prompt import PARSER_SYSTEM_PROMPT
-
-
+from schemas.tender import TenderRequirements
 
 
 def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
-    assert "真实投标文件总编" in GENERATOR_SYSTEM_PROMPT
-    assert "施工组织设计主笔" in GENERATOR_SYSTEM_PROMPT
-    assert "商务标合规顾问" in GENERATOR_SYSTEM_PROMPT
-    assert "招标文件格式要求" in GENERATOR_SYSTEM_PROMPT
-    assert "公司风格案例不得覆盖招标文件格式要求" in GENERATOR_SYSTEM_PROMPT
+    assert "投标文件生成 Agent" in GENERATOR_SYSTEM_PROMPT
+    prompt = build_volume_agent_prompt(
+        volume="commercial",
+        requirements=TenderRequirements(project_name="测试项目"),
+        company_name="测试公司",
+        document_outline=[],
+    )
+    user = prompt[1]["content"]
+    assert "节点不可变" in user
+    assert "表单照抄" in user
+    assert "不知道的留空" in user
+    assert "________" in user
