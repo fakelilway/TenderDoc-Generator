@@ -476,6 +476,7 @@ def confirm_project(
         project_id,
         delivery_markdown,
         generation_service.evaluate_generation_quality(delivery_markdown),
+        original_format_path=getattr(state, 'v2_format_docx', None),
     )
     state.final_checklist = _build_final_checklist(requirements, state)
     if exported:
