@@ -630,47 +630,6 @@ def _project_core_lines(requirements: TenderRequirements) -> list[str]:
         if value:
             lines.append(f"| {label} | {value} |")
     return lines if len(lines) > 2 else []
-
-
-
-    def _render_section(section: BidSectionOutline) -> str:
-        chunks = _filter_chunks_for_bid_plan(
-            retrieved_chunks_by_section.get(section.title, []),
-            bid_plan,
-            section.title,
-        )
-        chunk_text = _bid_text_chunks(chunks)
-        if use_local_section_fallback:
-            return _generate_section_fallback(
-                section.title,
-                requirements,
-                chunk_text,
-            )
-        if knowledge_images:
-            return generate_bid_section(
-                section.title,
-                requirements,
-                chunk_text,
-                knowledge_images,
-            )
-        return generate_bid_section(
-            section.title,
-            requirements,
-            chunk_text,
-        )
-
-    # Sections are independent, so the per-section LLM calls run concurrently;
-    # results are re-assembled in outline order. Per-section failures still
-    # fall back locally inside ``generate_bid_section``.
-    with ThreadPoolExecutor(max_workers=min(4, len(outline))) as executor:
-        section_markdowns = list(executor.map(_render_section, outline))
-    for section, section_markdown in zip(outline, section_markdowns, strict=False):
-        parts.extend([section_markdown, *_manual_image_slot_block(section), ""])
-    return parts
-
-
-
-
 def _business_section_from_template(
     requirements: TenderRequirements,
     section,
@@ -1161,7 +1120,7 @@ def _run_structure_audit_with_llm(
     technical_markdown: str,
     pricing_markdown: str,
 ) -> dict[str, Any]:
-    """Pass 1: check format outline tree match. Returns audit dict with status/structural_issues."""
+    """Pass 1: check format outline tree match. Returns audit dict with status/issues."""
     messages = build_structure_audit_prompt(
         requirements=requirements,
         company_name=company_name,
@@ -1176,10 +1135,7 @@ def _run_structure_audit_with_llm(
         agent_name="structure-audit",
         continuation_instruction="继续输出JSON审计结果，不要重复已输出的内容。",
     )
-    audit = _parse_generation_audit_response(raw)
-    if "structural_issues" in audit and "issues" not in audit:
-        audit["issues"] = audit.pop("structural_issues")
-    return audit
+    return _parse_generation_audit_response(raw)
 
 
 def _revise_single_volume(
@@ -1311,12 +1267,16 @@ def _generate_messages_with_llm(
 
 def _parse_generation_audit_response(raw: str) -> dict[str, Any]:
     text = raw.strip()
+    if not text:
+        raise GeneratorAgentError("Generation audit response was empty")
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     match = re.search(r"\{.*\}", text, flags=re.S)
     if match:
         text = match.group(0)
+    if not text.strip():
+        raise GeneratorAgentError("Generation audit response contained no JSON")
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
@@ -1326,7 +1286,7 @@ def _parse_generation_audit_response(raw: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise GeneratorAgentError("Generation audit JSON must be an object")
     status = str(data.get("status") or "revise").strip().lower()
-    issues = data.get("issues") or []
+    issues = data.get("issues") or data.get("structural_issues") or []
     if not isinstance(issues, list):
         issues = []
     normalized_issues: list[dict[str, str]] = []
@@ -1343,6 +1303,11 @@ def _parse_generation_audit_response(raw: str) -> dict[str, Any]:
                 "problem": str(issue.get("problem") or "").strip(),
                 "revision_prompt": str(issue.get("revision_prompt") or "").strip(),
             }
+        )
+    # If the auditor said revise but didn't explain why, fail fast.
+    if status == "revise" and not normalized_issues:
+        raise GeneratorAgentError(
+            "Audit returned status=revise but issues list is empty."
         )
     return {
         "status": status,

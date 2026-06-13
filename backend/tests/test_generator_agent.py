@@ -4,9 +4,11 @@ import pytest
 
 from agents import generator_agent
 from prompts.generator_prompt import (
-    GENERATOR_SYSTEM_PROMPT,
+    GENERATOR_WRITER_SYSTEM_PROMPT,
+    GENERATION_AUDITOR_SYSTEM_PROMPT,
     build_bid_framework_brief,
     build_generation_audit_prompt,
+    build_structure_audit_prompt,
     build_volume_agent_prompt,
     build_volume_revision_prompt,
     redact_pii,
@@ -201,8 +203,13 @@ def test_build_bid_outline_uses_technical_score_items() -> None:
 
 
 def test_generator_prompt_defines_role_experience_and_task() -> None:
-    assert "投标文件生成 Agent" in GENERATOR_SYSTEM_PROMPT
-    assert "Markdown" in GENERATOR_SYSTEM_PROMPT
+    assert "投标文件主笔" in GENERATOR_WRITER_SYSTEM_PROMPT
+    assert "Markdown" in GENERATOR_WRITER_SYSTEM_PROMPT
+    assert "不编造" in GENERATOR_WRITER_SYSTEM_PROMPT
+
+    assert "审查员" in GENERATION_AUDITOR_SYSTEM_PROMPT
+    assert "JSON" in GENERATION_AUDITOR_SYSTEM_PROMPT
+    assert "不输出 Markdown" in GENERATION_AUDITOR_SYSTEM_PROMPT
 
 
 def test_generator_prompt_forbids_reusing_sample_personal_data() -> None:

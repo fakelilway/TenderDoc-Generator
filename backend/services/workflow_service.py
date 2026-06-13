@@ -9,11 +9,12 @@ import redis
 from psycopg2.extras import Json, RealDictCursor
 
 from agents.generator_agent import (
+    GeneratorAgentError,
     build_bid_outline,
     build_bid_document_outline,
     generate_bid_package,
 )
-from agents.parser_agent import parse_tender
+from agents.parser_agent import ParserAgentError, parse_tender
 from agents.pricing_agent import (
     extract_pricing_strategy,
     generate_pricing_strategy_report,
@@ -102,13 +103,31 @@ def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, obje
 def _run_background_workflow(project_id: int) -> None:
     try:
         run_bid_workflow(project_id)
+    except GeneratorAgentError as error:
+        state = load_workflow_state(project_id) or WorkflowState(project_id=project_id)
+        _append_trace(
+            state,
+            "generate",
+            "failed",
+            f"生成失败 [{type(error).__name__}]：{error}",
+            project_status="failed",
+        )
+    except ParserAgentError as error:
+        state = load_workflow_state(project_id) or WorkflowState(project_id=project_id)
+        _append_trace(
+            state,
+            "parse",
+            "failed",
+            f"解析失败 [{type(error).__name__}]：{error}",
+            project_status="failed",
+        )
     except Exception as error:
         state = load_workflow_state(project_id) or WorkflowState(project_id=project_id)
         _append_trace(
             state,
             "review",
             "failed",
-            f"工作流失败：{error}",
+            f"工作流失败 [{type(error).__name__}]：{error}",
             project_status="failed",
         )
         _set_project_status(project_id, "failed")

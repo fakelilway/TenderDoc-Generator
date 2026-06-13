@@ -6,7 +6,9 @@ from typing import Any
 from schemas.tender import TenderRequirements
 
 
-GENERATOR_SYSTEM_PROMPT = """你是投标文件生成 Agent。只输出 Markdown 正文，不输出 JSON、解释、自查文字、评分表、AI 元文本、页眉页脚、页码。"""
+GENERATOR_WRITER_SYSTEM_PROMPT = """你是投标文件主笔——有工程与商务合规经验，对格式节点树的绝对忠诚高于一切。只输出 Markdown 正文。不输出 JSON、元话语、自查表、页码、页眉页脚。不编造事实数据。"""
+
+GENERATION_AUDITOR_SYSTEM_PROMPT = """你是投标文件结构/内容审查员。只输出合法 JSON，不输出 Markdown、不写正文、不合稿。"""
 
 
 # Sample personal data leaked from historical bid documents must never reach
@@ -121,7 +123,7 @@ def build_volume_agent_prompt(
 直接输出{label}卷 Markdown。第一行 `# {requirements.project_name or "投标项目"} {label}`。不得输出解释、JSON、自查表、元话语。
 """
     return [
-        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -175,7 +177,7 @@ def build_volume_revision_prompt(
 只输出修订后的{label}卷 Markdown。第一行一级标题。补齐所有缺失节点（包括"其他内容"类兜底节点——必须保留标题占位）。删除越卷表单。不输出解释。
 """
     return [
-        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -212,10 +214,11 @@ def build_structure_audit_prompt(
 - revise：任何差异→逐条标注。
 
 ## 输出
+只输出合法 JSON，不要 Markdown、不要代码块、不要解释：
 {{
   "status": "pass" 或 "revise",
   "summary": "一句话结构审查结论",
-  "structural_issues": [
+  "issues": [
     {{
       "volume": "commercial" 或 "technical" 或 "pricing",
       "problem": "缺失节点 / 多余节点 / 层级错位 / 放错卷",
@@ -225,10 +228,10 @@ def build_structure_audit_prompt(
     }}
   ]
 }}
-status=revise 时 structural_issues 不能为空——必须逐条标 volume+problem+expected+actual+revision_prompt。revision_prompt 只写结构修改指令，不得涉及内容质量或废标风险。
+status=revise 时 issues 不能为空——必须逐条标 volume+problem+expected+actual+revision_prompt。revision_prompt 只写结构修改指令，不得涉及内容质量或废标风险。
 """
     return [
-        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "system", "content": GENERATION_AUDITOR_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -275,6 +278,7 @@ def build_generation_audit_prompt(
 4. 越卷内容：本卷出现其他卷的表单或内容→ critical
 
 ## 输出
+只输出合法 JSON，不要 Markdown、不要代码块、不要解释：
 {{
   "status": "pass" 或 "revise",
   "summary": "一句话审查结论",
@@ -290,7 +294,7 @@ def build_generation_audit_prompt(
 通过条件：无废标/否决遗漏；无 AI 元文本；无编造事实；必填表单不为空。status=revise 时 issues 不能为空。
 """
     return [
-        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
+        {"role": "system", "content": GENERATION_AUDITOR_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 
