@@ -9,7 +9,6 @@ import redis
 from psycopg2.extras import Json, RealDictCursor
 
 from agents.generator_agent import (
-    GeneratorAgentError,
     build_bid_outline,
     build_bid_document_outline,
 )
@@ -26,10 +25,11 @@ from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import generation_service
 from services.company_profile_service import get_company_profile
-from services.v2_generation_service import generate_v2_bid_package, V2BidPackage
+from services.v2_generation_service import generate_v2_bid_package
 from services.project_service import (
     ProjectNotFoundError,
     _connect,
+    _fetch_project,
     append_final_version,
     get_knowledge_references,
 )
@@ -103,15 +103,6 @@ def start_bid_workflow(project_id: int, background_tasks=None) -> dict[str, obje
 def _run_background_workflow(project_id: int) -> None:
     try:
         run_bid_workflow(project_id)
-    except GeneratorAgentError as error:
-        state = load_workflow_state(project_id) or WorkflowState(project_id=project_id)
-        _append_trace(
-            state,
-            "generate",
-            "failed",
-            f"生成失败 [{type(error).__name__}]：{error}",
-            project_status="failed",
-        )
     except ParserAgentError as error:
         state = load_workflow_state(project_id) or WorkflowState(project_id=project_id)
         _append_trace(
@@ -259,33 +250,32 @@ def run_bid_workflow(
         logger.warning("Company profile unavailable; generating without it")
         company_profile = None
 
-    gen_mode = getattr(settings, "bid_generation_mode", "v2")
-    if gen_mode == "v2":
-        # Download tender bytes for PDF original format conversion during generation
-        tender_bytes: bytes | None = None
-        if _original_tender_extension(project) == ".pdf":
-            from utils.minio_client import minio_client
-            tender_path = str(project.get("tender_file_path", ""))
-            logger.debug("Downloading PDF from MinIO: %s", tender_path)
-            tender_bytes = minio_client.download_bytes(settings.minio_bucket, tender_path)
+    generation_mode = "unknown"
+    audit_summary = ""
+    tender_bytes: bytes | None = None
+    if _original_tender_extension(project) == ".pdf":
+        from utils.minio_client import minio_client
+        tender_path = str(project.get("tender_file_path", ""))
+        logger.debug("Downloading PDF from MinIO: %s", tender_path)
+        tender_bytes = minio_client.download_bytes(settings.minio_bucket, tender_path)
 
-        v2_pkg = generate_v2_bid_package(
-            requirements,
-            retrieved_by_section,
-            company_name=str((company_profile or {}).get("company_name", "") or settings.company_name),
-            tender_text=state.tender_text,
-            company_profile=company_profile,
-            original_format_docx_available=_is_original_format(project),
-            tender_bytes=tender_bytes,
-        )
-        state.draft_volumes = v2_pkg.volume_map()
-        state.draft_markdown = v2_pkg.combined_markdown
-        generation_mode = "v2_format_copy"
-        state.v2_format_docx = getattr(v2_pkg, 'format_docx_path', None)
-        if v2_pkg.audit_result:
-            audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
-        else:
-            audit_summary = "审查未执行"
+    v2_pkg = generate_v2_bid_package(
+        requirements,
+        retrieved_by_section,
+        company_name=str((company_profile or {}).get("company_name", "") or settings.company_name),
+        tender_text=state.tender_text,
+        company_profile=company_profile,
+        original_format_docx_available=_is_original_format(project),
+        tender_bytes=tender_bytes,
+    )
+    state.draft_volumes = v2_pkg.volume_map()
+    state.draft_markdown = v2_pkg.combined_markdown
+    generation_mode = "v2_format_copy"
+    state.v2_format_docx = getattr(v2_pkg, 'format_docx_path', None)
+    if v2_pkg.audit_result:
+        audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
+    else:
+        audit_summary = "审查未执行"
     mode_note = f"生成模式：{generation_mode}"
     if audit_summary:
         mode_note += f" | {audit_summary}"
@@ -776,33 +766,6 @@ def _template_profile_for_project(project_id: int):
         return None
 
 
-def _fetch_project(project_id: int) -> dict:
-    with _connect() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    id,
-                    name,
-                    tender_file_path,
-                    parsed_json,
-                    confirmed_parsed_json,
-                    tender_text,
-                    bid_outline_json,
-                    document_outline_json,
-                    selected_chunk_ids,
-                    edited_markdown
-                FROM projects
-                WHERE id = %s
-                """,
-                (project_id,),
-            )
-            row = cursor.fetchone()
-    if not row:
-        raise ProjectNotFoundError(f"Project {project_id} was not found")
-    return dict(row)
-
-
 def _load_and_persist_tender_text(project: dict) -> str:
     tender_path = project.get("tender_file_path")
     if not tender_path:
@@ -974,8 +937,20 @@ def _finding_status(title: str, review_report: dict) -> str:
     return "pending"
 
 
-def _redis_client():
-    return redis.Redis.from_url(settings.redis_url)
+_redis_pool: redis.ConnectionPool | None = None
+
+
+def _redis_client() -> redis.Redis:
+    """Return a Redis client backed by a shared connection pool.
+
+    Creating a new ``redis.Redis`` on every call previously instantiated a
+    fresh TCP connection (or at least a new Python object). The pool keeps
+    connections alive across calls, reducing latency and socket churn.
+    """
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool.from_url(settings.redis_url)
+    return redis.Redis(connection_pool=_redis_pool)
 
 
 def _workflow_key(project_id: int) -> str:

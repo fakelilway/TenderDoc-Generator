@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-import os
+import re
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -10,7 +11,11 @@ from psycopg2.extras import Json
 from core.config import settings
 from schemas.tender import TenderRequirements
 from services.company_profile_service import get_company_profile
-from services.original_docx_format_service import build_original_format_docx
+from services.original_docx_format_service import (
+    PDF_PAGE_MARKER_PREFIX,
+    build_original_format_docx,
+    _clear_document_body as _clear_body,
+)
 from services.project_service import _connect
 from utils.docx_exporter import markdown_to_docx, strip_meta_notes
 from utils.minio_client import minio_client
@@ -38,9 +43,12 @@ def export_markdown_for_project(
 
         if original_format_path and Path(original_format_path).exists():
             # Split format DOCX into three independent volume files at OOXML level
-            _split_and_export_volumes(original_format_path, tmp_path, project_id, markdown)
+            _split_and_export_volumes(
+                original_format_path, tmp_path, project_id, markdown
+            )
             # Main docx = technical (has prose)
             import shutil
+
             shutil.copy2(tmp_path / f"project_{project_id}_technical.docx", docx_path)
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
@@ -66,8 +74,9 @@ def export_markdown_for_project(
             vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
             if vol_path.exists():
                 minio_client.upload_file(
-                    settings.minio_bucket, vol_path,
-                    f"projects/{project_id}/generated/{vol}.docx"
+                    settings.minio_bucket,
+                    vol_path,
+                    f"projects/{project_id}/generated/{vol}.docx",
                 )
 
     _update_generation_paths(
@@ -129,12 +138,14 @@ def _export_profile_from_tender(tender: dict[str, object]) -> dict[str, object]:
     parsed = tender.get("confirmed_parsed_json") or tender.get("parsed_json") or {}
     profile: dict[str, object] = {}
     if isinstance(parsed, dict):
-        profile.update({
-            "project_name": parsed.get("project_name") or tender.get("name") or "",
-            "项目名称": parsed.get("project_name") or tender.get("name") or "",
-            "tenderer_name": parsed.get("tenderer_name") or "",
-            "招标人": parsed.get("tenderer_name") or "",
-        })
+        profile.update(
+            {
+                "project_name": parsed.get("project_name") or tender.get("name") or "",
+                "项目名称": parsed.get("project_name") or tender.get("name") or "",
+                "tenderer_name": parsed.get("tenderer_name") or "",
+                "招标人": parsed.get("tenderer_name") or "",
+            }
+        )
     try:
         company_profile = get_company_profile().get("profile", {})
         if isinstance(company_profile, dict):
@@ -250,20 +261,23 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     from docx import Document
     from docx.shared import Pt
 
+    if not prose_markdown.strip():
+        return
+
     doc = Document(str(docx_path))
     doc.add_page_break()
 
-    lines = prose_markdown.strip().split('\n')
+    lines = prose_markdown.strip().split("\n")
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        if line.startswith('# '):
+        if line.startswith("# "):
             p = doc.add_paragraph()
             run = p.add_run(line[2:].strip())
             run.bold = True
             run.font.size = Pt(16)
-        elif line.startswith('## '):
+        elif line.startswith("## "):
             p = doc.add_paragraph()
             run = p.add_run(line[3:].strip())
             run.bold = True
@@ -278,7 +292,7 @@ def _split_and_export_volumes(
     format_path: str,
     tmp_path: Path,
     project_id: int,
-    prose: str,
+    markdown: str,
 ) -> None:
     """Split a merged format DOCX into three independent volume DOCX files
     at OOXML element level, preserving tables, borders, and formatting."""
@@ -286,9 +300,16 @@ def _split_and_export_volumes(
     from docx import Document as _D
     from docx.oxml.ns import qn
 
+    from utils.docx_exporter import split_delivery_markdown
+
     src = _D(format_path)
     body = src.element.body
     elements = list(body)
+    volumes = split_delivery_markdown(markdown)
+    technical_markdown = volumes.get("technical", "")
+
+    if _split_pdf_page_blocks(elements, body, tmp_path, project_id, technical_markdown):
+        return
 
     # Volume boundary patterns (look for section headings that mark volume divisions)
     VOL_BOUNDARIES = {
@@ -317,7 +338,7 @@ def _split_and_export_volumes(
             vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
             shutil.copy2(format_path, vol_path)
             if vol == "technical":
-                _append_prose_to_docx(vol_path, prose)
+                _append_prose_to_docx(vol_path, technical_markdown)
         return
 
     # Build volume element lists
@@ -336,21 +357,158 @@ def _split_and_export_volumes(
         doc = _D()
         _clear_body(doc)
         for el in sections.get(vol, []):
-            doc.element.body.append(__import__('copy').deepcopy(el))
+            doc.element.body.append(deepcopy(el))
         vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
         # Copy section properties from source
         for el in body:
             if el.tag == qn("w:sectPr"):
-                doc.element.body.append(__import__('copy').deepcopy(el))
+                doc.element.body.append(deepcopy(el))
                 break
         doc.save(str(vol_path))
         if vol == "technical":
-            _append_prose_to_docx(vol_path, prose)
+            _append_prose_to_docx(vol_path, technical_markdown)
 
 
-def _clear_body(doc: 'Document') -> None:
-    """Remove all children from document body except sectPr."""
-    from docx.oxml.ns import qn as _qn
+def _split_pdf_page_blocks(
+    elements: list,
+    body,
+    tmp_path: Path,
+    project_id: int,
+    technical_markdown: str,
+) -> bool:
+    """Split our PDF-copy DOCX by whole page blocks instead of raw elements."""
+    from docx import Document as _D
+
+    blocks = _collect_pdf_page_blocks(elements)
+    if not blocks:
+        return False
+
+    sections: dict[str, list] = {"commercial": [], "technical": [], "pricing": []}
+    current_vol = "commercial"
+    for block in blocks:
+        block_text = _docx_block_text(block)
+        current_vol = _classify_pdf_page_volume(block_text, current_vol)
+        sections[current_vol].extend(el for el in block if not _is_pdf_page_marker(el))
+
+    for vol in ("commercial", "technical", "pricing"):
+        doc = _D()
+        _clear_body(doc)
+        for el in sections.get(vol, []):
+            doc.element.body.append(deepcopy(el))
+        _append_source_section_props(doc, body)
+        vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
+        doc.save(str(vol_path))
+        if vol == "technical":
+            _append_prose_to_docx(vol_path, technical_markdown)
+    return True
+
+
+def _collect_pdf_page_blocks(elements: list) -> list[list]:
+    blocks: list[list] = []
+    current: list | None = None
+    pending_section_breaks: list = []
+
+    for el in elements:
+        if _is_pdf_page_marker(el):
+            if current:
+                blocks.append(current)
+            current = [*pending_section_breaks, el]
+            pending_section_breaks = []
+            continue
+
+        if current is None:
+            continue
+
+        if _is_section_break_only(el):
+            pending_section_breaks.append(el)
+            continue
+
+        if pending_section_breaks:
+            current.extend(pending_section_breaks)
+            pending_section_breaks = []
+        current.append(el)
+
+    if current:
+        current.extend(pending_section_breaks)
+        blocks.append(current)
+    return blocks
+
+
+def _docx_block_text(elements: list) -> str:
+    return "".join(_docx_element_text(el) for el in elements)
+
+
+def _docx_element_text(element) -> str:
+    from docx.oxml.ns import qn
+
+    return "".join(node.text or "" for node in element.iter(qn("w:t")))
+
+
+def _is_pdf_page_marker(element) -> bool:
+    return _docx_element_text(element).startswith(PDF_PAGE_MARKER_PREFIX)
+
+
+def _is_section_break_only(element) -> bool:
+    from docx.oxml.ns import qn
+
+    if element.tag == qn("w:sectPr"):
+        return True
+    if element.tag != qn("w:p"):
+        return False
+    has_section = element.find(f".//{qn('w:sectPr')}") is not None
+    has_text = bool(_docx_element_text(element).strip())
+    has_drawing = element.find(f".//{qn('w:drawing')}") is not None
+    has_pict = element.find(f".//{qn('w:pict')}") is not None
+    return has_section and not has_text and not has_drawing and not has_pict
+
+
+def _classify_pdf_page_volume(text: str, current: str) -> str:
+    compact = re.sub(r"\s+", "", text or "")
+    head = compact[:220]
+    candidates = {
+        "commercial": (
+            "投标文件（商务文件）",
+            "响应文件（商务文件）",
+            "商务文件目录",
+            "商务文件",
+            "商务标",
+        ),
+        "technical": (
+            "投标文件（技术文件）",
+            "响应文件（技术文件）",
+            "技术文件目录",
+            "技术文件",
+            "技术标",
+            "施工组织设计",
+        ),
+        "pricing": (
+            "投标文件（报价文件）",
+            "响应文件（报价文件）",
+            "报价文件目录",
+            "报价文件",
+            "报价标",
+            "已标价工程量清单",
+            "第二信封",
+        ),
+    }
+    best: tuple[int, str] | None = None
+    for volume, markers in candidates.items():
+        for marker in markers:
+            position = head.find(marker)
+            if position == -1:
+                continue
+            if best is None or position < best[0]:
+                best = (position, volume)
+    return best[1] if best is not None else current
+
+
+def _append_source_section_props(doc, body) -> None:
+    from docx.oxml.ns import qn
+
     for child in list(doc.element.body):
-        if child.tag != _qn("w:sectPr"):
+        if child.tag == qn("w:sectPr"):
             doc.element.body.remove(child)
+    for el in body:
+        if el.tag == qn("w:sectPr"):
+            doc.element.body.append(deepcopy(el))
+            return

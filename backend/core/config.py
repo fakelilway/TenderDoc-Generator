@@ -68,8 +68,6 @@ class Settings(BaseSettings):
     rerank_model: str = Field("BAAI/bge-reranker-base", alias="RERANK_MODEL")
 
     company_name: str = Field("安徽正奇建设有限公司", alias="COMPANY_NAME")
-    enable_llm_generation: bool = Field(True, alias="ENABLE_LLM_GENERATION")
-    bid_generation_mode: str = Field("v2", alias="BID_GENERATION_MODE")
     bid_template_path: str = Field("", alias="BID_TEMPLATE_PATH")
 
     debug: bool = Field(False, alias="DEBUG")

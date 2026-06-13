@@ -828,7 +828,7 @@ def _extract_rule_based_requirements(text: str) -> TenderRequirements:
     return TenderRequirements(
         project_name=project_name,
         **core_fields,
-        bid_format_requirements=_extract_format_requirements(text),
+        bid_format_requirements="",
         qualification_list=_dedupe_items(qualification_items),
         technical_score_items=_dedupe_items(score_items),
         invalid_bid_items=_dedupe_items(invalid_items),
@@ -864,6 +864,7 @@ def parse_tender_response(content: str) -> TenderRequirements:
                     item["source"] = {"source_text": item["source"], "page_number": None}
 
     result = TenderRequirements.model_validate(data)
+    result.bid_format_requirements = ""
 
     # Ensure format_outline_tree has the three required volume keys.
     _normalize_format_tree(result)
@@ -894,8 +895,7 @@ def _build_fallback_format_tree(text: str) -> dict[str, list[Any]]:
     # Import inline to avoid circular imports
     from schemas.tender import FormatOutlineNode  # noqa: F811
 
-    requirements = _extract_rule_based_requirements(text)
-    fmt_req = requirements.bid_format_requirements
+    fmt_req = _extract_format_requirements(text)
     tree: dict[str, list[FormatOutlineNode]] = {
         "commercial": [],
         "technical": [],
@@ -953,7 +953,6 @@ def _is_empty_parse(result: TenderRequirements) -> bool:
         result.quality_standard,
         result.safety_target,
         result.bid_deadline,
-        result.bid_format_requirements,
     )
     has_string_data = any(v.strip() for v in string_fields)
     has_list_data = bool(
@@ -1045,14 +1044,9 @@ def parse_tender(text: str) -> TenderRequirements:
     except Exception as error:
         raise ParserAgentError(f"Parser LLM failed: {error}") from error
 
-    # Format requirements: rule-based extraction from the format chapter is the
-    # primary and most reliable source.  LLM provides supplementary scattered
-    # clauses (sealing, electronic submission, etc.) that live outside the
-    # format chapter.  Both are merged and deduplicated.
-    rule_format = _extract_format_requirements(text)
-    llm_based.bid_format_requirements = _merge_format_requirements(
-        llm_based.bid_format_requirements, rule_format
-    )
+    # bid_format_requirements is a legacy compatibility field. Format fidelity
+    # now comes from direct original-file copying, not LLM text summaries.
+    llm_based.bid_format_requirements = ""
     # If the LLM did not produce a format outline tree (or it is empty),
     # use the rule-based extraction to build a flat fallback.
     if _is_format_tree_empty(llm_based.format_outline_tree):

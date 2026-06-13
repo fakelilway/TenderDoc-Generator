@@ -1,96 +1,73 @@
 # TenderDoc-Generator 代码审查标准
 
-> 本文档定义这个项目的审查规则。适用于所有 PR 和改动。
+本文定义当前项目的审查规则。所有改动都以 V2 原格式复制链路为准。
 
----
+## 必须重点审查的文件
 
-## 一、审查触发
+- `backend/services/original_docx_format_service.py`
+- `backend/services/generation_service.py`
+- `backend/services/v2_generation_service.py`
+- `backend/services/v2_audit_service.py`
+- `backend/services/workflow_service.py`
+- `backend/agents/parser_agent.py`
+- `backend/agents/content_writer_agent.py`
+- `backend/agents/reviewer_agent.py`
+- `backend/prompts/generator_prompt.py`
+- `backend/prompts/parser_prompt.py`
+- `frontend/components/TenderWorkspace.tsx`
+- `frontend/components/ParsedReviewPanel.tsx`
 
-以下情况必须审查，不得直接合并：
+## 合并前检查
 
-1. 修改 `workflow_service.py`、`v2_generation_service.py`、`generation_service.py` 任一文件
-2. 新增或修改 `prompts/` 目录下的 prompt 文件
-3. 修改 `schemas/` 影响数据库序列化
-4. 新增 pip 依赖
-5. 修改前端 `TenderWorkspace.tsx`
+- 后端测试：`.venv/bin/python -m pytest backend/tests -q`
+- 前端类型检查：`pnpm --dir frontend typecheck`
+- 前端构建：`pnpm --dir frontend build`
+- 空白检查：`git diff --check`
+- 涉及 DOCX 导出时，至少打开一次导出文件，确认无空白页、错卷、裁切、表格拍扁和下划线丢失。
 
-## 二、审查检查清单
+## 格式链路审查规则
 
-### 🔴 P0 — 合并前必须通过
+1. 招标文件格式页必须由 `original_docx_format_service.py` 复制，不得由 Prompt 或 Markdown 表格重画商务/报价格式。
+2. DOCX 输入必须保留 OOXML 结构，包括表格、边框、合并单元格、对齐、下划线和签章位。
+3. PDF 输入必须按整页图像保真，导出拆卷必须按页块移动，不能把页面图片和文本层拆散。
+4. `generation_service.py` 在原格式 DOCX 存在时只能做拆卷和技术正文追加，不能重新渲染商务/报价锁定区。
+5. 技术卷追加内容必须来自技术 Markdown，不能把完整合并 Markdown 追加进技术卷。
+6. `format_outline_tree` 可以辅助定位和标题收集，但不能替代原格式页。
+7. `bid_format_requirements` 不得作为生成依据或前端确认关卡。
 
-- [ ] **测试全绿**：`pytest tests/ -q` 256+ passed, 无 regression
-- [ ] **虚拟环境一致**：新依赖同时加入 `backend/venv/` 和 `.venv/`（`scripts/dev_local.sh` 用 `.venv/`）
-- [ ] **无静默异常吞没**：`try/except` 必须至少 `logger.error(..., exc_info=True)` 或显式抛出
-- [ ] **导出路径双覆盖**：`export_markdown_for_project` 的两个调用点参数一致
+## 生成链路审查规则
 
-### 🟡 P1 — 建议修
+1. `generate_v2_bid_package()` 是当前唯一生成入口。
+2. Content Writer 只能写技术正文，不得输出商务/报价函件、表格或签章格式。
+3. `BID_LLM_PROVIDER` 必须被 Parser 和 Content Writer 同时尊重。
+4. 任何 LLM 调用失败都要抛出可读错误，不得静默吞掉。
+5. 系统不得输出占位正文冒充成功结果。
+6. 未知金额、证号、人员、日期等字段必须保留空白或进入人工确认。
 
-- [ ] **无重复导入**：同一模块不在三个不同函数里分别 `from X import Y`
-- [ ] **输出文件可验证**：每次生成完立即用 `docx.Document()` 读回检查段落数/表格数
-- [ ] **无死代码**：找不到调用者的函数直接删，不保留"可能以后用"
-- [ ] **LLM 调用可追踪**：每次 LLM 调用打印节点标题和输出长度
+## 审查链路审查规则
 
-### 💭 P2 — 可优化
+1. `v2_audit_service.py` 必须拦截表格拍扁、下划线丢失、签章位丢失、图片/图表要求未落实。
+2. 内容审查必须拦截过短正文、AI 元话语、身份证号、报价金额等高风险内容。
+3. 证据审查必须阻止填入值与公司档案不一致。
+4. `reviewer_agent.py` 的规则审查不得被可选 LLM 审查覆盖。
+5. `workflow_service.py` 必须保存失败原因，让前端实时状态能展示。
 
-- [ ] 函数不超过 40 行
-- [ ] 条件分支不超过 3 层嵌套
-- [ ] 无 `as _mc` / `as _sys` 等无意义别名
+## 文档审查规则
 
----
+1. README、minitasks、setup、TECH_STACK 和 `docs/*.md` 必须描述同一套当前架构。
+2. 产品文档不保留已删除生成路线的操作说明。
+3. 任何新增环境变量都要同时更新 `setup.md` 和 `TECH_STACK.md`。
+4. 任何影响用户流程的前端变化都要更新 README 的用户使用过程。
 
-## 三、特定文件审查规则
+## 端到端人工验收
 
-### `workflow_service.py`
+每次改动格式或导出相关代码后，至少用一个真实招标文件跑：
 
-```
-规则 1: 导出只在一个地方发生 → confirm_project
-规则 2: 格式 DOCX 构建只在 generation 阶段 → generate_v2_bid_package
-规则 3: 不得在 run_bid_workflow 里写 MinIO 操作
-```
-
-### `v2_generation_service.py`
-
-```
-规则 1: original_format_docx_available=True 时跳过文本管线
-规则 2: format_docx_path 必须设到 V2BidPackage 并持久化到 state
-规则 3: Content Writer 节点数 ≥ 7
-```
-
-### `generation_service.py`
-
-```
-规则 1: original_format_path 存在时直接 copy，不重画 Markdown
-规则 2: 上传三卷 DOCX → commercial.docx / technical.docx / pricing.docx
-```
-
-### Prompt 文件 (`prompts/generator_prompt.py`)
-
-```
-规则 1: 每节 ≥ 8 段
-规则 2: 必须包含具体工程参数、操作步骤、应急预案
-规则 3: 禁止"根据实际情况""视情况而定"等模糊表述
-```
-
----
-
-## 四、审查流程
-
-```
-1. 作者自审（按检查清单跑一遍）
-2. AI 审查（跑 tests + 读 diff + 输出检查报告）
-3. 人工确认（看 AI 报告，逐条确认）
-4. 合并 → 重启后端 → 端到端测试
-```
-
-## 五、端到端测试标准
-
-每次修改后，用长丰县项目跑一次完整流程：
-
-```
-1. 上传 PDF → 解析 → 选资料 → 生成 → 审查 → 确认 → 下载
-2. 下载的三个 DOCX 检查：
-   - commercial.docx: 段落 > 100, 表格 > 10
-   - technical.docx: 段落 > 150, 表格 > 10, 施工方案 > 1000 字
-   - pricing.docx: 段落 > 50, 表格 > 5
-3. 无页码乱入、无 AI 元文本、无空白占位符
-```
+1. 上传招标文件。
+2. 确认解析结果和格式目录树。
+3. 选择资料。
+4. 生成。
+5. 查看实时状态和审查报告。
+6. 下载完整 DOCX 和三卷 DOCX。
+7. 对照招标文件格式页检查：目录、投标函、授权委托书、投标保函、资格审查表、下划线、签章位、页块拆卷。
+8. 用新点软件做一次导入测试时，记录格式损失项。

@@ -34,19 +34,3 @@ class BidGenerationResult(BaseModel):
     generated_markdown_path: str
     generated_docx_path: str
     quality_report: dict[str, float | int]
-
-
-class BidPackage(BaseModel):
-    commercial_markdown: str = ""
-    technical_markdown: str = ""
-    pricing_markdown: str = ""
-    combined_markdown: str = ""
-    generation_mode: str = "unknown"
-    fallback_reason: str | None = None
-
-    def volume_map(self) -> dict[str, str]:
-        return {
-            "commercial": self.commercial_markdown,
-            "technical": self.technical_markdown,
-            "pricing": self.pricing_markdown,
-        }

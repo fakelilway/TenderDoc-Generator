@@ -1,23 +1,27 @@
-# 正奇历史案例说明
+# 正奇公司风格案例说明
 
-当前仓库内置历史案例优先服务正奇建设市政/公路投标业务，不作为全行业模板库维护，也不作为线上默认结构来源。
+本目录保存离线评估样本和可手动选择的公司风格案例。案例 JSON 不控制线上生成的商务、技术、报价目录，也不替代招标文件格式页。
 
-## 第一版案例方向
+可参考内容：
 
-- 市政工程
-- 公路改建/扩建
-- 交通安全设施养护
-- 商务资格文件
-- 报价文件
+- 技术正文深度。
+- 正奇常用表述。
+- 图片位和图表习惯。
+- 禁用语气。
+- 真实中标标书质量基线。
 
-现有 `road_first_envelope_template.json` 来自公路工程第一信封商务及技术文件样本，可作为公路类项目的离线评估样本或手动选择的风格案例。
+不可参考内容：
 
-后续新增案例应带有清晰标签：
+- 当前项目投标文件目录。
+- 投标函、授权委托书、保函、资格审查表等固定格式。
+- 当前项目人员、证号、金额、日期、电话。
+
+新增案例建议带标签：
 
 - `project_type`: municipal / highway / traffic_safety
-- `specialty`: road / reconstruction / maintenance / guardrail / marking 等
+- `specialty`: road / reconstruction / maintenance / guardrail / marking
 - `volume`: commercial / technical / pricing / combined
 - `region`
 - `project_year`
 
-线上生成时，案例 JSON 不决定章节结构；招标文件格式要求和人工确认目录才是结构来源。
+线上生成时，招标文件原格式页和人工确认结果始终高于案例 JSON。

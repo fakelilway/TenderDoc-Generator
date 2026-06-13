@@ -319,7 +319,7 @@ PDF 中嵌入字体多为子集名，渲染时应映射为常见中文字体：
   },
   "table_bill_of_quantities": {
     "font": "阿里巴巴普惠体",
-    "fallback_font": "宋体",
+    "default_font": "宋体",
     "size_pt": 9,
     "border_pt": 0.5
   },
@@ -380,4 +380,3 @@ backend/
 - Word 自动目录域更新。
 - 复杂图片/证照扫描页插入。
 - 与主 workflow 的直接集成。
-

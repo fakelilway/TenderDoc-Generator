@@ -1,5 +1,7 @@
 from services import generation_service
+from services.original_docx_format_service import PDF_PAGE_MARKER_PREFIX
 from utils.docx_exporter import combine_delivery_volumes
+from docx import Document
 
 
 def test_evaluate_generation_quality_counts_placeholders() -> None:
@@ -85,9 +87,7 @@ def test_export_markdown_for_project_stores_markdown_docx_and_quality(
         "projects/7/generated/bid.docx",
     ]
     assert any("generated_docx_path" in statement for statement, _params in statements)
-    assert any(
-        params and "generated" in params for _statement, params in statements
-    )
+    assert any(params and "generated" in params for _statement, params in statements)
 
 
 def test_export_markdown_for_project_prefers_original_docx_format(
@@ -104,7 +104,9 @@ def test_export_markdown_for_project_prefers_original_docx_format(
         output_path.write_bytes(b"original format docx")
 
     def fail_markdown_to_docx(*args, **kwargs):
-        raise AssertionError("markdown_to_docx should not be used for original DOCX tender")
+        raise AssertionError(
+            "markdown_to_docx should not be used for original DOCX tender"
+        )
 
     monkeypatch.setattr(
         generation_service, "_connect", lambda: _FakeConnection(statements)
@@ -180,3 +182,44 @@ def test_export_markdown_for_project_strips_meta_notes(monkeypatch) -> None:
         assert "施工组织设计" in exported
         assert "投标报价汇总表内容" in exported
     assert captured["title"] == "测试项目投标文件"
+
+
+def test_split_original_pdf_docx_keeps_page_blocks_and_technical_only(tmp_path) -> None:
+    source_path = tmp_path / "format.docx"
+    source = Document()
+    source.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:0:投标文件（商务文件）目录")
+    source.add_paragraph("商务页图层：投标函、授权委托书")
+    source.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:1:投标文件（技术文件）施工组织设计")
+    source.add_paragraph("技术页图层：施工组织设计")
+    source.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:2:投标文件（报价文件）已标价工程量清单")
+    source.add_paragraph("报价页图层：已标价工程量清单")
+    source.save(source_path)
+
+    markdown = combine_delivery_volumes(
+        "测试项目",
+        {
+            "commercial": "# 商务文件\n\n商务正文不应追加到技术卷。",
+            "technical": "# 技术文件\n\n施工组织正文应追加到技术卷。",
+            "pricing": "# 报价文件\n\n报价正文不应追加到技术卷。",
+        },
+    )
+
+    generation_service._split_and_export_volumes(source_path, tmp_path, 7, markdown)
+
+    commercial = "\n".join(
+        p.text for p in Document(tmp_path / "project_7_commercial.docx").paragraphs
+    )
+    technical = "\n".join(
+        p.text for p in Document(tmp_path / "project_7_technical.docx").paragraphs
+    )
+    pricing = "\n".join(
+        p.text for p in Document(tmp_path / "project_7_pricing.docx").paragraphs
+    )
+
+    assert "商务页图层" in commercial
+    assert "技术页图层" not in commercial
+    assert "技术页图层" in technical
+    assert "施工组织正文应追加到技术卷" in technical
+    assert "商务正文不应追加到技术卷" not in technical
+    assert "报价正文不应追加到技术卷" not in technical
+    assert "报价页图层" in pricing

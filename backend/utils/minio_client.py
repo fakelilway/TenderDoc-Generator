@@ -86,5 +86,17 @@ class MinioClient:
         self._ensure_bucket(bucket)
         self.client.remove_object(bucket, object_name)
 
+    def object_exists(self, bucket: str, object_name: str) -> bool:
+        """Check if an object exists in MinIO without downloading it.
+
+        Uses ``stat_object`` which only fetches metadata (a few hundred bytes)
+        instead of ``get_object`` which streams the entire file content.
+        """
+        try:
+            self.client.stat_object(bucket, object_name)
+            return True
+        except Exception:
+            return False
+
 
 minio_client = MinioClient()

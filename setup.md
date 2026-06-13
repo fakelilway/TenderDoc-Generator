@@ -1,6 +1,6 @@
 # TenderDoc-Generator 本地启动与验证指南
 
-本文档说明如何在本地运行当前 MVP。当前版本仍是 localhost 开发部署，但已经包含完整后端、前端、数据库、对象存储、知识库、风格库和工作流。
+本文说明如何在本地运行当前 MVP。当前版本仍是 localhost 开发部署，但已经包含前端、后端、数据库、对象存储、知识库、公司档案、生成工作流和 DOCX 导出。
 
 ## 1. 前置要求
 
@@ -22,57 +22,46 @@ corepack prepare pnpm@10.32.0 --activate
 
 ## 2. 首次安装
 
-在仓库根目录运行：
-
 ```bash
 ./scripts/setup_local.sh
 ```
 
-脚本会做这些事：
+脚本会创建或复用根目录 `.venv`、安装后端依赖、安装前端依赖、启动 PostgreSQL/Redis/MinIO，并应用 `backend/init_db.sql`。
 
-- 如果 `backend/.env` 不存在，从 `backend/.env.example` 复制一份。
-- 创建或复用根目录 `.venv`。
-- 安装后端 Python 依赖。
-- 安装前端 pnpm 依赖。
-- 启动 PostgreSQL/Redis/MinIO。
-- 应用 `backend/init_db.sql`。
-
-如果遇到旧虚拟环境里 `pip` 损坏或缺失：
+如果虚拟环境里的 `pip` 损坏或缺失：
 
 ```bash
 RESET_VENV=1 ./scripts/setup_venv.sh
-```
-
-然后再运行：
-
-```bash
 ./scripts/setup_local.sh
 ```
 
 ## 3. 环境变量
 
-真实 LLM 解析/生成需要编辑 `backend/.env`。本项目当前通过 OpenAI SDK 兼容 OpenRouter/DeepSeek：
-
-```env
-OPENROUTER_API_KEY=sk-or-v1-your-key
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=deepseek/deepseek-v4-pro
-BID_LLM_PROVIDER=auto
-BID_GENERATION_MODE=v2
-PARSER_LLM_TIMEOUT_SECONDS=180
-# 生成跑在后台线程，v2 会复制招标文件格式原文骨架，再由 Form Filler / Content Writer 填内容并三层审计
-BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
-BID_LONG_CONTEXT_MAX_TOKENS=12000
-```
-
-如需绕开 OpenRouter 直连 DeepSeek：
+编辑 `backend/.env`。推荐直连 DeepSeek 时：
 
 ```env
 DEEPSEEK_API_KEY=sk-your-deepseek-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
 BID_LLM_PROVIDER=deepseek
 PARSER_LLM_TIMEOUT_SECONDS=180
+BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
+BID_LONG_CONTEXT_MAX_TOKENS=100000
 ```
+
+使用 OpenRouter 时：
+
+```env
+OPENROUTER_API_KEY=sk-or-your-key
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=deepseek/deepseek-v4-pro
+BID_LLM_PROVIDER=openrouter
+PARSER_LLM_TIMEOUT_SECONDS=180
+BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
+BID_LONG_CONTEXT_MAX_TOKENS=100000
+```
+
+`BID_LLM_PROVIDER=auto` 会优先使用 OpenRouter key，没有 OpenRouter key 时使用 DeepSeek key。为了避免看错计费后台，测试某个供应商时请显式设置 `deepseek` 或 `openrouter`。
 
 基础服务默认值：
 
@@ -87,7 +76,7 @@ EMBEDDING_DIMENSION=1024
 JWT_SECRET=change-me
 ```
 
-如果首次运行 embedding 较慢，是在下载本地向量模型。国内网络可临时设置：
+首次运行 embedding 如果下载慢，可临时设置：
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
@@ -106,133 +95,101 @@ export HF_ENDPOINT=https://hf-mirror.com
 - 后端健康检查：http://localhost:8000/health
 - MinIO Console：http://localhost:9001
 
-MinIO 默认账号密码：
-
-```text
-minioadmin / minioadmin
-```
-
 默认管理员账号：
 
 ```text
 admin / tenderdoc
 ```
 
-`Ctrl+C` 会停止后端和前端开发服务，Docker 容器会继续在后台运行。
-
-## 5. 拆分启动命令
-
-```bash
-# 启动 Docker 并应用数据库 schema
-./scripts/init_db.sh
-
-# 只启动后端
-./scripts/start_backend.sh
-
-# 只启动前端
-./scripts/start_frontend.sh
-
-# 只安装/更新后端虚拟环境
-./scripts/setup_venv.sh
-
-# 只安装前端依赖
-./scripts/setup_frontend.sh
-```
-
-端口可临时覆盖：
+如果端口被占用：
 
 ```bash
 BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
 ```
 
+## 5. 拆分启动命令
+
+```bash
+./scripts/init_db.sh
+./scripts/start_backend.sh
+./scripts/start_frontend.sh
+./scripts/setup_venv.sh
+./scripts/setup_frontend.sh
+```
+
 ## 6. 验证命令
 
-后端全量测试：
+后端：
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
 ```
 
-前端验证：
+前端：
 
 ```bash
 pnpm --dir frontend typecheck
 pnpm --dir frontend build
 ```
 
-不要把 `typecheck` 和 `build` 并行跑。Next.js build 会重建 `.next/types`，并行时 typecheck 可能读到临时缺失的类型文件。
+不要并行跑 `typecheck` 和 `build`，Next.js build 会重建 `.next/types`。
 
-基础服务 smoke：
+基础服务：
 
 ```bash
 .venv/bin/python backend/test_db.py
 .venv/bin/python backend/test_redis.py
 .venv/bin/python backend/test_minio.py
+curl -fsS http://localhost:8000/health
+curl -fsSI http://localhost:3000
 ```
 
-LLM 和 embedding smoke：
+LLM 和 embedding：
 
 ```bash
 .venv/bin/python backend/test_llm.py
 .venv/bin/python backend/test_embedding.py
 ```
 
-健康检查：
-
-```bash
-curl -fsS http://localhost:8000/health
-curl -fsSI http://localhost:3000
-```
-
-最近一次完整验证：
-
-- `.venv/bin/python -m pytest backend/tests -q`：`236 passed, 2 skipped`（2026-06-13）
-- `pnpm --dir frontend typecheck`：通过
-- `pnpm --dir frontend build`：通过
-
 ## 7. 本地端到端流程
 
 1. 运行 `./scripts/dev_local.sh`。
 2. 打开 http://localhost:3000。
-3. 使用 `admin / tenderdoc` 登录。
-4. 可选进入风格库，上传脱敏历史投标 PDF 作为公司风格案例；新项目默认不套任何案例。
-5. 进入知识库，上传少量测试资料并填写结构化标签。
+3. 用管理员账号登录。
+4. 可选进入公司档案，补齐投标人名称、统一社会信用代码、资质、账户、项目班子等信息。
+5. 进入知识库，上传少量公司证件、人员证件、业绩、技术方案和图片资料，并填写标签。
 6. 创建项目并上传招标文件 PDF/DOCX/TXT。
-7. 查看并确认解析结果。
-8. 生成并调整投标文件大纲。
-9. 在资料选择面板筛选并勾选需要进入本次投标的企业资料。
-10. 开始生成，后端会先用 `format_outline_tree` 构建商务/技术/报价三卷确定性骨架，并从招标文件格式章节抽取函件/表格原文模板；随后 multi-agent 只在骨架内填内容。格式要求来自招标文件和人工确认目录，风格案例仅在主动选择时参考。
-11. 查看审查报告、响应矩阵、评分预测和报价策略。
+7. 查看并确认解析结果，重点核对项目名、招标人、工期、质量、资质、评分项、废标项和格式目录树。
+8. 调整技术大纲和资料选择。
+9. 点击生成。后端会复制招标文件格式页，填已知字段，写技术正文并审查。
+10. 查看实时状态和失败原因。失败时修正配置、资料或解析结果后重试。
+11. 查看预览、审查报告、响应矩阵、评分预测和报价策略。
 12. 在线编辑正文，保存后重新审查。
 13. 终审确认后下载 DOCX、Markdown 或审查报告。
 
 ## 8. 知识库格式与预览
 
-当前上传接口主要支持：
+上传和预览支持：
 
 - 文本索引：PDF、DOCX、TXT。
 - 图片资料：JPG、JPEG、PNG。
-- 预览：文本资料显示提取文本，图片显示原图，PDF 提供预览类型，其他文件作为附件记录。
+- 预览：文本显示提取内容，图片显示原图，PDF 和其他文件作为附件查看。
 
-知识库不是单纯文件夹。上传时请尽量填写 metadata：
+上传时建议填写：
 
-- 项目类型、资料类别、册别、专业、地区、年份。
-- 人员/公司/项目归属和证书类型。
-- 有效期、敏感级别、使用范围、核验状态。
-- 图片是否允许插入标书。
+- `project_type`：市政工程、公路工程、交通安全设施养护等。
+- `document_category`：人员证件、公司证件、业绩、施工方案、表格附件、图片资料。
+- `volume`：商务文件、技术文件、报价文件、资格文件、完整投标文件。
+- `specialty`：道路、排水、桥梁、交安、养护、管网等。
+- `owner_type` / `owner_name`：公司、人员、项目、设备等归属。
+- `certificate_type`：建造师证、身份证、毕业证、建安证、交安证、职称证书、社保、营业执照、资质证书、安全生产许可证、开户许可证。
+- `valid_from` / `valid_to`：证件有效期。
+- `sensitivity`：公开、内部、敏感、严格受限。
+- `usage_scope`：可用于投标、仅参考、仅归档。
+- `verified_status`：已核验、待核验、已过期、需更新。
+- `image_insertable`：图片是否允许进入标书候选。
 
-这些字段会影响：
-
-- 知识库页面筛选。
-- 标书生成前的资料选择。
-- RAG 检索过滤。
-- 图片插入候选。
-- `EvidencePack` 分类：公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据。
-- `BidPlan` 分配：每个章节可用哪些知识片段、哪些图片候选、是否需要表格。
-- 分卷/节点生成：已选资料、关键文本片段和可插入图片清单会作为证据进入对应分卷或节点，减少上下文错配。
-- 后续审计、过期提醒和资料治理。
-
-批量整理和导入建议先走 manifest：
+批量整理：
 
 ```bash
 .venv/bin/python backend/scripts/prepare_knowledge_manifest.py \
@@ -242,7 +199,7 @@ curl -fsSI http://localhost:3000
   --copy-to "/path/to/04_知识库_整理后"
 ```
 
-确认 manifest 后再导入本地知识库：
+确认 manifest 后导入：
 
 ```bash
 .venv/bin/python backend/scripts/prepare_knowledge_manifest.py \
@@ -252,17 +209,17 @@ curl -fsSI http://localhost:3000
   --import-report "/path/to/knowledge_import_report.csv"
 ```
 
-默认会跳过 `review_required=true` 的资料；样本试导或已人工确认时才加 `--include-review-required`。脚本不会改动原始资料目录，`--copy-to` 只生成整理后的副本。
+脚本不会改动原始资料目录，`--copy-to` 只生成整理后的副本。
 
-## 9. 风格案例与离线脚本
+## 9. 风格案例与评估脚本
 
-导入历史案例样本到风格库：
+导入公司风格案例样本：
 
 ```bash
 .venv/bin/python backend/scripts/seed_default_template.py
 ```
 
-从真实历史投标 PDF 抽取脱敏案例 JSON：
+从真实投标 PDF 抽取脱敏案例 JSON：
 
 ```bash
 .venv/bin/python backend/scripts/extract_bid_template.py "/path/to/投标文件.pdf" \
@@ -277,21 +234,10 @@ curl -fsSI http://localhost:3000
   --out-json data/pdf_format_analysis.json
 ```
 
-离线生成 demo：
-
-```bash
-.venv/bin/python scripts/generate_bid.py --demo --output-dir data/output/demo
-```
-
 质量评估：
 
 ```bash
 .venv/bin/python backend/scripts/run_quality_eval.py
-```
-
-AI 标书与真实模板差距评估：
-
-```bash
 .venv/bin/python backend/scripts/run_bid_gap_eval.py \
   --ai /path/to/generated.docx \
   --reference backend/templates/bid_templates/road_first_envelope_template.json
@@ -299,51 +245,41 @@ AI 标书与真实模板差距评估：
 
 ## 10. 常见问题
 
-### 端口被占用
-
-默认端口：
-
-- PostgreSQL：5432
-- Redis：6379
-- MinIO：9000 / 9001
-- Backend：8000
-- Frontend：3000
-
-临时换端口：
+### 后端或前端端口被占用
 
 ```bash
+lsof -i :8000
+lsof -i :3000
 BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
 ```
 
-Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `backend/.env`。
-
-### LLM 返回 401
+### LLM 没有计费记录
 
 检查：
 
-- `OPENROUTER_API_KEY` 是否正确。
-- OpenRouter 账户是否有额度。
-- `OPENROUTER_MODEL` 是否可用。
-- `BID_GENERATION_MODE` 是否为 `v2`。
-- 招标文件是否包含可识别的“投标文件格式/响应文件格式”章节；当前版本不走生成 fallback，格式章节缺失会直接失败。
-- 公司网络是否拦截外部 API。
+- `BID_LLM_PROVIDER` 是否指向你想看的供应商。
+- `DEEPSEEK_API_KEY` 或 `OPENROUTER_API_KEY` 是否设置在 `backend/.env`。
+- 后端是否重启并读取了新的 `.env`。
+- 生成失败是否发生在调用 LLM 之前，例如格式章节未定位、文件解析失败、审查拦截。
+
+### 生成失败但进度条还在动
+
+以实时状态里的最新失败原因为准。后端后台任务和前端轮询可能有几秒延迟，刷新后会以数据库保存状态为准。
 
 ### MinIO 下载链接打不开
-
-检查容器状态：
 
 ```bash
 docker compose ps
 ```
 
-检查配置：
+确认：
 
 ```env
 MINIO_API_URL=http://localhost:9000
 MINIO_BUCKET=tender-files
 ```
 
-### 想重置本地数据
+### 重置本地数据
 
 这会删除本地数据库和对象存储 volume：
 
@@ -351,10 +287,6 @@ MINIO_BUCKET=tender-files
 docker compose down -v
 ./scripts/init_db.sh
 ```
-
-### Git 提示 gc.log / loose objects
-
-这通常是本地 Git 仓库维护警告，不影响运行、测试或 push。不要在不了解影响时随手删历史或 reset；需要清理时单独处理。
 
 ## 11. 脚本清单
 
@@ -367,17 +299,12 @@ docker compose down -v
 | `scripts/setup_frontend.sh` | 安装前端依赖 |
 | `scripts/start_backend.sh` | 只启动 FastAPI |
 | `scripts/start_frontend.sh` | 只启动 Next.js |
-| `scripts/generate_bid.py` | 离线生成脱敏标书 demo |
 | `scripts/analyze_pdf_format.py` | 分析真实 PDF 格式特征 |
-| `scripts/index_bid_templates.sh` | 将模板资料索引到本地知识库 |
-| `backend/scripts/seed_default_template.py` | 导入历史案例样本到风格库 |
-| `backend/scripts/extract_bid_template.py` | 从历史投标 PDF 抽取案例 JSON |
+| `scripts/index_bid_templates.sh` | 将风格案例资料索引到本地知识库 |
+| `backend/scripts/seed_default_template.py` | 导入公司风格案例样本 |
+| `backend/scripts/extract_bid_template.py` | 从真实投标 PDF 抽取案例 JSON |
 | `backend/scripts/prepare_knowledge_manifest.py` | 批量生成知识库命名/标签 manifest，并可导入本地知识库 |
 | `backend/scripts/run_quality_eval.py` | 运行质量评估集 |
-| `backend/scripts/run_bid_gap_eval.py` | 评估 AI 标书与真实模板差距 |
+| `backend/scripts/run_bid_gap_eval.py` | 评估生成稿与真实样本差距 |
 
----
-
-**文档版本**：3.0
-**最后更新**：2026-06-11
-**维护者**：TenderDoc-Generator 团队
+**最后更新：** 2026-06-14

@@ -328,6 +328,13 @@ def delete_project(project_id: int) -> None:
                 minio_client.remove_file(settings.minio_bucket, object_key)
             except Exception:
                 pass
+    # Clean up volume DOCX files and delivery artifacts
+    for vol in ("commercial", "technical", "pricing"):
+        vol_key = f"projects/{project_id}/generated/{vol}.docx"
+        try:
+            minio_client.remove_file(settings.minio_bucket, vol_key)
+        except Exception:
+            pass
 
     with _connect() as conn:
         with conn.cursor() as cursor:
@@ -577,9 +584,6 @@ def confirm_parsed_result(
     project_id: int, parsed_json: dict[str, Any]
 ) -> dict[str, Any]:
     confirmed_model = TenderRequirements.model_validate(parsed_json)
-    if not confirmed_model.bid_format_requirements.strip():
-        message = "未确认投标文件格式要求。请从招标文件中补充投标文件组成、必交表单、" "签字盖章、正副本、密封/电子标等要求后再确认。"
-        raise ValueError(message)
     confirmed = confirmed_model.model_dump()
     with _connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -1301,12 +1305,9 @@ def _export_delivery_artifact(
         # Check if pre-built volume DOCX exists (V2 original format path)
         from core.config import get_settings as _gs
         prebuilt = f"projects/{project_id}/generated/{volume}.docx"
-        try:
-            from utils.minio_client import minio_client as _mcl
-            _mcl.download_bytes(_gs().minio_bucket, prebuilt)  # Probe existence
+        object_exists = getattr(minio_client, "object_exists", None)
+        if object_exists and object_exists(_gs().minio_bucket, prebuilt):
             return prebuilt
-        except Exception:
-            pass  # Fall back to markdown generation
     if volume:
         markdown = _delivery_volumes(project)[volume]
         label = _DELIVERY_VOLUME_LABELS[volume]

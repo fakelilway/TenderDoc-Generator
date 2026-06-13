@@ -437,19 +437,6 @@ def test_build_project_outline_does_not_load_default_template_when_unselected(
     assert all(section["title"] != "一、投标函及投标函附录" for section in document_outline)
 
 
-def test_confirm_parsed_result_requires_bid_format_requirements() -> None:
-    with pytest.raises(ValueError, match="未确认投标文件格式要求"):
-        project_service.confirm_parsed_result(
-            7,
-            {
-                "project_name": "项目",
-                "qualification_list": [],
-                "technical_score_items": [],
-                "invalid_bid_items": [],
-            },
-        )
-
-
 def test_confirm_parsed_result_updates_workflow_snapshot(monkeypatch) -> None:
     cursor = FakeCursor(
         [

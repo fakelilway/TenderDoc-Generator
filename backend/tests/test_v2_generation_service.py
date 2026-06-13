@@ -11,10 +11,7 @@ from schemas.tender import FormatOutlineNode, TenderRequirements
 
 def test_form_filler_handles_common_tender_placeholders() -> None:
     result = fill_page_template(
-        "致：（招标人）\n"
-        "我方已仔细研究（招标项目名称） 标段招标文件。\n"
-        "3.质量标准： ；工期： 日历天。\n"
-        "投 标 人： （盖单位章）",
+        "致：（招标人）\n" "我方已仔细研究（招标项目名称） 标段招标文件。\n" "3.质量标准： ；工期： 日历天。\n" "投 标 人： （盖单位章）",
         {
             "招标人": "长丰县罗塘乡人民政府",
             "项目名称": "长丰县罗塘乡2025年度美丽宜居村庄建设项目",
@@ -63,7 +60,13 @@ def test_v2_technical_volume_uses_writer_content_without_repeating_format_page(
     monkeypatch.setattr(
         v2_generation_service,
         "extract_format_pages",
-        lambda _text: {"commercial": [FormatPage("一、施工组织设计", "投标文件（技术文件）\n投标人应按评审因素编制。", "prose_section", "technical")]},
+        lambda _text: {
+            "commercial": [
+                FormatPage(
+                    "一、施工组织设计", "投标文件（技术文件）\n投标人应按评审因素编制。", "prose_section", "technical"
+                )
+            ]
+        },
     )
     monkeypatch.setattr(
         v2_generation_service,
@@ -186,7 +189,13 @@ def test_v2_does_not_reconstruct_bidder_basic_info_table(monkeypatch) -> None:
     monkeypatch.setattr(
         v2_generation_service,
         "extract_format_pages",
-        lambda _text: {"commercial": [FormatPage("一、投标人基本情况表", "投标人名称\n注册地址 邮政编码", "table_template", "commercial")]},
+        lambda _text: {
+            "commercial": [
+                FormatPage(
+                    "一、投标人基本情况表", "投标人名称\n注册地址 邮政编码", "table_template", "commercial"
+                )
+            ]
+        },
     )
     monkeypatch.setattr(
         v2_generation_service,
@@ -227,7 +236,16 @@ def test_v2_raises_when_locked_table_cannot_be_copied_exactly(monkeypatch) -> No
     monkeypatch.setattr(
         v2_generation_service,
         "extract_format_pages",
-        lambda _text: {"commercial": [FormatPage("一、投标人基本情况表", "投标人名称\n注册地址 邮政编码\n联系方式 联系人 电话\n________", "table_template", "commercial")]},
+        lambda _text: {
+            "commercial": [
+                FormatPage(
+                    "一、投标人基本情况表",
+                    "投标人名称\n注册地址 邮政编码\n联系方式 联系人 电话\n________",
+                    "table_template",
+                    "commercial",
+                )
+            ]
+        },
     )
     monkeypatch.setattr(
         v2_generation_service,
@@ -246,7 +264,7 @@ def test_v2_raises_when_locked_table_cannot_be_copied_exactly(monkeypatch) -> No
         },
     )
 
-    with pytest.raises(ValueError, match="锁定格式未达到招标文件原样要求"):
+    with pytest.raises(ValueError, match="审查未通过"):
         v2_generation_service.generate_v2_bid_package(
             requirements,
             {},
@@ -255,7 +273,7 @@ def test_v2_raises_when_locked_table_cannot_be_copied_exactly(monkeypatch) -> No
         )
 
 
-def test_v2_allows_locked_format_audit_fail_when_original_docx_export_available(
+def test_v2_skips_reconstructed_format_audit_when_original_export_available(
     monkeypatch,
 ) -> None:
     requirements = TenderRequirements(project_name="测试项目")
@@ -263,7 +281,16 @@ def test_v2_allows_locked_format_audit_fail_when_original_docx_export_available(
     monkeypatch.setattr(
         v2_generation_service,
         "extract_format_pages",
-        lambda _text: {"commercial": [FormatPage("一、投标人基本情况表", "投标人名称\n注册地址 邮政编码\n联系方式 联系人 电话\n________", "table_template", "commercial")]},
+        lambda _text: {
+            "commercial": [
+                FormatPage(
+                    "一、投标人基本情况表",
+                    "投标人名称\n注册地址 邮政编码\n联系方式 联系人 电话\n________",
+                    "table_template",
+                    "commercial",
+                )
+            ]
+        },
     )
     monkeypatch.setattr(
         v2_generation_service,
@@ -280,6 +307,20 @@ def test_v2_allows_locked_format_audit_fail_when_original_docx_export_available(
             "technical": [],
             "pricing": [],
         },
+    )
+    monkeypatch.setattr(
+        v2_generation_service,
+        "fill_technical_volume",
+        lambda **_kwargs: v2_generation_service.VolumeFillResult(
+            volume="technical",
+            combined=(
+                "测试项目施工组织设计正文。\n"
+                "施工部署严格响应招标文件。\n"
+                "质量、安全、进度、环保措施完整。\n"
+                "机械人员投入结合项目特点安排。\n"
+                "竣工资料和缺陷修复按合同执行。"
+            ),
+        ),
     )
 
     package = v2_generation_service.generate_v2_bid_package(
@@ -291,7 +332,48 @@ def test_v2_allows_locked_format_audit_fail_when_original_docx_export_available(
     )
 
     assert package.audit_result is not None
-    assert not package.audit_result.passed
+    assert package.audit_result.format_issues == []
+    assert package.commercial_markdown == "# 测试项目 商务文件\n"
+
+
+def test_v2_original_format_fails_when_content_writer_fails(monkeypatch) -> None:
+    requirements = TenderRequirements(project_name="测试项目")
+
+    def fail_writer(**_kwargs):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(v2_generation_service, "fill_technical_volume", fail_writer)
+
+    with pytest.raises(ValueError, match="施工方案正文生成失败"):
+        v2_generation_service.generate_v2_bid_package(
+            requirements,
+            {},
+            company_name="安徽正奇建设有限公司",
+            tender_text="第八章 投标文件格式",
+            original_format_docx_available=True,
+        )
+
+
+def test_v2_raises_when_pdf_original_format_copy_fails(monkeypatch) -> None:
+    requirements = TenderRequirements(project_name="测试项目")
+
+    def fail_copy(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "services.original_docx_format_service.build_original_format_docx_from_pdf",
+        fail_copy,
+    )
+
+    with pytest.raises(ValueError, match="PDF 招标文件原格式复制失败"):
+        v2_generation_service.generate_v2_bid_package(
+            requirements,
+            {},
+            company_name="安徽正奇建设有限公司",
+            tender_text="第八章 投标文件格式",
+            original_format_docx_available=True,
+            tender_bytes=b"not a pdf",
+        )
 
 
 def test_v2_does_not_turn_bid_letters_into_generic_tables(monkeypatch) -> None:
@@ -300,7 +382,16 @@ def test_v2_does_not_turn_bid_letters_into_generic_tables(monkeypatch) -> None:
     monkeypatch.setattr(
         v2_generation_service,
         "extract_format_pages",
-        lambda _text: {"commercial": [FormatPage("一、投标函", "致：（招标人）\n我方已仔细研究（招标项目名称）招标文件。", "letter_template", "commercial")]},
+        lambda _text: {
+            "commercial": [
+                FormatPage(
+                    "一、投标函",
+                    "致：（招标人）\n我方已仔细研究（招标项目名称）招标文件。",
+                    "letter_template",
+                    "commercial",
+                )
+            ]
+        },
     )
     monkeypatch.setattr(
         v2_generation_service,
@@ -356,14 +447,20 @@ def test_v2_inserts_pagebreak_before_each_top_level_format_page(monkeypatch) -> 
         lambda _text: {
             "commercial": [
                 FormatPage("一、投标函", "致：（招标人）", "letter_template", "commercial"),
-                FormatPage("二、授权委托书", "本人（姓名）系（投标人名称）的法定代表人。", "letter_template", "commercial"),
+                FormatPage(
+                    "二、授权委托书", "本人（姓名）系（投标人名称）的法定代表人。", "letter_template", "commercial"
+                ),
             ]
         },
     )
     monkeypatch.setattr(
         v2_generation_service,
         "assign_page_volumes",
-        lambda pages, _requirements: {"commercial": pages, "technical": [], "pricing": []},
+        lambda pages, _requirements: {
+            "commercial": pages,
+            "technical": [],
+            "pricing": [],
+        },
     )
     monkeypatch.setattr(
         v2_generation_service,

@@ -10,8 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from openai import OpenAI
+
 from core.config import get_settings
-from agents.generator_agent import _generate_messages_with_llm
 from prompts.generator_prompt import build_node_fill_prompt
 
 
@@ -90,17 +91,27 @@ def _clean_node_content(raw: str, title: str) -> str:
 
     # Remove if LLM repeated the heading
     heading_patterns = [
-        f"# {title}", f"## {title}", f"### {title}",
-        f"# {title.lstrip('#').strip()}", f"## {title.lstrip('#').strip()}",
+        f"# {title}",
+        f"## {title}",
+        f"### {title}",
+        f"# {title.lstrip('#').strip()}",
+        f"## {title.lstrip('#').strip()}",
     ]
     for pattern in heading_patterns:
         if text.startswith(pattern):
-            text = text[len(pattern):].strip()
+            text = text[len(pattern) :].strip()
 
     # Remove AI meta-text
     bad_prefixes = [
-        "好的，", "以下是为您", "这是", "根据您的要求",
-        "以下是", "【待填写】", "待补充", "TODO", "（注：",
+        "好的，",
+        "以下是为您",
+        "这是",
+        "根据您的要求",
+        "以下是",
+        "【待填写】",
+        "待补充",
+        "TODO",
+        "（注：",
     ]
     for bp in bad_prefixes:
         if text.startswith(bp):
@@ -108,7 +119,73 @@ def _clean_node_content(raw: str, title: str) -> str:
             for sep in ["。\n", "。\n\n", "。"]:
                 idx = text.find(sep)
                 if idx > 10 and idx < 200:
-                    text = text[idx + len(sep):].strip()
+                    text = text[idx + len(sep) :].strip()
                     break
 
     return text
+
+
+def _generate_messages_with_llm(
+    messages: list[dict[str, str]],
+    *,
+    agent_name: str,
+    continuation_instruction: str = "",
+) -> str:
+    settings = get_settings()
+    api_key, base_url, model = _get_llm_client_config()
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.2,
+        max_tokens=settings.bid_long_context_max_tokens,
+        timeout=settings.bid_long_context_timeout_seconds,
+    )
+    if not response.choices:
+        raise RuntimeError(f"{agent_name} response did not contain choices")
+    content = response.choices[0].message.content or ""
+    if not content.strip():
+        raise RuntimeError(f"{agent_name} response was empty")
+    return content
+
+
+def _has_real_key(value: str) -> bool:
+    return bool(value and value.strip() and "xxxx" not in value.lower())
+
+
+def _get_llm_client_config() -> tuple[str, str, str]:
+    settings = get_settings()
+    provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
+    if provider == "deepseek":
+        if _has_real_key(settings.deepseek_api_key):
+            return (
+                settings.deepseek_api_key,
+                settings.deepseek_base_url,
+                settings.deepseek_model,
+            )
+        raise RuntimeError(
+            "DEEPSEEK_API_KEY is required when BID_LLM_PROVIDER=deepseek"
+        )
+    if provider == "openrouter":
+        if _has_real_key(settings.openrouter_api_key):
+            return (
+                settings.openrouter_api_key,
+                settings.openrouter_base_url,
+                settings.openrouter_model,
+            )
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is required when BID_LLM_PROVIDER=openrouter"
+        )
+    if _has_real_key(settings.openrouter_api_key):
+        return (
+            settings.openrouter_api_key,
+            settings.openrouter_base_url,
+            settings.openrouter_model,
+        )
+    if _has_real_key(settings.deepseek_api_key):
+        return (
+            settings.deepseek_api_key,
+            settings.deepseek_base_url,
+            settings.deepseek_model,
+        )
+    raise RuntimeError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")

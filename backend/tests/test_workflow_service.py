@@ -1,8 +1,9 @@
 from rag.retriever import RetrievalResult
-from schemas.bid import BidPackage, BidSectionOutline
+from schemas.bid import BidSectionOutline
 from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import workflow_service
+from services.v2_generation_service import V2BidPackage
 from utils.docx_exporter import VOLUME_MARKERS, combine_delivery_volumes
 
 
@@ -139,7 +140,6 @@ def test_start_bid_workflow_waits_for_outline_confirmation(monkeypatch) -> None:
 
 
 def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) -> None:
-    monkeypatch.setattr(workflow_service.settings, "bid_generation_mode", "multi_agent")
     saved_states = []
     persisted_states = []
     status_updates = []
@@ -173,8 +173,8 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     )
     monkeypatch.setattr(
         workflow_service,
-        "generate_bid_package",
-        lambda requirements, chunks, bid_template=None, pricing_strategy=None, knowledge_images=None, bid_plan=None, tender_text="", company_profile=None, document_outline=None: BidPackage(
+        "generate_v2_bid_package",
+        lambda requirements, chunks, **kwargs: V2BidPackage(
             commercial_markdown="# 商务文件\n\n项目经理具备一级建造师。\n\n投标保证金已响应。",
             technical_markdown="# 技术文件\n\n## 施工组织设计\n\n项目经理具备一级建造师。",
             pricing_markdown="# 报价文件\n\n投标保证金已响应。",
@@ -349,7 +349,7 @@ def test_confirm_project_applies_human_corrections(monkeypatch) -> None:
     monkeypatch.setattr(
         workflow_service.generation_service,
         "export_markdown_for_project",
-        lambda project_id, markdown, quality: exported.append((markdown, quality)),
+        lambda project_id, markdown, quality, **kwargs: exported.append((markdown, quality)),
     )
 
     state = workflow_service.confirm_project(
@@ -401,7 +401,7 @@ def test_confirm_project_applies_corrections_on_top_of_edited_markdown(
     monkeypatch.setattr(
         workflow_service.generation_service,
         "export_markdown_for_project",
-        lambda project_id, markdown, quality: exported.append(markdown),
+        lambda project_id, markdown, quality, **kwargs: exported.append(markdown),
     )
 
     state = workflow_service.confirm_project(

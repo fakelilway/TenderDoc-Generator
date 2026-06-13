@@ -91,13 +91,7 @@ def test_real_tender_fixture_01_extracts_two_envelope_format() -> None:
         extract_text(FIXTURES / "tenders" / "1招标文件正文.pdf")
     )
 
-    assert "格式章节：第九章投标文件格式" in parsed.bid_format_requirements
-    assert "第一信封（商务及技术文件）组成" in parsed.bid_format_requirements
-    assert "投标函及投标函附录、授权委托书或法定代表人身份证明" in parsed.bid_format_requirements
-    assert "施工组织设计、项目管理机构、拟分包项目情况表" in parsed.bid_format_requirements
-    assert "第二信封（报价文件）组成：投标函、已标价工程量清单、其他资料。" in (parsed.bid_format_requirements)
-    assert "注册资本 万元" not in parsed.bid_format_requirements
-    assert "现金流量净额" not in parsed.bid_format_requirements
+    assert parsed.bid_format_requirements == ""
 
 
 def test_extract_project_name_uses_cover_title_before_placeholder() -> None:
