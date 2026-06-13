@@ -5,9 +5,15 @@
 
 ---
 
-## 当前状态 (2026-06-13 20:54)
+## 当前状态 (2026-06-13 21:50)
 
-**WorkBuddy 最后操作:** 清理了 `generator_agent.py` 中的重复 `render_all_volume_skeletons`（该函数已由 codex 在 `format_skeleton_service.py` 中实现并导入），修复了测试，并将 `source` 归一化 fix 合并进 parser。
+**当前 push:** `89d8ac2` — Pass 1 彻底去 LLM（确定性比对），enforce_skeleton_headings，前端失败显示
+
+**关键发现：** 今天多数"LLM删节点"是审计幻觉假阳性——节点本不存在于格式树，LLM审计想象它存在。已修：确定性pass直接过。
+
+**下一版本:** V2 原文复制骨架 — 见 `minitasks.md` V2-M1~V2-M7
+
+**原则铁律:** 结构 > 提示词；原文 > 代码生成；代码 > LLM
 
 **当前 main commit:** `6a30a51` (docs) + 本地未 push 的改动
 

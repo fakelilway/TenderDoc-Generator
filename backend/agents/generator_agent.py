@@ -489,16 +489,9 @@ def generate_bid_package_multi_agent(
             volumes=volumes,
         )
         if _audit_passed(structure_audit):
-            structure_audit = _run_structure_audit_with_llm(
-                requirements=requirements,
-                company_name=company_name,
-                document_outline=document_outline,
-                framework_brief=framework_brief,
-                commercial_markdown=volumes["commercial"],
-                technical_markdown=volumes["technical"],
-                pricing_markdown=volumes["pricing"],
-            )
-        if _audit_passed(structure_audit):
+            # Deterministic audit passed — structure is correct. LLM audit adds
+            # no value here and can hallucinate false positives ("二、其他内容"
+            # when the format tree doesn't actually contain this node).
             break
         if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
             raise GeneratorAgentError(
