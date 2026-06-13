@@ -1297,6 +1297,16 @@ def _export_delivery_artifact(
     markdown = _delivery_markdown_source(project)
     project_id = project["id"]
     title = project.get("name") or "投标文件"
+    if volume and suffix == "docx":
+        # Check if pre-built volume DOCX exists (V2 original format path)
+        from core.config import get_settings as _gs
+        prebuilt = f"projects/{project_id}/generated/{volume}.docx"
+        try:
+            from utils.minio_client import minio_client as _mcl
+            _mcl.download_bytes(_gs().minio_bucket, prebuilt)  # Probe existence
+            return prebuilt
+        except Exception:
+            pass  # Fall back to markdown generation
     if volume:
         markdown = _delivery_volumes(project)[volume]
         label = _DELIVERY_VOLUME_LABELS[volume]
