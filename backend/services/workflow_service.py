@@ -27,6 +27,7 @@ from schemas.tender import TenderRequirements
 from schemas.workflow import WorkflowState, WorkflowTraceEvent
 from services import generation_service
 from services.company_profile_service import get_company_profile
+from services.v2_generation_service import generate_v2_bid_package, V2BidPackage
 from services.project_service import (
     ProjectNotFoundError,
     _connect,
@@ -256,24 +257,44 @@ def run_bid_workflow(
     try:
         company_profile = get_company_profile()["profile"]
     except Exception:
-        # 企业档案缺失不应阻断生成；prompt 退回仅用 COMPANY_NAME
         logger.warning("Company profile unavailable; generating without it")
         company_profile = None
-    bid_package = generate_bid_package(
-        requirements,
-        retrieved_by_section,
-        bid_template,
-        pricing_strategy=pricing_strategy,
-        knowledge_images=knowledge_images,
-        bid_plan=bid_plan,
-        tender_text=state.tender_text,
-        company_profile=company_profile,
-        document_outline=state.document_outline,
-    )
-    state.draft_volumes = bid_package.volume_map()
-    state.draft_markdown = bid_package.combined_markdown
-    generation_mode = bid_package.generation_mode
+
+    gen_mode = getattr(settings, "bid_generation_mode", "multi_agent")
+    if gen_mode == "v2":
+        v2_pkg = generate_v2_bid_package(
+            requirements,
+            retrieved_by_section,
+            company_name=str((company_profile or {}).get("company_name", "") or settings.company_name),
+            tender_text=state.tender_text,
+            company_profile=company_profile,
+        )
+        state.draft_volumes = v2_pkg.volume_map()
+        state.draft_markdown = v2_pkg.combined_markdown
+        generation_mode = "v2_format_copy"
+        if v2_pkg.audit_result:
+            audit_summary = v2_pkg.audit_result.summary
+        else:
+            audit_summary = "审查未执行"
+    else:
+        bid_package = generate_bid_package(
+            requirements,
+            retrieved_by_section,
+            bid_template,
+            pricing_strategy=pricing_strategy,
+            knowledge_images=knowledge_images,
+            bid_plan=bid_plan,
+            tender_text=state.tender_text,
+            company_profile=company_profile,
+            document_outline=state.document_outline,
+        )
+        state.draft_volumes = bid_package.volume_map()
+        state.draft_markdown = bid_package.combined_markdown
+        generation_mode = bid_package.generation_mode
+        audit_summary = ""
     mode_note = f"生成模式：{generation_mode}"
+    if audit_summary:
+        mode_note += f" | {audit_summary}"
     _append_trace(
         state,
         "generate",
