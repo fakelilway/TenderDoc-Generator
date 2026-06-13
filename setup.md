@@ -186,7 +186,7 @@ curl -fsSI http://localhost:3000
 
 最近一次完整验证：
 
-- `.venv/bin/python -m pytest backend/tests -q`：`232 passed, 2 skipped`（2026-06-12）
+- `.venv/bin/python -m pytest backend/tests -q`：`236 passed, 2 skipped`（2026-06-13）
 - `pnpm --dir frontend typecheck`：通过
 - `pnpm --dir frontend build`：通过
 
@@ -201,7 +201,7 @@ curl -fsSI http://localhost:3000
 7. 查看并确认解析结果。
 8. 生成并调整投标文件大纲。
 9. 在资料选择面板筛选并勾选需要进入本次投标的企业资料。
-10. 开始生成，后端会构建 `EvidencePack` 和 `BidPlan`，默认用长上下文模式一次性生成商务/技术/报价三卷；格式要求来自招标文件和人工确认目录，风格案例仅在主动选择时参考。
+10. 开始生成，后端会先用 `format_outline_tree` 构建商务/技术/报价三卷确定性骨架，并从招标文件格式章节抽取函件/表格原文模板；随后 multi-agent 只在骨架内填内容。格式要求来自招标文件和人工确认目录，风格案例仅在主动选择时参考。
 11. 查看审查报告、响应矩阵、评分预测和报价策略。
 12. 在线编辑正文，保存后重新审查。
 13. 终审确认后下载 DOCX、Markdown 或审查报告。
@@ -229,7 +229,7 @@ curl -fsSI http://localhost:3000
 - 图片插入候选。
 - `EvidencePack` 分类：公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据。
 - `BidPlan` 分配：每个章节可用哪些知识片段、哪些图片候选、是否需要表格。
-- 长上下文生成：已选资料、关键文本片段和可插入图片清单会进入同一个生成 prompt，减少分章节链路造成的上下文损失。
+- 分卷/节点生成：已选资料、关键文本片段和可插入图片清单会作为证据进入对应分卷或节点，减少上下文错配。
 - 后续审计、过期提醒和资料治理。
 
 批量整理和导入建议先走 manifest：
@@ -324,7 +324,8 @@ Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `ba
 - `OPENROUTER_API_KEY` 是否正确。
 - OpenRouter 账户是否有额度。
 - `OPENROUTER_MODEL` 是否可用。
-- `BID_GENERATION_MODE` 是否为 `multi_agent` 或 `long_context`；如需回滚可临时改为 `long_context`。
+- `BID_GENERATION_MODE` 是否为 `multi_agent`。
+- `format_outline_tree` 是否完整包含商务、技术、报价三卷；当前版本不走生成 fallback，格式树缺失会直接失败。
 - 公司网络是否拦截外部 API。
 
 ### MinIO 下载链接打不开
