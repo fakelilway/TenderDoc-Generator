@@ -264,14 +264,15 @@ def run_bid_workflow(
 
     gen_mode = getattr(settings, "bid_generation_mode", "multi_agent")
     if gen_mode == "v2":
-        # Download tender bytes for PDF original format conversion
-        tender_bytes = None
-        try:
-            if _is_original_tender_pdf(project):
-                from utils.minio_client import minio_client as _mc
-                tender_bytes = _mc.download_bytes(settings.minio_bucket, str(project.get("tender_file_path", "")))
-        except Exception:
-            pass
+        # Download tender bytes for PDF original format conversion during generation
+        tender_bytes: bytes | None = None
+        if _is_original_tender_pdf(project):
+            import sys as _sys
+            from utils.minio_client import minio_client as _minioc
+            tender_path = str(project.get("tender_file_path", ""))
+            _sys.stderr.write(f"[V2] Downloading PDF from MinIO: {tender_path}\n")
+            tender_bytes = _minioc.download_bytes(settings.minio_bucket, tender_path)
+            _sys.stderr.write(f"[V2] Downloaded: {len(tender_bytes)} bytes\n")
 
         v2_pkg = generate_v2_bid_package(
             requirements,
