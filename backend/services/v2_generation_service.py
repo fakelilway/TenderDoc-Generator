@@ -298,7 +298,20 @@ def _collect_technical_titles(requirements: TenderRequirements) -> list[str]:
         for child in children:
             ct = getattr(child, "title", "") or (child.get("title", "") if isinstance(child, dict) else "")
             add_title(ct)
-    return titles or ["施工组织设计"]
+    if not titles:
+        titles = ["施工组织设计"]
+    # Append standard construction plan sections not already in tree
+    for section in [
+        "总体施工组织布置及规划",
+        "主要工程项目的施工方案与技术措施",
+        "工期保证体系及保证措施",
+        "工程质量管理体系及保证措施",
+        "安全生产管理体系及保证措施",
+        "环境保护及文明施工保证措施",
+        "项目风险预测与防范及事故应急预案",
+    ]:
+        add_title(section)
+    return titles
 
 
 def _is_prose_page(title: str) -> bool:

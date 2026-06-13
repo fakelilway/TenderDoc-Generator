@@ -225,11 +225,28 @@ def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
 
 
 def _replace_known_fields_in_docx(docx_path: str | Path, profile: dict[str, Any]) -> None:
-    """Replace placeholder text throughout a DOCX (paragraphs AND tables)."""
+    """Replace placeholder text and clean page numbers from a DOCX."""
     from docx import Document
     doc = Document(str(docx_path))
     _replace_known_fields(doc, profile)
+    _remove_page_numbers_from_paragraphs(doc)
     doc.save(str(docx_path))
+
+
+def _remove_page_numbers_from_paragraphs(doc: 'Document') -> None:
+    """Remove standalone page numbers (1-3 digit isolated lines) from paragraphs."""
+    import re as _re
+    page_pattern = _re.compile(r'^\s*\d{1,3}\s*$')
+    for p in doc.paragraphs:
+        text = p.text.strip()
+        if page_pattern.match(text):
+            # Clear the paragraph text
+            for run in p.runs:
+                run.text = ""
+        # Also remove page number at end of paragraph
+        for run in p.runs:
+            if run.text and _re.match(r'\s*\d{1,3}\s*$', run.text):
+                run.text = _re.sub(r'\s*\d{1,3}\s*$', '', run.text)
 
 
 def _skip_toc_pages(pdf: fitz.Document, from_page: int) -> int:
