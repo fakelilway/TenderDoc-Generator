@@ -8,6 +8,8 @@ from psycopg2.extras import Json
 
 from core.config import settings
 from schemas.tender import TenderRequirements
+from services.company_profile_service import get_company_profile
+from services.original_docx_format_service import build_original_format_docx
 from services.project_service import _connect
 from utils.docx_exporter import markdown_to_docx, strip_meta_notes
 from utils.minio_client import minio_client
@@ -32,18 +34,19 @@ def export_markdown_for_project(
         markdown_path = tmp_path / f"project_{project_id}_bid.md"
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
         markdown_path.write_text(markdown, encoding="utf-8")
-        markdown_to_docx(
-            markdown,
-            docx_path,
-            title=title,
-            subtitle="投标文件",
-            cover=True,
-            toc=True,
-            header_text=title,
-            page_numbers=True,
-            style_profile="zhengqi",
-            image_resolver=_resolve_knowledge_image,
-        )
+        if not _try_export_original_docx_format(project_id, docx_path):
+            markdown_to_docx(
+                markdown,
+                docx_path,
+                title=title,
+                subtitle="投标文件",
+                cover=True,
+                toc=True,
+                header_text=title,
+                page_numbers=True,
+                style_profile="zhengqi",
+                image_resolver=_resolve_knowledge_image,
+            )
 
         markdown_object = f"projects/{project_id}/generated/bid.md"
         docx_object = f"projects/{project_id}/generated/bid.docx"
@@ -57,6 +60,71 @@ def export_markdown_for_project(
         quality_report,
     )
     return markdown_object, docx_object
+
+
+def _try_export_original_docx_format(project_id: int, docx_path: Path) -> bool:
+    try:
+        tender = _fetch_tender_document(project_id)
+    except Exception:
+        logger.exception("Tender document lookup unavailable; using markdown export")
+        return False
+    if not tender:
+        return False
+    filename = str(tender.get("file_name") or "")
+    object_name = str(tender.get("file_path") or "")
+    if not filename.lower().endswith(".docx"):
+        return False
+    try:
+        tender_bytes = minio_client.download_bytes(settings.minio_bucket, object_name)
+        profile = _export_profile_from_tender(tender)
+        build_original_format_docx(tender_bytes, docx_path, profile=profile)
+        return True
+    except Exception:
+        logger.exception("Original DOCX format export failed")
+        raise ValueError("DOCX 招标文件原格式复制失败，系统不会回退生成近似格式文件。")
+
+
+def _fetch_tender_document(project_id: int) -> dict[str, object] | None:
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT d.file_name, d.file_path, p.name, p.confirmed_parsed_json, p.parsed_json
+                FROM projects p
+                LEFT JOIN documents d
+                    ON d.project_id = p.id AND d.file_path = p.tender_file_path
+                WHERE p.id = %s
+                ORDER BY d.id DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            )
+            row = cursor.fetchone()
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return row
+    keys = ("file_name", "file_path", "name", "confirmed_parsed_json", "parsed_json")
+    return dict(zip(keys, row))
+
+
+def _export_profile_from_tender(tender: dict[str, object]) -> dict[str, object]:
+    parsed = tender.get("confirmed_parsed_json") or tender.get("parsed_json") or {}
+    profile: dict[str, object] = {}
+    if isinstance(parsed, dict):
+        profile.update({
+            "project_name": parsed.get("project_name") or tender.get("name") or "",
+            "项目名称": parsed.get("project_name") or tender.get("name") or "",
+            "tenderer_name": parsed.get("tenderer_name") or "",
+            "招标人": parsed.get("tenderer_name") or "",
+        })
+    try:
+        company_profile = get_company_profile().get("profile", {})
+        if isinstance(company_profile, dict):
+            profile.update(company_profile)
+    except Exception:
+        logger.warning("Company profile unavailable during original DOCX export")
+    return profile
 
 
 def evaluate_generation_quality(markdown_text: str) -> dict[str, float | int]:

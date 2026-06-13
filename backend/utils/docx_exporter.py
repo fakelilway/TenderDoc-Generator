@@ -9,6 +9,7 @@ from pathlib import Path
 import fitz
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
@@ -25,6 +26,7 @@ HEADING_SIZES_PT = {"Heading 1": 16, "Heading 2": 14, "Heading 3": 12}  # 三号
 FIRST_LINE_INDENT_PT = BODY_SIZE_PT * 2
 ZHENGQI_PROFILE = "zhengqi"
 KNOWLEDGE_IMAGE_MARKER_RE = re.compile(r"^\{\{knowledge_image:(?P<body>.+)\}\}$")
+TDG_TABLE_MARKER_RE = re.compile(r"^\{\{tdg_table:(?P<kind>[A-Za-z_][\w-]*)(?P<body>.*?)\}\}$")
 _IMAGE_MARKER_ATTR_RE = re.compile(
     r"(?P<key>[A-Za-z_][\w-]*)=(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
 )
@@ -196,6 +198,17 @@ def _render_markdown_body(
             index += 1
             continue
 
+        if _is_pagebreak_marker(line):
+            document.add_page_break()
+            index += 1
+            continue
+
+        table_marker = _parse_tdg_table_marker(line)
+        if table_marker:
+            _add_tdg_table(document, table_marker, style_profile)
+            index += 1
+            continue
+
         image_marker = _parse_knowledge_image_marker(line)
         if image_marker:
             _add_knowledge_image(document, image_marker, image_resolver, style_profile)
@@ -216,16 +229,66 @@ def _render_markdown_body(
             if title:
                 document.add_heading(title, level=level)
         elif line.startswith(("- ", "* ")):
-            document.add_paragraph(line[2:].strip(), style="List Bullet")
+            paragraph = document.add_paragraph(style="List Bullet")
+            _add_text_with_underlined_blanks(
+                paragraph,
+                line[2:].strip(),
+                BODY_CJK_FONT,
+                _body_size_pt(style_profile),
+            )
         elif line[:3].isdigit() and line[3:5] in {". ", "、"}:
-            document.add_paragraph(line[5:].strip(), style="List Number")
+            paragraph = document.add_paragraph(style="List Number")
+            _add_text_with_underlined_blanks(
+                paragraph,
+                line[5:].strip(),
+                BODY_CJK_FONT,
+                _body_size_pt(style_profile),
+            )
         else:
-            paragraph = document.add_paragraph(line)
+            paragraph = document.add_paragraph()
+            _add_text_with_underlined_blanks(
+                paragraph,
+                line,
+                BODY_CJK_FONT,
+                _body_size_pt(style_profile),
+            )
             # Production body paragraphs start with a 2-character indent.
             paragraph.paragraph_format.first_line_indent = Pt(
                 _body_size_pt(style_profile) * 2
             )
+            _apply_form_paragraph_alignment(paragraph)
         index += 1
+
+
+def _is_pagebreak_marker(line: str) -> bool:
+    return line.strip() in {"<!-- tdg:pagebreak -->", "---PAGEBREAK---", "\\f"}
+
+
+def _parse_tdg_table_marker(line: str) -> dict[str, object] | None:
+    match = TDG_TABLE_MARKER_RE.match(line.strip())
+    if not match:
+        return None
+    attrs = {
+        attr.group("key"): _strip_attr_quotes(attr.group("value"))
+        for attr in _IMAGE_MARKER_ATTR_RE.finditer(match.group("body"))
+    }
+    return {"kind": match.group("kind"), "attrs": attrs}
+
+
+def _add_tdg_table(
+    document: Document,
+    marker: dict[str, object],
+    style_profile: str | None,
+) -> None:
+    if marker.get("kind") == "bidder_basic_info":
+        _add_bidder_basic_info_table(
+            document,
+            marker.get("attrs") if isinstance(marker.get("attrs"), dict) else {},
+            style_profile,
+        )
+        return
+    paragraph = document.add_paragraph(f"（未支持的表格类型：{marker.get('kind')}）")
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
 def _parse_knowledge_image_marker(line: str) -> dict[str, object] | None:
@@ -252,6 +315,131 @@ def _parse_knowledge_image_marker(line: str) -> dict[str, object] | None:
         "caption": str(attrs.get("caption") or "").strip(),
         "width_cm": max(4.0, min(width_cm, 16.0)),
     }
+
+
+def _add_bidder_basic_info_table(
+    document: Document,
+    attrs: dict[str, str],
+    style_profile: str | None,
+) -> None:
+    table = document.add_table(rows=15, cols=6)
+    table.style = "Table Grid"
+    table.autofit = False
+    widths_cm = (2.9, 1.5, 2.0, 2.0, 2.6, 2.9)
+    for row in table.rows:
+        for index, cell in enumerate(row.cells):
+            cell.width = Cm(widths_cm[index])
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+    def val(key: str) -> str:
+        return str(attrs.get(key) or "________")
+
+    def put(row: int, col: int, text: str, *, center: bool = False) -> None:
+        cell = table.cell(row, col)
+        paragraph = cell.paragraphs[0]
+        paragraph.clear()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT
+        _add_text_with_underlined_blanks(
+            paragraph,
+            text,
+            BODY_CJK_FONT,
+            14 if style_profile == ZHENGQI_PROFILE else BODY_SIZE_PT,
+        )
+
+    def merge(row: int, start_col: int, end_col: int):
+        return table.cell(row, start_col).merge(table.cell(row, end_col))
+
+    def vmerge(start_row: int, end_row: int, col: int):
+        return table.cell(start_row, col).merge(table.cell(end_row, col))
+
+    # Row 0-6: mirror the tender form's visible field layout.
+    put(0, 0, "投标人名称", center=True)
+    merge(0, 1, 5)
+    put(0, 1, val("company_name"))
+
+    put(1, 0, "注册地址", center=True)
+    merge(1, 1, 3)
+    put(1, 1, val("address"))
+    put(1, 4, "邮政编码", center=True)
+    put(1, 5, val("postal_code"))
+
+    vmerge(2, 3, 0)
+    put(2, 0, "联系方式", center=True)
+    put(2, 1, "联系人", center=True)
+    merge(2, 2, 3)
+    put(2, 2, val("contact_person"))
+    put(2, 4, "电话", center=True)
+    put(2, 5, val("phone"))
+    put(3, 1, "传真", center=True)
+    merge(3, 2, 3)
+    put(3, 2, val("fax"))
+    put(3, 4, "电子邮件", center=True)
+    put(3, 5, val("email"))
+
+    put(4, 0, "法定代表人", center=True)
+    put(4, 1, "姓名", center=True)
+    put(4, 2, val("legal_rep"))
+    put(4, 3, "技术职称", center=True)
+    put(4, 4, val("legal_rep_title"))
+    put(4, 5, f"电话\n{val('legal_rep_phone')}", center=True)
+
+    put(5, 0, "技术负责人", center=True)
+    put(5, 1, "姓名", center=True)
+    put(5, 2, val("technical_lead"))
+    put(5, 3, "技术职称", center=True)
+    put(5, 4, val("technical_lead_title"))
+    put(5, 5, f"电话\n{val('technical_lead_phone')}", center=True)
+
+    put(6, 0, "成立时间", center=True)
+    merge(6, 1, 2)
+    put(6, 1, val("established_date"))
+    merge(6, 3, 5)
+    put(6, 3, f"员工总人数：{val('employee_count')}", center=True)
+
+    # Row 7-11: "其中" block for personnel counts.
+    put(7, 0, "企业资质等级", center=True)
+    merge(7, 1, 2)
+    put(7, 1, val("qualification_level"))
+    vmerge(7, 11, 3)
+    put(7, 3, "其中", center=True)
+    put(7, 4, "项目经理（或注册建造师）", center=True)
+    put(7, 5, val("project_manager_name"))
+
+    put(8, 0, "统一社会信用代码", center=True)
+    merge(8, 1, 2)
+    put(8, 1, val("business_license_no"))
+    put(8, 4, "高级职称人员", center=True)
+    put(8, 5, val("senior_title_count"))
+
+    put(9, 0, "注册资本", center=True)
+    merge(9, 1, 2)
+    put(9, 1, val("registered_capital"))
+    put(9, 4, "中级职称人员", center=True)
+    put(9, 5, val("middle_title_count"))
+
+    put(10, 0, "基本存款账户\n开户银行", center=True)
+    merge(10, 1, 2)
+    put(10, 1, val("bank_name"))
+    put(10, 4, "初级职称人员", center=True)
+    put(10, 5, val("junior_title_count"))
+
+    put(11, 0, "基本存款账户\n银行账号", center=True)
+    merge(11, 1, 2)
+    put(11, 1, val("bank_account"))
+    put(11, 4, "技工", center=True)
+    put(11, 5, val("worker_count"))
+
+    put(12, 0, "经营范围", center=True)
+    merge(12, 1, 5)
+    put(12, 1, val("business_scope"))
+
+    put(13, 0, "投标人关联\n企业情况", center=True)
+    merge(13, 1, 5)
+    put(13, 1, "投标人应提供关联企业情况，包括：\n（1）投标人投资（控股）或管理的下属企业名称、持有股权（出资额）比例；\n（2）与投标人单位负责人（即法定代表人）为同一人的其他单位名称；\n（3）________")
+
+    put(14, 0, "备注", center=True)
+    merge(14, 1, 5)
+    put(14, 1, "________")
 
 
 def _strip_attr_quotes(value: str) -> str:
@@ -343,6 +531,46 @@ def _style_paragraph_runs(
 ) -> None:
     for run in paragraph.runs:
         _set_run_font(run, cjk_font, size_pt)
+
+
+def _add_text_with_underlined_blanks(
+    paragraph,
+    text: str,
+    cjk_font: str,
+    size_pt: float | None = None,
+) -> None:
+    """Render ________ placeholders as actual underlined fill-in space."""
+    parts = re.split(r"([_＿]{3,})", text)
+    for part in parts:
+        if not part:
+            continue
+        run = paragraph.add_run(" " * max(4, len(part)) if re.fullmatch(r"[_＿]{3,}", part) else part)
+        _set_run_font(run, cjk_font, size_pt)
+        if re.fullmatch(r"[_＿]{3,}", part):
+            run.underline = True
+
+
+def _apply_form_paragraph_alignment(paragraph) -> None:
+    text = (paragraph.text or "").strip()
+    if not text:
+        return
+    right_markers = (
+        "投 标 人：",
+        "投标人：",
+        "法定代表人：",
+        "法定代表人或其委托代理人：",
+        "代理人：",
+        "开立人：",
+        "日 期：",
+        "日期：",
+        "年 月 日",
+        "年        月        日",
+    )
+    if any(text.startswith(marker) for marker in right_markers) or any(
+        marker in text for marker in ("（盖单位章）", "（签字或盖章）", "（签字）")
+    ):
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        paragraph.paragraph_format.first_line_indent = Pt(0)
 
 
 def _configure_styles(document: Document, style_profile: str | None) -> None:
@@ -555,13 +783,15 @@ def _add_table(
     for row_values in rows:
         row = table.add_row()
         for index, value in enumerate(row_values):
-            row.cells[index].text = value
-            for paragraph in row.cells[index].paragraphs:
-                _style_paragraph_runs(
-                    paragraph,
-                    BODY_CJK_FONT,
-                    14 if is_zhengqi else BODY_SIZE_PT,
-                )
+            cell = row.cells[index]
+            paragraph = cell.paragraphs[0]
+            paragraph.clear()
+            _add_text_with_underlined_blanks(
+                paragraph,
+                value,
+                BODY_CJK_FONT,
+                14 if is_zhengqi else BODY_SIZE_PT,
+            )
 
     for cell in table.rows[0].cells:
         for paragraph in cell.paragraphs:

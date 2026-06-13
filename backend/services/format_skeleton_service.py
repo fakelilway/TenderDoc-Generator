@@ -630,9 +630,12 @@ def _extract_section_pages(text: str, default_volume: str) -> list[FormatPage]:
     pages: list[FormatPage] = []
 
     # Split by Chinese numbered headings (一、二、三、...)
-    section_pattern = re.compile(r'(?:^|\n)\s*([一二三四五六七八九十]+)[、.．]\s*(.+?)(?:\n|$)')
+    section_pattern = re.compile(r'(?:^|\n)\s*([一二三四五六七八九十]+)[、.．]\s*(.+?)(?=\n|$)')
 
-    sections = list(section_pattern.finditer(text))
+    sections = [
+        match for match in section_pattern.finditer(text)
+        if _is_top_level_format_heading(match.group(2).strip())
+    ]
     if not sections:
         return pages
 
@@ -666,7 +669,51 @@ def _extract_section_pages(text: str, default_volume: str) -> list[FormatPage]:
 
         pages.append(page)
 
-    return pages
+    return _dedupe_format_pages(pages)
+
+
+def _dedupe_format_pages(pages: list[FormatPage]) -> list[FormatPage]:
+    """Drop TOC phantom nodes and keep the substantive page for duplicate titles."""
+    best_by_title: dict[str, tuple[int, int, FormatPage]] = {}
+    order: list[str] = []
+    for index, page in enumerate(pages):
+        key = _canonical_title(page.title)
+        if not key or key == "目录":
+            continue
+        score = _format_page_score(page)
+        if key not in best_by_title:
+            best_by_title[key] = (score, index, page)
+            order.append(key)
+            continue
+        old_score, old_index, _old_page = best_by_title[key]
+        if score > old_score or (score == old_score and index > old_index):
+            best_by_title[key] = (score, index, page)
+    return [best_by_title[key][2] for key in order if key in best_by_title]
+
+
+def _is_top_level_format_heading(title_body: str) -> bool:
+    title = (title_body or "").strip()
+    if not title:
+        return False
+    if len(title) > 36:
+        return False
+    if any(mark in title for mark in ("，", "。", "；", "：", ":", "、")):
+        return False
+    if title.startswith(("如采用", "如果", "按照", "发生")):
+        return False
+    return True
+
+
+def _format_page_score(page: FormatPage) -> int:
+    raw = page.raw_template or ""
+    score = len(raw)
+    if any(marker in raw for marker in ("致：", "投 标 人", "（盖单位章）", "（签字", "身份证", "开户", "承诺")):
+        score += 500
+    if any(marker in raw for marker in ("表", "清单", "序号", "备注", "项目", "内容")):
+        score += 200
+    if len(raw) < 30:
+        score -= 500
+    return score
 
 
 def _classify_page_type(title: str, raw: str) -> str:
@@ -681,8 +728,8 @@ def _classify_page_type(title: str, raw: str) -> str:
             return "letter_template"
 
     # Tables
-    table_indicators = ['|', '表格', '基本情况表', '汇总表', '附表', '清单']
-    if any(kw in raw[:500] for kw in table_indicators):
+    table_indicators = ['|', '表格', '基本情况表', '汇总表', '附表', '清单', '情况表', '组成表']
+    if any(kw in title or kw in raw[:500] for kw in table_indicators):
         return "table_template"
     if raw.count('\n') > 10 and raw.count('｜') + raw.count('|') > 2:
         return "table_template"

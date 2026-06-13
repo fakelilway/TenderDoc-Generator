@@ -90,6 +90,56 @@ def test_export_markdown_for_project_stores_markdown_docx_and_quality(
     )
 
 
+def test_export_markdown_for_project_prefers_original_docx_format(
+    monkeypatch,
+) -> None:
+    statements = []
+    fake_minio = _FakeMinio()
+    fake_minio.download_bytes = lambda bucket, object_name: b"docx bytes"
+    captured = {}
+
+    def fake_build_original_format_docx(tender_bytes, output_path, *, profile=None):
+        captured["tender_bytes"] = tender_bytes
+        captured["profile"] = profile
+        output_path.write_bytes(b"original format docx")
+
+    def fail_markdown_to_docx(*args, **kwargs):
+        raise AssertionError("markdown_to_docx should not be used for original DOCX tender")
+
+    monkeypatch.setattr(
+        generation_service, "_connect", lambda: _FakeConnection(statements)
+    )
+    monkeypatch.setattr(generation_service, "minio_client", fake_minio)
+    monkeypatch.setattr(
+        generation_service,
+        "_fetch_tender_document",
+        lambda project_id: {
+            "file_name": "招标文件.docx",
+            "file_path": "projects/7/tender/original.docx",
+            "name": "测试项目",
+            "confirmed_parsed_json": {"project_name": "测试项目", "tenderer_name": "招标人"},
+            "parsed_json": None,
+        },
+    )
+    monkeypatch.setattr(
+        generation_service,
+        "build_original_format_docx",
+        fake_build_original_format_docx,
+    )
+    monkeypatch.setattr(generation_service, "markdown_to_docx", fail_markdown_to_docx)
+    monkeypatch.setattr(
+        generation_service,
+        "get_company_profile",
+        lambda: {"profile": {"company_name": "安徽正奇建设有限公司"}},
+    )
+
+    generation_service.export_markdown_for_project(7, "# 项目\n", {"usable_rate": 1.0})
+
+    assert captured["tender_bytes"] == b"docx bytes"
+    assert captured["profile"]["company_name"] == "安徽正奇建设有限公司"
+    assert fake_minio.uploads[-1][1] == "projects/7/generated/bid.docx"
+
+
 def test_export_markdown_for_project_strips_meta_notes(monkeypatch) -> None:
     statements = []
     fake_minio = _FakeMinio()

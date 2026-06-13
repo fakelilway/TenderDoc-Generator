@@ -268,6 +268,7 @@ def run_bid_workflow(
             company_name=str((company_profile or {}).get("company_name", "") or settings.company_name),
             tender_text=state.tender_text,
             company_profile=company_profile,
+            original_format_docx_available=_is_original_tender_docx(project),
         )
         state.draft_volumes = v2_pkg.volume_map()
         state.draft_markdown = v2_pkg.combined_markdown
@@ -489,6 +490,11 @@ def _delivery_markdown(markdown: str) -> str:
     from utils.docx_exporter import strip_meta_notes
 
     return strip_meta_notes(markdown)
+
+
+def _is_original_tender_docx(project: dict) -> bool:
+    tender_path = str(project.get("tender_file_path") or "").lower()
+    return tender_path.endswith(".docx")
 
 
 def _append_meta_block(markdown: str, block: str) -> str:

@@ -58,9 +58,9 @@ OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 BID_LLM_PROVIDER=auto
-BID_GENERATION_MODE=multi_agent
+BID_GENERATION_MODE=v2
 PARSER_LLM_TIMEOUT_SECONDS=180
-# 生成跑在后台线程，multi_agent 会先确认框架，再分卷生成、分卷修订、总审打回；最终由代码拼接三卷，质量优先
+# 生成跑在后台线程，v2 会复制招标文件格式原文骨架，再由 Form Filler / Content Writer 填内容并三层审计
 BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
 BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
@@ -324,8 +324,8 @@ Docker 服务端口冲突需要修改 `docker-compose.yml`，并同步修改 `ba
 - `OPENROUTER_API_KEY` 是否正确。
 - OpenRouter 账户是否有额度。
 - `OPENROUTER_MODEL` 是否可用。
-- `BID_GENERATION_MODE` 是否为 `multi_agent`。
-- `format_outline_tree` 是否完整包含商务、技术、报价三卷；当前版本不走生成 fallback，格式树缺失会直接失败。
+- `BID_GENERATION_MODE` 是否为 `v2`。
+- 招标文件是否包含可识别的“投标文件格式/响应文件格式”章节；当前版本不走生成 fallback，格式章节缺失会直接失败。
 - 公司网络是否拦截外部 API。
 
 ### MinIO 下载链接打不开

@@ -47,7 +47,7 @@ Layer 5: Export → Word / PDF
 - 生成前会构建 `EvidencePack`，把公司证件、人员证件、业绩、技术方案、报价附件、表格附件和图片证据分开。
 - 生成前会从 `format_outline_tree` 构建商务/技术/报价三卷确定性骨架；缺少完整三卷格式树时直接失败，不再套默认模板。
 - 骨架渲染会从招标文件“投标文件格式/投标文件组成”附近抽取函件、表格和清单说明原文，优先嵌入招标文件原文模板；抽不到才使用空白占位。
-- 默认生成模式为 multi_agent：商务/技术/报价三个 Agent 并行填充骨架并各自对照招标全文修改，总审双段检查（确定性标题预审 + LLM 结构审计 → 内容审计），打回返修最多两轮，最终确定性拼接导出。解析/生成失败即失败，不自动降级生成可能废标的内容。
+- 默认生成模式为 V2（`BID_GENERATION_MODE=v2`）：从招标文件格式页复制原文骨架，Form Filler 填表单空白，Content Writer 写施工方案正文，三层审计检查格式、内容和证据。解析/生成失败即失败，不自动降级生成可能废标的内容。
 - 商务文件、技术文件、报价文件三卷生成与预览，完整标书作为按需合并稿。
 - Markdown 预览、在线编辑、保存草稿、再次审查和终审确认。
 - DOCX 导出，支持封面、目录域、页眉页脚、页码、标题/正文中文排版和基础表格。
@@ -67,44 +67,40 @@ Layer 5: Export → Word / PDF
 
 最近一次架构验证（2026-06-13）：
 
-- 后端完整回归：`235 passed, 3 skipped`
+- 后端完整回归：`236 passed, 2 skipped`
 - 前端类型检查：通过
 
-## 当前架构（V1 — 运行中）
+## 当前架构（V2 — 运行中）
 
 ```mermaid
 flowchart TD
     U[上传招标文件 PDF/DOCX] --> P[Parser LLM<br/>全文一次提取 13 字段]
-    P --> T[format_outline_tree<br/>三卷树形目录]
-    T --> H[人工确认]
-    H --> S[Skeleton Renderer<br/>代码生成三卷 Markdown 骨架]
-    S --> CA[商务卷 Agent<br/>按骨架填内容]
-    S --> TA[技术卷 Agent<br/>按骨架填内容]
-    S --> PA[报价卷 Agent<br/>按骨架填内容]
-    CA --> A1{确定性标题预审<br/>+ Pass 1 结构审计}
-    TA --> A1
-    PA --> A1
-    A1 -->|fail| RV[返修对应卷]
-    RV --> A1
-    A1 -->|pass| A2{Pass 2: 内容审计<br/>废标风险·事实·AI 元文本}
-    A2 -->|fail| RV2[返修对应卷]
-    RV2 --> A2
-    A2 -->|pass| E[确定性拼接 · DOCX 导出]
+    P --> F[Format Page Extractor<br/>截取投标/响应文件格式页]
+    F --> S[Skeleton Renderer<br/>复制原文格式骨架]
+    S --> FF[Form Filler<br/>填招标人/项目名/工期/质量/公司字段]
+    S --> CW[Content Writer<br/>写施工组织正文]
+    FF --> A{Three-Layer Audit<br/>格式/内容/证据}
+    CW --> A
+    A -->|fail| R[定位问题并返修]
+    R --> FF
+    R --> CW
+    A -->|pass| E[导出 Word/PDF/Markdown]
 ```
 
-## V2 迁移路线（进行中）
+## V2 迁移路线（已接入 API，进入内容质量优化）
 
-V1 已证明"结构交给代码"是对的。V2 进一步推到"结构交给原文"——不再用代码重画格式，而是直接从招标文件格式章节复制。
+V1 证明了“结构交给代码”是对的。V2 进一步推到“结构交给原文”：不再用代码重画格式，而是直接从招标文件格式章节复制。当前 V2-M1~M7 已完成，短板转为表格密度、施工方案篇幅和项目针对性。
 
 | 阶段 | 状态 | 目标 |
 |------|------|------|
-| V2-M1 格式页提取器 | ⬜ | 逐页截取"第X章 投标文件格式"原文 |
-| V2-M2 DOCX 骨架生成器 | ⬜ | 锁定区(表单表格签章) + 可写区(施工方案) |
-| V2-M3 Form Filler Agent | ⬜ | 读知识库，填空锁定区空白字段 |
-| V2-M4 Content Writer Agent | ⬜ | 只写施工方案正文，不改任何结构 |
-| V2-M5 三层审计 | ⬜ | 格式比对原文(0LLM) + 内容审查(1LLM) + 证据审计(0LLM) |
-| V2-M6 前端对接 | ⬜ | 格式页预览 + 缺失资料清单 + 完整流程 |
-| V2-M7 真实样本验证 | ⬜ | 5个真实 case 全部跑通 |
+| V2-M1 格式页提取器 | ✅ | 逐页截取“第X章 投标/响应文件格式”原文 |
+| V2-M2 原文骨架生成器 | ✅ | 锁定区（表单/表格/签章）+ 可写区（施工方案） |
+| V2-M3 Form Filler Agent | ✅ | 读公司档案/知识库，填空锁定区空白字段 |
+| V2-M4 Content Writer Agent | ✅ | 只写施工方案正文，不改任何结构 |
+| V2-M5 三层审计 | ✅ | 格式比对原文（0LLM）+ 内容审查（1LLM）+ 证据审计（0LLM） |
+| V2-M6 API/前端流程对接 | ✅ | `BID_GENERATION_MODE=v2` 已接入 workflow |
+| V2-M7 真实样本验证 | ✅ | 5 个真实 case 格式提取通过 |
+| V2-M8 内容质量优化 | 🔧 | 对齐南陵/萧县中标标书基线，提升表格数量、施工篇幅、项目针对性 |
 
 详细 minitasks 见 [minitasks.md](minitasks.md)。
 
@@ -251,7 +247,7 @@ TenderDoc-Generator/
 
 - 前端：Next.js 14 App Router + React 18 + TypeScript + Tailwind，pnpm 管理，API 用原生 fetch 封装（`frontend/lib/api.ts`）。
 - 后端：FastAPI + uvicorn，Python 3.11（根目录 `.venv`），psycopg2 显式 SQL + 连接池，Pydantic v2，JWT 认证，FastAPI BackgroundTasks 跑长任务。
-- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认 `multi_agent` 模式（格式骨架 + 原文模板抽取 + 商务/技术/报价三 Agent 分卷填充 + 双段审计 + 确定性拼接），失败后无 fallback。
+- AI：OpenAI SDK 兼容 DeepSeek/OpenRouter（`BID_LLM_PROVIDER` 显式路由）；默认 `v2` 模式（原文复制骨架 + Form Filler + Content Writer + 三层审计），失败后无 fallback。
 - RAG：BAAI/bge-large-zh-v1.5（1024 维）+ pgvector，JSONB metadata 过滤。
 - 存储：PostgreSQL 15+（JSONB + pgvector）、Redis 7（workflow state）、MinIO（原文/资料/产物）。
 - 文档处理：pypdf/pdfplumber/PyMuPDF 解析，python-docx 导出（`backend/utils/docx_exporter.py` 统一排版）。
@@ -277,4 +273,4 @@ TenderDoc-Generator/
 
 ## 下一步
 
-短期：先跑通 V1 当前版本（至少 1 个真实 case 通过），验证"结构交给代码"方向的正确性。然后按 V2-M1~V2-M7 路线升级到原文复制骨架架构。具体任务状态和优先级见 [minitasks.md](minitasks.md)。
+短期：V2 格式链路已经跑通，下一步集中优化内容质量：补表格密度、扩写施工组织方案、增强项目针对性，并持续用南陵县三里镇和萧县2025公路真实中标标书作为质量基线。具体任务状态和优先级见 [minitasks.md](minitasks.md)。

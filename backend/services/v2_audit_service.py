@@ -96,6 +96,42 @@ def audit_format_layer(
                 detail="请人工核实填入数据的真实性"
             ))
 
+        if _requires_table_layout(title, original) and not _has_table_layout(filled):
+            issues.append(AuditIssue(
+                layer="format",
+                severity="critical",
+                location=title,
+                problem="表格格式被拍扁为普通文本",
+                detail="该节点在招标文件中属于表格/清单/附表，生成结果必须保留表格网格、字段位置和空白填写位。"
+            ))
+
+        if _uses_reconstructed_layout(filled):
+            issues.append(AuditIssue(
+                layer="format",
+                severity="critical",
+                location=title,
+                problem="锁定格式被系统重画，不是招标文件原样复制",
+                detail="商务/报价锁定格式必须来自招标文件原始格式块；禁止用系统内置表格或近似版式替代。"
+            ))
+
+        if _requires_fill_in_lines(original) and not _has_fill_in_lines(filled):
+            issues.append(AuditIssue(
+                layer="format",
+                severity="major",
+                location=title,
+                problem="下划线填写位未保留",
+                detail="招标文件格式包含下划线/空白填写位，生成结果应保留可人工填写的下划线或等价占位。"
+            ))
+
+        if _requires_figure_or_chart(title, original) and not _has_figure_or_chart(filled):
+            issues.append(AuditIssue(
+                layer="format",
+                severity="critical",
+                location=title,
+                problem="图表/图片要求未落实",
+                detail="招标文件要求提供图、表、组织机构图、进度图或平面布置图，生成结果必须插入对应图表或保留明确图片占位。"
+            ))
+
         # Check for AI meta-text in form pages (should not appear in locked zones)
         ai_markers = ['人工确认点', '待补充', 'TODO', 'AI生成', '根据提示', '元话语']
         for marker in ai_markers:
@@ -106,6 +142,70 @@ def audit_format_layer(
                 ))
 
     return AuditReport(passed=len(issues) == 0, issues=issues)
+
+
+def _requires_table_layout(title: str, original: str) -> bool:
+    text = f"{title}\n{original}"
+    table_keywords = (
+        "基本情况表",
+        "人员组成表",
+        "项目管理机构",
+        "拟分包",
+        "汇总表",
+        "明细表",
+        "一览表",
+        "附表",
+        "清单",
+    )
+    if any(keyword in text for keyword in table_keywords):
+        return True
+    return "|" in original or "｜" in original
+
+
+def _has_table_layout(filled: str) -> bool:
+    lines = [line.strip() for line in filled.splitlines() if line.strip()]
+    pipe_rows = [line for line in lines if line.startswith("|") and line.endswith("|")]
+    if len(pipe_rows) >= 2:
+        return True
+    table_border_chars = "┌┬┐├┼┤└┴┘"
+    return any(char in filled for char in table_border_chars)
+
+
+def _requires_fill_in_lines(original: str) -> bool:
+    return bool(re.search(r'[_＿]{3,}|〔\s*〕|（\s*）|\(\s*\)', original))
+
+
+def _has_fill_in_lines(filled: str) -> bool:
+    return bool(re.search(r'[_＿]{3,}|<u>.+?</u>|〔[^〕]+〕', filled))
+
+
+def _uses_reconstructed_layout(filled: str) -> bool:
+    return "{{tdg_table:" in filled
+
+
+def _requires_figure_or_chart(title: str, original: str) -> bool:
+    text = f"{title}\n{original}"
+    figure_keywords = (
+        "组织机构图",
+        "框图",
+        "施工总平面图",
+        "平面布置图",
+        "进度计划图",
+        "网络图",
+        "横道图",
+        "附图",
+        "图表",
+    )
+    return any(keyword in text for keyword in figure_keywords)
+
+
+def _has_figure_or_chart(filled: str) -> bool:
+    return bool(
+        "{{knowledge_image:" in filled
+        or re.search(r'!\[[^\]]*\]\([^)]+\)', filled)
+        or "【图表占位" in filled
+        or "【图片占位" in filled
+    )
 
 
 def audit_evidence_layer(

@@ -45,6 +45,95 @@ def test_markdown_to_docx_exports_headings_paragraphs_bullets_and_table(
     assert document.tables[0].cell(1, 1).text == "三检制"
 
 
+def test_markdown_to_docx_renders_fill_in_blanks_as_underlined_runs(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "fill_in.docx"
+    markdown = """# 商务文件
+
+投标人：________
+
+| 项目 | 内容 |
+| --- | --- |
+| 注册地址 | ________ |
+"""
+
+    markdown_to_docx(markdown, output_path)
+
+    document = Document(output_path)
+    body = next(paragraph for paragraph in document.paragraphs if paragraph.text.startswith("投标人："))
+    assert any(run.underline for run in body.runs)
+    table_cell = document.tables[0].cell(1, 1).paragraphs[0]
+    assert any(run.underline for run in table_cell.runs)
+
+
+def test_markdown_to_docx_renders_pagebreak_marker(tmp_path: Path) -> None:
+    output_path = tmp_path / "pagebreak.docx"
+    markdown = """# 商务文件
+
+## 一、投标函
+
+正文一。
+
+<!-- tdg:pagebreak -->
+
+## 二、授权委托书
+
+正文二。
+"""
+
+    markdown_to_docx(markdown, output_path)
+
+    document = Document(output_path)
+    assert 'w:type="page"' in document.element.xml
+
+
+def test_markdown_to_docx_renders_bidder_basic_info_locked_table(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "bidder_basic.docx"
+    markdown = """# 商务文件
+
+## （一）投标人基本情况表
+
+{{tdg_table:bidder_basic_info company_name="安徽正奇建设有限公司" address="________" postal_code="________"}}
+"""
+
+    markdown_to_docx(markdown, output_path)
+
+    document = Document(output_path)
+    assert len(document.tables) == 1
+    table = document.tables[0]
+    assert len(table.rows) == 15
+    assert len(table.columns) == 6
+    assert table.cell(0, 0).text == "投标人名称"
+    assert "安徽正奇建设有限公司" in table.cell(0, 1).text
+    assert table.cell(2, 0).text == "联系方式"
+    assert "投标人应提供关联企业情况" in table.cell(13, 1).text
+
+
+def test_markdown_to_docx_right_aligns_signature_lines(tmp_path: Path) -> None:
+    output_path = tmp_path / "signature.docx"
+    markdown = """# 商务文件
+
+投 标 人： （盖单位章）
+
+法定代表人： （签字或盖章）
+
+日 期： 年 月 日
+"""
+
+    markdown_to_docx(markdown, output_path)
+
+    document = Document(output_path)
+    aligned = [
+        paragraph for paragraph in document.paragraphs
+        if paragraph.text.startswith(("投 标 人", "法定代表人", "日 期"))
+    ]
+    assert len(aligned) == 3
+    assert all(paragraph.alignment == WD_ALIGN_PARAGRAPH.RIGHT for paragraph in aligned)
+
+
 def test_markdown_to_docx_inserts_knowledge_image_marker(tmp_path: Path) -> None:
     output_path = tmp_path / "bid_with_image.docx"
     tiny_png = base64.b64decode(

@@ -35,8 +35,8 @@ class FillResult:
 # patterns: (regex to find in template, label, profile_key)
 FILLABLE_FIELDS: list[tuple[str, str, str]] = [
     # Tender-specific fields (filled from project context)
-    (r'（招标人名称）', '招标人', '招标人'),
-    (r'（项目名称）', '项目名称', '项目名称'),
+    (r'（招标人）|（招标人名称）', '招标人', '招标人'),
+    (r'（招标项目名称）|（项目名称）', '项目名称', '项目名称'),
     (r'招标项目名称[：:]\s*[_＿]{2,}', '招标项目名称', '项目名称'),
     (r'工程质量[：:]\s*[_＿]{2,}|质量[标要][准求][：:]\s*[_＿]{2,}', '质量标准', '质量'),
     (r'安全目标[：:]\s*[_＿]{2,}|安全[标要][准求][：:]\s*[_＿]{2,}', '安全目标', '安全'),
@@ -94,6 +94,7 @@ def fill_page_template(
     filled = raw_template
     fields: list[FilledField] = []
     missing: list[str] = []
+    filled = _pre_fill_common_project_fields(filled, profile, fields)
 
     # 1. Exact field match: known patterns with profile keys
     for pattern, label, profile_key in FILLABLE_FIELDS:
@@ -140,6 +141,51 @@ def fill_page_template(
         fields=fields,
         missing=missing,
     )
+
+
+def _pre_fill_common_project_fields(
+    text: str,
+    profile: dict[str, str],
+    fields: list[FilledField],
+) -> str:
+    replacements = (
+        ("受益人（招标人）名称", "招标人"),
+        ("（招标人）", "招标人"),
+        ("（招标人名称）", "招标人"),
+        ("（招标项目名称）", "项目名称"),
+        ("（项目名称）", "项目名称"),
+        ("（投标人名称）", "company_name"),
+    )
+    for placeholder, key in replacements:
+        value = profile.get(key, "")
+        if placeholder in text and value:
+            text = text.replace(placeholder, value)
+            fields.append(FilledField(placeholder.strip("（）"), placeholder, True, value))
+
+    quality = profile.get("质量", "")
+    if quality:
+        text, count = re.subn(
+            r'(质量标准[：:])\s*(?=[；;])',
+            lambda match: f"{match.group(1)}{quality}",
+            text,
+        )
+        if count:
+            fields.append(FilledField("质量标准", "质量标准：", True, quality))
+
+    duration = profile.get("工期", "")
+    if duration:
+        duration_text = duration
+        if "日历天" not in duration_text:
+            duration_text = f"{duration_text}日历天"
+        text, count = re.subn(
+            r'(工期[：:])\s*日历天',
+            lambda match: f"{match.group(1)}{duration_text}",
+            text,
+        )
+        if count:
+            fields.append(FilledField("工期", "工期： 日历天", True, duration_text))
+
+    return text
 
 
 def generate_missing_checklist(results: list[FillResult]) -> list[str]:

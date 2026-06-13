@@ -64,6 +64,7 @@ def generate_v2_bid_package(
     company_name: str = "",
     tender_text: str = "",
     company_profile: dict[str, str] | None = None,
+    original_format_docx_available: bool = False,
 ) -> V2BidPackage:
     """V2 generation: extract → fill → write → audit.
 
@@ -140,17 +141,40 @@ def generate_v2_bid_package(
         project = requirements.project_name or "投标项目"
         label = V2BidPackage.VOLUME_HEADINGS.get(vol, vol)
         lines.append(f"# {project} {label}\n")
+        technical_content_inserted = False
+        volume_pages = filled_pages.get(vol, [])
 
-        for idx, (title, original, filled) in enumerate(filled_pages.get(vol, [])):
+        if volume_pages:
+            lines.append("\n<!-- tdg:pagebreak -->\n")
+            lines.append(_render_volume_directory(volume_pages))
+            lines.append("\n<!-- tdg:pagebreak -->\n")
+
+        for idx, (title, original, filled) in enumerate(volume_pages):
             if vol == "technical" and ("施工" in title or _is_prose_page(title)):
-                content = tech_content if tech_content and idx == 0 else filled
+                if tech_content and not technical_content_inserted:
+                    lines.append("\n<!-- tdg:pagebreak -->\n")
+                    lines.append(f"\n{_add_pagebreaks_before_headings(_clean_for_markdown(tech_content))}\n")
+                    technical_content_inserted = True
+                elif not tech_content:
+                    content = _clean_for_markdown(filled)
+                    content = re.sub(r'_{3,}', '________', content)
+                    lines.append("\n<!-- tdg:pagebreak -->\n")
+                    lines.append(f"\n## {title}\n\n{content}\n")
+                continue
             else:
                 content = filled
 
             # Clean content: strip HTML, keep plain markdown
             content = _clean_for_markdown(content)
             content = re.sub(r'_{3,}', '________', content)
+            content = _render_locked_format_content(
+                title,
+                original,
+                content,
+                combined_profile,
+            )
 
+            lines.append("\n<!-- tdg:pagebreak -->\n")
             lines.append(f"\n## {title}\n\n{content}\n")
 
         return "\n".join(lines)
@@ -163,7 +187,13 @@ def generate_v2_bid_package(
     filled_page_pairs = []
     for vol in ("commercial", "technical", "pricing"):
         for title, original, filled in filled_pages.get(vol, []):
-            filled_page_pairs.append((title, filled))
+            rendered = _render_locked_format_content(
+                title,
+                original,
+                _clean_for_markdown(filled),
+                combined_profile,
+            )
+            filled_page_pairs.append((title, rendered))
 
     audit = full_audit(
         pages=page_pairs,
@@ -174,6 +204,8 @@ def generate_v2_bid_package(
         filled_fields=_collect_filled_fields(fill_results),
         profile=profile,
     )
+    if not audit.passed and not original_format_docx_available:
+        raise ValueError(_format_audit_failure_message(audit))
 
     # ── Phase 6: Assemble final package ──
     missing = generate_missing_checklist(fill_results)
@@ -204,21 +236,138 @@ def _load_company_profile() -> dict[str, str]:
 def _collect_technical_titles(requirements: TenderRequirements) -> list[str]:
     """Collect construction plan section titles from format tree."""
     titles: list[str] = []
+    seen: set[str] = set()
+
+    def add_title(value: str) -> None:
+        clean = (value or "").strip()
+        if not clean or "投标文件" in clean:
+            return
+        key = re.sub(r"\s+", "", clean)
+        if key in seen:
+            return
+        seen.add(key)
+        titles.append(clean)
+
     nodes = requirements.format_outline_tree.get("technical", [])
     for node in nodes:
         t = getattr(node, "title", "") or (node.get("title", "") if isinstance(node, dict) else "")
-        if t:
-            titles.append(t)
+        add_title(t)
         children = getattr(node, "children", []) or (node.get("children", []) if isinstance(node, dict) else [])
         for child in children:
             ct = getattr(child, "title", "") or (child.get("title", "") if isinstance(child, dict) else "")
-            if ct:
-                titles.append(ct)
+            add_title(ct)
     return titles or ["施工组织设计"]
 
 
 def _is_prose_page(title: str) -> bool:
     return any(kw in title for kw in ["施工", "方案", "措施", "部署", "计划", "进度", "质量", "安全"])
+
+
+def _render_locked_format_content(
+    title: str,
+    original: str,
+    content: str,
+    profile: dict[str, str],
+) -> str:
+    """Keep locked commercial/pricing form pages structured.
+
+    Locked commercial/pricing forms must not be approximated. If PDF text
+    extraction flattens a required table, the audit layer fails generation
+    instead of letting a reconstructed layout masquerade as the tender format.
+    """
+    if _has_markdown_table(content):
+        return content
+    if _requires_figure_placeholder(title, original):
+        return "【图表占位：请按招标文件要求插入对应组织机构图、进度计划图、施工总平面图或知识库图片资料】"
+    if _is_locked_letter_or_clause(title):
+        return content
+    return content
+
+
+def _format_audit_failure_message(audit: AuditResult) -> str:
+    issues = audit.all_issues[:8]
+    details = "；".join(f"{issue.location}: {issue.problem}" for issue in issues)
+    return (
+        "V2 生成失败：锁定格式未达到招标文件原样要求。"
+        "系统不会输出近似重画的商务/报价格式，以免形成废标风险。"
+        f"{details}"
+    )
+
+
+def _render_volume_directory(pages: list[tuple[str, str, str]]) -> str:
+    lines = ["## 目 录", ""]
+    for title, _original, _filled in pages:
+        lines.append(title)
+    return "\n".join(lines)
+
+
+def _add_pagebreaks_before_headings(markdown: str) -> str:
+    lines: list[str] = []
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            if lines and lines[-1].strip() != "<!-- tdg:pagebreak -->":
+                lines.extend(["", "<!-- tdg:pagebreak -->", ""])
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _has_markdown_table(content: str) -> bool:
+    lines = [line.strip() for line in content.splitlines()]
+    for index, line in enumerate(lines[:-1]):
+        if line.startswith("|") and lines[index + 1].startswith("|") and "---" in lines[index + 1]:
+            return True
+    return False
+
+
+def _looks_like_locked_table(title: str, original: str) -> bool:
+    text = f"{title}\n{original}"
+    return any(
+        keyword in text
+        for keyword in (
+            "清单",
+            "汇总",
+            "明细",
+            "一览",
+            "人员组成",
+            "拟分包",
+        )
+    ) or bool(re.search(r"(?:情况表|组成表|汇总表|明细表|一览表|附表)", text))
+
+
+def _is_locked_letter_or_clause(title: str) -> bool:
+    return any(
+        keyword in title
+        for keyword in (
+            "投标函",
+            "保函",
+            "承诺",
+            "声明",
+            "协议书",
+            "身份证明",
+            "授权委托书",
+            "保证金",
+            "其他材料",
+            "其他内容",
+        )
+    )
+
+
+def _requires_figure_placeholder(title: str, original: str) -> bool:
+    text = f"{title}\n{original}"
+    return any(
+        keyword in text
+        for keyword in (
+            "组织机构图",
+            "框图",
+            "施工总平面图",
+            "平面布置图",
+            "进度计划图",
+            "网络图",
+            "横道图",
+            "附图",
+            "图表",
+        )
+    )
 
 
 def _collect_filled_fields(results: list[FillResult]) -> list[dict[str, Any]]:
