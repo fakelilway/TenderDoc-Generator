@@ -516,14 +516,15 @@ def _prepare_original_format_for_export(
     Returns the path to the generated format DOCX, or None if not applicable.
     """
     if _is_original_tender_pdf(project):
-        from utils.minio_client import minio_client
+        from utils.minio_client import minio_client as mc
         from core.config import settings as s2
         tender_path = str(project.get("tender_file_path") or "")
         if not tender_path:
+            logger.warning("No tender_file_path in project; cannot build PDF format DOCX")
             return None
         try:
-            # Download from MinIO — tender files are stored in cloud storage
-            tender_bytes = minio_client.download_bytes(s2.minio_bucket, tender_path)
+            tender_bytes = mc.download_bytes(s2.minio_bucket, tender_path)
+            logger.info(f"Downloaded PDF from MinIO: {len(tender_bytes)} bytes")
             from services.original_docx_format_service import build_original_format_docx_from_pdf
             tmp_path = str(Path(tempfile.gettempdir()) / f"format_{project.get('id', '0')}.docx")
             profile = {}
@@ -532,12 +533,14 @@ def _prepare_original_format_for_export(
                 profile["company_name"] = str(cp.get("company_name", ""))
             except Exception:
                 pass
-            return build_original_format_docx_from_pdf(
+            result = build_original_format_docx_from_pdf(
                 tender_bytes, tmp_path, profile=profile
             )
+            logger.info(f"PDF format DOCX built: {result}")
+            return result
         except Exception as e:
-            logger.error(f"PDF original format copy failed: {e}")
-            raise
+            logger.error(f"PDF original format copy failed: {type(e).__name__}: {e}", exc_info=True)
+            return None
     return None
 
 
