@@ -124,21 +124,36 @@ def generate_v2_bid_package(
             break
 
     # ── Phase 4: Assemble markdown per volume ──
+    PAGE_BREAK = '\n\n<div style="page-break-after: always;"></div>\n\n'
+
     def _assemble_markdown(vol: str) -> str:
         lines: list[str] = []
         project = requirements.project_name or "投标项目"
         label = V2BidPackage.VOLUME_HEADINGS.get(vol, vol)
-        lines.append(f"# {project} {label}\n")
 
-        for title, original, filled in filled_pages.get(vol, []):
-            # Use filled template for non-prose, prose content for prose
-            if "施工" in title or _is_prose_page(title):
-                if vol == "technical" and vol == "technical" and tech_content:
-                    lines.append(f"## {title}\n\n{tech_content}\n")
+        # Cover page placeholder
+        lines.append(f'<div style="text-align:center; margin-top:40%;">\n\n')
+        lines.append(f'# {project}\n\n')
+        lines.append(f'## {label}\n\n')
+        lines.append(f'**投标人：{company_name}**\n\n')
+        lines.append(f'</div>{PAGE_BREAK}')
+
+        for idx, (title, original, filled) in enumerate(filled_pages.get(vol, [])):
+            # Use prose content for technical construction plan sections
+            if vol == "technical" and ("施工" in title or _is_prose_page(title)):
+                if tech_content and idx == 0:
+                    content = tech_content
                 else:
-                    lines.append(f"## {title}\n\n{filled}\n")
+                    content = filled
             else:
-                lines.append(f"## {title}\n\n{filled}\n")
+                content = filled
+
+            # Underline blanks for DOCX rendering
+            content = content.replace('________', '<u>        </u>')
+            content = content.replace('＿＿＿＿', '<u>        </u>')
+
+            # Page break before each major section
+            lines.append(f'{PAGE_BREAK}## {title}\n\n{content}\n')
 
         return "\n".join(lines)
 
