@@ -264,6 +264,15 @@ def run_bid_workflow(
 
     gen_mode = getattr(settings, "bid_generation_mode", "multi_agent")
     if gen_mode == "v2":
+        # Download tender bytes for PDF original format conversion
+        tender_bytes = None
+        try:
+            if _is_original_tender_pdf(project):
+                from utils.minio_client import minio_client as _mc
+                tender_bytes = _mc.download_bytes(settings.minio_bucket, str(project.get("tender_file_path", "")))
+        except Exception:
+            pass
+
         v2_pkg = generate_v2_bid_package(
             requirements,
             retrieved_by_section,
@@ -271,10 +280,12 @@ def run_bid_workflow(
             tender_text=state.tender_text,
             company_profile=company_profile,
             original_format_docx_available=_is_original_tender_docx(project) or _is_original_tender_pdf(project),
+            tender_bytes=tender_bytes,
         )
         state.draft_volumes = v2_pkg.volume_map()
         state.draft_markdown = v2_pkg.combined_markdown
         generation_mode = "v2_format_copy"
+        state.v2_format_docx = getattr(v2_pkg, 'format_docx_path', None)
         if v2_pkg.audit_result:
             audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
         else:
@@ -377,11 +388,12 @@ def run_bid_workflow(
             project_status="generating",
         )
         delivery_markdown = _delivery_markdown(state.draft_markdown)
+        format_path = getattr(state, 'v2_format_docx', None)
         exported = generation_service.export_markdown_for_project(
             project_id,
             delivery_markdown,
             generation_service.evaluate_generation_quality(delivery_markdown),
-            original_format_path=_prepare_original_format_for_export(project, state),
+            original_format_path=format_path or _prepare_original_format_for_export(project, state),
         )
         if exported:
             markdown_path, docx_path = exported

@@ -37,6 +37,7 @@ class V2BidPackage:
     combined_markdown: str = ""
     missing_checklist: list[str] = field(default_factory=list)
     audit_result: AuditResult | None = None
+    format_docx_path: str | None = None  # Pre-built format DOCX from PDF
 
     VOLUME_ORDER = ("commercial", "technical", "pricing")
     VOLUME_HEADINGS = {
@@ -65,11 +66,15 @@ def generate_v2_bid_package(
     tender_text: str = "",
     company_profile: dict[str, str] | None = None,
     original_format_docx_available: bool = False,
+    tender_bytes: bytes | None = None,
 ) -> V2BidPackage:
     """V2 generation: extract → fill → write → audit.
 
     Same external contract as generate_bid_package() but using the
     original-copy skeleton architecture.
+    
+    If tender_bytes is provided and is a PDF, the format chapter is converted
+    directly to DOCX during generation — no separate export step needed.
     """
     from core.config import get_settings
     settings = get_settings()
@@ -77,6 +82,19 @@ def generate_v2_bid_package(
     profile = company_profile or _load_company_profile()
     profile["company_name"] = company_name
     retrieved = retrieved_chunks_by_section or {}
+
+    # ── Phase 0: Build original format DOCX if PDF ──
+    built_format_docx: str | None = None
+    if original_format_docx_available and tender_bytes:
+        try:
+            from services.original_docx_format_service import build_original_format_docx_from_pdf
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+            built_format_docx = build_original_format_docx_from_pdf(
+                tender_bytes, tmp.name, profile=profile
+            )
+        except Exception:
+            built_format_docx = None
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
     if original_format_docx_available:
@@ -240,6 +258,7 @@ def generate_v2_bid_package(
         combined_markdown=f"{commercial_md}\n\n---\n\n{technical_md}\n\n---\n\n{pricing_md}",
         missing_checklist=missing,
         audit_result=audit,
+        format_docx_path=built_format_docx,
     )
 
 

@@ -30,6 +30,7 @@ class WorkflowState(BaseModel):
     bid_plan: dict[str, Any] | None = None
     draft_markdown: str = ""
     draft_volumes: dict[str, str] = Field(default_factory=dict)
+    v2_format_docx: str | None = None
     final_checklist: dict[str, Any] | None = None
     final_versions: list[dict[str, Any]] = Field(default_factory=list)
     review_report: dict[str, Any] | None = None
