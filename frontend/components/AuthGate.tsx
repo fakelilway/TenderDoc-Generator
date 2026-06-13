@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { AppLogo } from "@/components/AppLogo";
 import { getCurrentUser } from "@/lib/api";
 import {
   AUTH_STORAGE_KEY,
@@ -65,10 +66,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!checked || !allowed) {
     return (
-      <main className="grid min-h-screen place-items-center bg-field p-4">
-        <div className="flex items-center gap-3 rounded-lg border border-line bg-panel px-4 py-3 text-sm font-medium text-muted shadow-panel">
-          <Loader2 className="h-4 w-4 animate-spin text-brand" />
-          正在进入工作台
+      <main className="grid min-h-screen place-items-center bg-[linear-gradient(180deg,#fafafa_0%,#f5f5f7_48%,#eceff4_100%)] p-4">
+        <div className="ios-panel flex items-center gap-3 rounded-[24px] border px-5 py-4 text-sm font-medium text-[#6e6e73]">
+          <AppLogo className="h-10 w-10 rounded-[14px] border border-white/80 bg-white p-1" />
+          <Loader2 className="h-4 w-4 animate-spin text-[#007aff]" />
+          正在进入正奇标书生成工作台
         </div>
       </main>
     );
