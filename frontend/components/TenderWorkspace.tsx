@@ -1368,15 +1368,6 @@ export function TenderWorkspace({
             <button
               type="button"
               disabled={actionBusy}
-              onClick={() => handleDownload("markdown")}
-              className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Download className="h-4 w-4" />
-              Markdown
-            </button>
-            <button
-              type="button"
-              disabled={actionBusy}
               onClick={() => handleDownload("review")}
               className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/70 px-3.5 text-sm font-medium text-[#1d1d1f] hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
