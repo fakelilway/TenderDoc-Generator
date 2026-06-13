@@ -270,7 +270,7 @@ def run_bid_workflow(
             company_name=str((company_profile or {}).get("company_name", "") or settings.company_name),
             tender_text=state.tender_text,
             company_profile=company_profile,
-            original_format_docx_available=_is_original_tender_docx(project),
+            original_format_docx_available=_is_original_tender_docx(project) or _is_original_tender_pdf(project),
         )
         state.draft_volumes = v2_pkg.volume_map()
         state.draft_markdown = v2_pkg.combined_markdown
