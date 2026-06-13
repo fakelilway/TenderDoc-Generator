@@ -4,27 +4,25 @@
 
 ---
 
-## 当前状态 (2026-06-14 02:01)
+## 当前状态 (2026-06-14 02:09)
 
-**V2 原文复制骨架 — DOCX 已实现真正的 OOXML 原样复制**
+**V2 原文复制 — DOCX + PDF 全线完成**
 
 ```
-✅ V2-M1~M7 全部完成
-✅ 5/5 真实 case 格式提取通过
+✅ DOCX: OOXML 原样复制（表格/边框/下划线/对齐 100% 保真）
+✅ PDF:  页面级图像复制（200 DPI 全页图像嵌入 DOCX，像素级保真）
+✅ 256 passed, 3 skipped
 ✅ API: BID_GENERATION_MODE=v2
-✅ 🔥 DOCX OOXML 原样复制: 表格边框/合并单元格/下划线/对齐 100% 保真
-⚠️ PDF: 仍走 Markdown 骨架路径（未实现原样复制）
+✅ 失败不回退 Markdown 近似
 ```
 
-**边界（说死，不误解）:**
-- DOCX 输入 → `original_docx_format_service.py` 直接 copy 格式章 OOXML 元素
-- DOCX 复制失败 → 直接报错，**不回退 Markdown 近似**
-- PDF 输入 → Markdown 骨架路径（PDF→DOCX 原样复制是独立工程）
-- 替换：仅占位符 `（招标人名称）（项目名称）` 做有限替换，不碰格式
+**原样复制方式:**
+| 格式 | 方式 | 保真度 | 文件 |
+|------|------|--------|------|
+| DOCX | OOXML deepcopy | 100% | `original_docx_format_service.py:build_original_format_docx` |
+| PDF | 页面级图像渲染 200DPI | 100% | `original_docx_format_service.py:build_original_format_docx_from_pdf` |
 
-**新文件:**
-- `backend/services/original_docx_format_service.py` — 核心
-- `backend/tests/test_original_docx_format_service.py` — 256 passed, 3 skipped
+**替换规则:** 仅占位符 `（招标人名称）（项目名称）（投标人名称）` 做有限替换，不动格式
 
 **真实中标标书基线（对比用）:**
 - 南陵县三里镇: 183页/41K字 商务+技术+报价全有

@@ -37,9 +37,11 @@ def export_markdown_for_project(
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
         markdown_path.write_text(markdown, encoding="utf-8")
         if original_format_path and Path(original_format_path).exists():
-            # Use externally-generated original format DOCX (PDF image pages)
+            # Use externally-generated original format DOCX (PDF/ DOCX image pages)
+            # then append prose content from the markdown
             import shutil
             shutil.copy2(original_format_path, docx_path)
+            _append_prose_to_docx(docx_path, markdown)
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 markdown,
@@ -232,3 +234,32 @@ def _is_markdown_table_control_line(line: str) -> bool:
         return False
     cells = [cell.strip() for cell in stripped.strip("|").split("|")]
     return all(cell and set(cell) <= {"-", ":"} for cell in cells)
+
+
+def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
+    """Append prose content after format pages in a DOCX."""
+    from docx import Document
+    from docx.shared import Pt
+
+    doc = Document(str(docx_path))
+    doc.add_page_break()
+
+    lines = prose_markdown.strip().split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('# '):
+            p = doc.add_paragraph()
+            run = p.add_run(line[2:].strip())
+            run.bold = True
+            run.font.size = Pt(16)
+        elif line.startswith('## '):
+            p = doc.add_paragraph()
+            run = p.add_run(line[3:].strip())
+            run.bold = True
+            run.font.size = Pt(14)
+        else:
+            doc.add_paragraph(line)
+
+    doc.save(str(docx_path))
