@@ -37,16 +37,11 @@ def export_markdown_for_project(
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
 
         if original_format_path and Path(original_format_path).exists():
+            # Split format DOCX into three independent volume files at OOXML level
+            _split_and_export_volumes(original_format_path, tmp_path, project_id, markdown)
+            # Main docx = technical (has prose)
             import shutil
-            # Export three independent volume DOCX from the format file
-            for vol in ("commercial", "technical", "pricing"):
-                vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
-                shutil.copy2(original_format_path, vol_path)
-                if vol == "technical":
-                    _append_prose_to_docx(vol_path, markdown)
-            # Main docx = technical (has prose), or commercial as fallback
-            shutil.copy2(original_format_path, docx_path)
-            _append_prose_to_docx(docx_path, markdown)  # Prose content for technical volume
+            shutil.copy2(tmp_path / f"project_{project_id}_technical.docx", docx_path)
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 markdown,
@@ -277,3 +272,85 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
             doc.add_paragraph(line)
 
     doc.save(str(docx_path))
+
+
+def _split_and_export_volumes(
+    format_path: str,
+    tmp_path: Path,
+    project_id: int,
+    prose: str,
+) -> None:
+    """Split a merged format DOCX into three independent volume DOCX files
+    at OOXML element level, preserving tables, borders, and formatting."""
+    import re, shutil
+    from docx import Document as _D
+    from docx.oxml.ns import qn
+
+    src = _D(format_path)
+    body = src.element.body
+    elements = list(body)
+
+    # Volume boundary patterns (look for section headings that mark volume divisions)
+    VOL_BOUNDARIES = {
+        "commercial": re.compile(r"商务文件|商务标|商务及技术"),
+        "technical": re.compile(r"技术文件|施工组织|技术标"),
+        "pricing": re.compile(r"报价文件|报价标|已标价工程量清单|第二信封"),
+    }
+
+    # Initialize with all elements going to commercial by default
+    sections: dict[str, list] = {"commercial": [], "technical": [], "pricing": []}
+
+    # Determine volume boundaries by finding first occurrence of each marker
+    boundaries: list[tuple[int, str]] = []
+    for i, el in enumerate(elements):
+        text = "".join(node.text or "" for node in el.iter(qn("w:t")))
+        for vol, pat in VOL_BOUNDARIES.items():
+            if pat.search(text) and not any(b[1] == vol for b in boundaries):
+                boundaries.append((i, vol))
+                break
+    boundaries.sort()
+
+    # Assign elements to volumes based on boundaries
+    if not boundaries:
+        # No boundaries found — copy everything to all volumes
+        for vol in ("commercial", "technical", "pricing"):
+            vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
+            shutil.copy2(format_path, vol_path)
+            if vol == "technical":
+                _append_prose_to_docx(vol_path, prose)
+        return
+
+    # Build volume element lists
+    current_vol = "commercial"
+    boundary_idx = 0
+    for i, el in enumerate(elements):
+        if el.tag == qn("w:sectPr"):
+            continue
+        while boundary_idx < len(boundaries) and i >= boundaries[boundary_idx][0]:
+            current_vol = boundaries[boundary_idx][1]
+            boundary_idx += 1
+        sections[current_vol].append(el)
+
+    # Create three DOCX files with deepcopy of elements
+    for vol in ("commercial", "technical", "pricing"):
+        doc = _D()
+        _clear_body(doc)
+        for el in sections.get(vol, []):
+            doc.element.body.append(__import__('copy').deepcopy(el))
+        vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
+        # Copy section properties from source
+        for el in body:
+            if el.tag == qn("w:sectPr"):
+                doc.element.body.append(__import__('copy').deepcopy(el))
+                break
+        doc.save(str(vol_path))
+        if vol == "technical":
+            _append_prose_to_docx(vol_path, prose)
+
+
+def _clear_body(doc: 'Document') -> None:
+    """Remove all children from document body except sectPr."""
+    from docx.oxml.ns import qn as _qn
+    for child in list(doc.element.body):
+        if child.tag != _qn("w:sectPr"):
+            doc.element.body.remove(child)
