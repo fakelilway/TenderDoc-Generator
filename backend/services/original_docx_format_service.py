@@ -190,32 +190,36 @@ def build_original_format_docx_from_pdf(
 
 
 def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
-    """Find format chapter page range using text search."""
+    """Find format chapter page range using the last occurrence of the heading."""
     doc = fitz.open(pdf_path)
     try:
-        format_start: int | None = None
-        format_end: int | None = None
-
+        # Find ALL occurrences of the format chapter heading — use the LAST one
+        # (PDFs often have a TOC reference early; the actual chapter body is later)
+        matches: list[int] = []
         for page_num in range(doc.page_count):
             text = doc[page_num].get_text()
             compact = re.sub(r"\s+", "", text)
+            if FORMAT_CHAPTER_RE.search(compact):
+                matches.append(page_num)
 
-            if format_start is None and FORMAT_CHAPTER_RE.search(compact):
-                # Skip TOC pages
-                format_start = _skip_toc_pages(doc, page_num)
-
-            if format_start is not None and format_end is None and page_num > format_start:
-                if NEXT_CHAPTER_RE.match(compact) and not FORMAT_CHAPTER_RE.search(compact):
-                    format_end = page_num
-                    break
-
-        if format_start is None:
+        if not matches:
             return None
-        if format_end is None:
-            format_end = doc.page_count
 
-        # Convert to 1-based page numbers for pdf2docx
-        return (format_start + 1, format_end + 1)
+        # Use the last match as the actual chapter start
+        format_start = matches[-1]
+        # Skip TOC pages following the chapter heading
+        format_start = _skip_toc_pages(doc, format_start)
+
+        # Find the end: next chapter heading that's NOT the format chapter
+        format_end = doc.page_count
+        for page_num in range(format_start + 1, doc.page_count):
+            text = doc[page_num].get_text()
+            compact = re.sub(r"\s+", "", text)
+            if NEXT_CHAPTER_RE.match(compact) and not FORMAT_CHAPTER_RE.search(compact):
+                format_end = page_num
+                break
+
+        return (format_start + 1, format_end + 1)  # 1-based for pdf2docx
     finally:
         doc.close()
 
