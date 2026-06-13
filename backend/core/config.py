@@ -52,8 +52,7 @@ class Settings(BaseSettings):
     openrouter_model: str = Field("deepseek/deepseek-v4-pro", alias="OPENROUTER_MODEL")
     parser_llm_timeout_seconds: float = Field(180.0, alias="PARSER_LLM_TIMEOUT_SECONDS")
     bid_llm_provider: str = Field("auto", alias="BID_LLM_PROVIDER")
-    bid_generation_mode: str = Field("multi_agent", alias="BID_GENERATION_MODE")
-    # 长上下文生成跑在后台线程里，不会阻塞 API；超时给足，质量优先。
+    # 生成跑在后台线程里，不会阻塞 API；超时给足，质量优先。
     # 6000 tokens 装不下三卷标书，且 60s 等不到非流式长输出返回——
     # 生成失败时直接报错，由用户修正配置/输入后重试。
     bid_long_context_timeout_seconds: float = Field(

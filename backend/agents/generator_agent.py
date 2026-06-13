@@ -15,8 +15,6 @@ from prompts.generator_prompt import (
     build_bid_framework_brief,
     build_generation_audit_prompt,
     build_structure_audit_prompt,
-    build_long_context_prompt,
-    build_section_prompt,
     build_volume_agent_prompt,
     build_volume_revision_prompt,
 )
@@ -365,35 +363,12 @@ def generate_bid_package(
     company_profile: dict[str, object] | None = None,
     document_outline: list[dict[str, object]] | None = None,
 ) -> BidPackage:
+    """Generate bid package with multi-agent pipeline."""
     knowledge_images = _filter_knowledge_images_by_plan(knowledge_images, bid_plan)
     settings = get_settings()
-    generation_mode = str(
-        getattr(settings, "bid_generation_mode", "long_context") or "long_context"
-    ).lower()
     if not settings.enable_llm_generation:
-        raise GeneratorAgentError(
-            "ENABLE_LLM_GENERATION must be true. Local fallback generation is disabled."
-        )
-    if generation_mode not in {"long_context", "simple", "auto", "multi_agent"}:
-        raise GeneratorAgentError(
-            f"Unsupported BID_GENERATION_MODE={generation_mode!r}. "
-            "Fallback section generation is disabled; use long_context/simple/auto/multi_agent."
-        )
-    if generation_mode == "multi_agent":
-        return generate_bid_package_multi_agent(
-            requirements,
-            retrieved_chunks_by_section,
-            bid_template=bid_template,
-            pricing_strategy=pricing_strategy,
-            knowledge_images=knowledge_images,
-            bid_plan=bid_plan,
-            company_name=str((company_profile or {}).get("company_name") or "").strip()
-            or settings.company_name,
-            tender_text=tender_text,
-            company_profile=company_profile,
-            document_outline=document_outline,
-        )
-    return generate_bid_package_long_context(
+        raise GeneratorAgentError("ENABLE_LLM_GENERATION must be true.")
+    return generate_bid_package_multi_agent(
         requirements,
         retrieved_chunks_by_section,
         bid_template=bid_template,
@@ -405,68 +380,6 @@ def generate_bid_package(
         tender_text=tender_text,
         company_profile=company_profile,
         document_outline=document_outline,
-    )
-
-
-def generate_bid_package_long_context(
-    requirements: TenderRequirements,
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-    *,
-    bid_template: BidTemplate | None = None,
-    pricing_strategy: PricingStrategy | None = None,
-    knowledge_images: list[dict[str, object]] | None = None,
-    bid_plan: BidPlan | None = None,
-    company_name: str | None = None,
-    tender_text: str = "",
-    company_profile: dict[str, object] | None = None,
-    document_outline: list[dict[str, object]] | None = None,
-) -> BidPackage:
-    """Generate the whole bid in one model call.
-
-    This is the primary generation kernel for long-context models. Existing
-    template/evidence/DOCX infrastructure remains the product shell around it.
-    """
-    settings = get_settings()
-    company_name = company_name or settings.company_name
-    document_outline = _document_outline_dicts(
-        document_outline
-        or [
-            section.model_dump()
-            for section in build_bid_document_outline(requirements, bid_template)
-        ]
-    )
-    knowledge_chunks = _long_context_chunks(retrieved_chunks_by_section)
-    raw_markdown = _generate_long_context_with_llm(
-        requirements=requirements,
-        company_name=company_name,
-        document_outline=document_outline,
-        bid_plan=bid_plan,
-        template_name=bid_template.template_name if bid_template else "",
-        pricing_strategy=pricing_strategy,
-        knowledge_chunks=knowledge_chunks,
-        knowledge_images=knowledge_images,
-        tender_text=tender_text,
-        company_profile_block=company_profile_prompt_block(company_profile),
-    )
-    raw_markdown = sanitize_bid_markdown(raw_markdown)
-    volumes = split_delivery_markdown(raw_markdown)
-    commercial = sanitize_bid_markdown(volumes.get("commercial", ""))
-    technical = sanitize_bid_markdown(volumes.get("technical", ""))
-    pricing = sanitize_bid_markdown(volumes.get("pricing", ""))
-    combined = combine_delivery_volumes(
-        f"{_project_title(requirements)} 投标文件",
-        {
-            "commercial": commercial,
-            "technical": technical,
-            "pricing": pricing,
-        },
-    )
-    return BidPackage(
-        commercial_markdown=commercial,
-        technical_markdown=technical,
-        pricing_markdown=pricing,
-        combined_markdown=combined,
-        generation_mode="long_context",
     )
 
 
@@ -566,9 +479,13 @@ def generate_bid_package_multi_agent(
             v for v in VOLUME_ORDER if feedback_by_volume.get(v, "").strip()
         ]
         if not targets:
-            raise GeneratorAgentError(
-                "Structure audit requested revision but did not identify a target volume."
-            )
+            if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
+                raise GeneratorAgentError(
+                    "Structure audit returned revise without identifying specific volumes. "
+                    "The format outline tree may not have been parsed correctly — "
+                    "check the parsed bid_format_requirements and retry."
+                )
+            continue
         with ThreadPoolExecutor(max_workers=len(targets)) as executor:
             volumes.update(
                 dict(
@@ -612,9 +529,11 @@ def generate_bid_package_multi_agent(
             v for v in VOLUME_ORDER if feedback_by_volume.get(v, "").strip()
         ]
         if not targets:
-            raise GeneratorAgentError(
-                "Content audit requested revision but did not identify a target volume."
-            )
+            if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
+                raise GeneratorAgentError(
+                    "Content audit returned revise without identifying specific volumes."
+                )
+            continue
         with ThreadPoolExecutor(max_workers=len(targets)) as executor:
             volumes.update(
                 dict(
@@ -656,101 +575,12 @@ def generate_bid_package_multi_agent(
     )
 
 
-def _generate_commercial_volume(
-    requirements: TenderRequirements,
-    bid_template: BidTemplate | None,
-    pricing_strategy: PricingStrategy | None,
-    company_name: str,
-    knowledge_images: list[dict[str, object]] | None = None,
-) -> str:
-    parts = [
-        f"# {_project_title(requirements)} 商务文件",
-        "",
-        f"投标人：{company_name}",
-        "",
-        "【商务文件】",
-        "",
-    ]
-    emitted = False
-    if bid_template and bid_template.main_sections:
-        for section in bid_template.main_sections:
-            if (
-                _document_volume_for_section(section.title, section.section_type)
-                == "商务/资格标"
-            ):
-                parts.extend(
-                    _business_section_from_template(
-                        requirements,
-                        section,
-                        pricing_strategy,
-                        knowledge_images,
-                    )
-                )
-                emitted = True
-    if not emitted:
-        fallback = _business_bid_fallback(
-            requirements, pricing_strategy, bid_template, knowledge_images
-        )
-        parts.extend(fallback)
-    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
-def _generate_technical_volume(
-    requirements: TenderRequirements,
-    outline: list[BidSectionOutline],
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-    bid_template: BidTemplate | None,
-    use_local_section_fallback: bool,
-    company_name: str,
-    knowledge_images: list[dict[str, object]] | None = None,
-    bid_plan: BidPlan | None = None,
-) -> str:
-    parts = _document_preface(requirements, company_name)
-    parts[0] = f"# {_project_title(requirements)} 技术文件"
-    parts[2] = f"投标人：{company_name}"
-    parts.extend(["【技术文件】", ""])
-    parts.extend(
-        _technical_volume_from_outline(
-            requirements,
-            outline,
-            retrieved_chunks_by_section,
-            use_local_section_fallback,
-            knowledge_images,
-            bid_plan,
-        )
-    )
-    if bid_template and bid_template.appendix_sections:
-        parts.extend(_appendix_fallback(bid_template))
-        parts.append("")
-    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
-def _generate_pricing_volume(
-    requirements: TenderRequirements,
-    pricing_strategy: PricingStrategy | None,
-    company_name: str,
-    *,
-    missing_template: bool,
-) -> str:
-    parts = [
-        f"# {_project_title(requirements)} 报价文件",
-        "",
-        f"投标人：{company_name}",
-        "",
-        "【报价文件】",
-        "",
-        *_price_bid_fallback(pricing_strategy, missing_template=missing_template),
-    ]
-    return sanitize_bid_markdown("\n".join(parts).strip() + "\n")
 
 
-def _template_has_price_section(bid_template: BidTemplate | None) -> bool:
-    if not bid_template:
-        return False
-    return any(
-        _document_volume_for_section(section.title, section.section_type) == "报价/经济标"
-        for section in bid_template.main_sections
-    )
 
 
 def _project_title(requirements: TenderRequirements) -> str:
@@ -797,20 +627,6 @@ def _project_core_lines(requirements: TenderRequirements) -> list[str]:
     return lines if len(lines) > 2 else []
 
 
-def _technical_volume_from_outline(
-    requirements: TenderRequirements,
-    outline: list[BidSectionOutline],
-    retrieved_chunks_by_section: dict[str, list[RetrievalResult | str]],
-    use_local_section_fallback: bool,
-    knowledge_images: list[dict[str, object]] | None = None,
-    bid_plan: BidPlan | None = None,
-) -> list[str]:
-    parts = ["## 施工组织设计", "", "### 施工组织设计目录", ""]
-    for section in outline:
-        parts.append(f"- {section.title}")
-    parts.append("")
-    if not outline:
-        return parts
 
     def _render_section(section: BidSectionOutline) -> str:
         chunks = _filter_chunks_for_bid_plan(
@@ -848,29 +664,6 @@ def _technical_volume_from_outline(
     return parts
 
 
-def _manual_image_slot_block(section: BidSectionOutline) -> list[str]:
-    slots = [
-        slot
-        for slot in section.manual_image_slots
-        if slot.title.strip() or slot.placement.strip() or slot.description.strip()
-    ]
-    if not slots:
-        return []
-    lines = ["", "#### 手动插图预留", ""]
-    for index, slot in enumerate(slots, start=1):
-        title = slot.title.strip() or f"{section.title}插图{index}"
-        placement = slot.placement.strip() or section.title
-        description = slot.description.strip() or "此处需要人工补充图片。"
-        lines.extend(
-            [
-                f"> 【人工插图 {index}】{title}",
-                f"> 所属章节：{section.title}",
-                f"> 插入位置：{placement}",
-                f"> 图片说明：{description}",
-                "",
-            ]
-        )
-    return lines
 
 
 def _business_section_from_template(
@@ -1281,101 +1074,8 @@ def _escape_marker_caption(caption: str) -> str:
     return caption.replace('"', "'").strip()
 
 
-def generate_bid_section(
-    section_title: str,
-    requirements: TenderRequirements,
-    retrieved_chunks: list[str],
-    knowledge_images: list[dict[str, object]] | None = None,
-) -> str:
-    try:
-        return _generate_section_with_llm(
-            section_title, requirements, retrieved_chunks, knowledge_images
-        )
-    except Exception:
-        return _generate_section_fallback(section_title, requirements, retrieved_chunks)
 
 
-def _generate_long_context_with_llm(
-    *,
-    requirements: TenderRequirements,
-    company_name: str,
-    document_outline: list[dict[str, object]],
-    bid_plan: BidPlan | None,
-    template_name: str,
-    pricing_strategy: PricingStrategy | None,
-    knowledge_chunks: list[dict[str, object]],
-    knowledge_images: list[dict[str, object]] | None = None,
-    tender_text: str = "",
-    company_profile_block: str = "",
-) -> str:
-    settings = get_settings()
-    api_key, base_url, model = _llm_client_config(settings)
-
-    timeout_seconds = float(
-        getattr(settings, "bid_long_context_timeout_seconds", 180.0)
-    )
-    max_tokens = int(getattr(settings, "bid_long_context_max_tokens", 100000))
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
-    messages = build_long_context_prompt(
-        requirements=requirements,
-        company_name=company_name,
-        document_outline=document_outline,
-        bid_plan=bid_plan.model_dump(mode="json") if bid_plan else None,
-        template_name=template_name,
-        pricing_strategy=pricing_strategy.model_dump(mode="json")
-        if pricing_strategy
-        else None,
-        knowledge_chunks=knowledge_chunks,
-        knowledge_images=knowledge_images,
-        tender_text=tender_text,
-        company_profile_block=company_profile_block,
-    )
-
-    # 整本标书很容易超过单次输出上限。被截断（finish_reason=length）时先续写
-    # 最多 LONG_CONTEXT_MAX_CONTINUATIONS 轮；仍然截断就直接失败，避免静默
-    # 交付半本或格式错误的标书。
-    parts: list[str] = []
-    finish_reason = None
-    for round_index in range(1 + LONG_CONTEXT_MAX_CONTINUATIONS):
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.18,
-            max_tokens=max_tokens,
-            timeout=timeout_seconds,
-        )
-        if not response.choices:
-            raise GeneratorAgentError("LLM response did not contain choices")
-        choice = response.choices[0]
-        content = (choice.message.content or "").strip("\n")
-        if not content.strip() and not parts:
-            raise GeneratorAgentError("LLM response was empty")
-        parts.append(content)
-        finish_reason = getattr(choice, "finish_reason", None)
-        if finish_reason != "length":
-            break
-        logger.warning(
-            "Long-context output truncated (round %s); requesting continuation",
-            round_index + 1,
-        )
-        messages = [
-            *messages,
-            {"role": "assistant", "content": content},
-            {
-                "role": "user",
-                "content": "继续输出，从上次中断处继续，不要重复已输出内容，不要重复卷册标记之前的章节。",
-            },
-        ]
-
-    if finish_reason == "length":
-        raise GeneratorAgentError(
-            f"长上下文输出在 {1 + LONG_CONTEXT_MAX_CONTINUATIONS} 轮后仍被截断"
-            f"（max_tokens={max_tokens}）。已关闭 fallback，请提高输出上限后重试。"
-        )
-    combined = "".join(parts).strip()
-    if not combined:
-        raise GeneratorAgentError("LLM response was empty")
-    return combined
 
 
 def _generate_volume_with_llm(
@@ -1457,8 +1157,6 @@ def _run_structure_audit_with_llm(
     pricing_markdown: str,
 ) -> dict[str, Any]:
     """Pass 1: check format outline tree match. Returns audit dict with status/structural_issues."""
-    settings = get_settings()
-    api_key, base_url, model = _llm_client_config(settings)
     messages = build_structure_audit_prompt(
         requirements=requirements,
         company_name=company_name,
@@ -1469,10 +1167,9 @@ def _run_structure_audit_with_llm(
         pricing_markdown=pricing_markdown,
     )
     raw = _generate_messages_with_llm(
-        client=OpenAI(api_key=api_key, base_url=base_url, timeout=60.0),
-        model=model,
         messages=messages,
-        max_tokens=3000,
+        agent_name="structure-audit",
+        continuation_instruction="继续输出JSON审计结果，不要重复已输出的内容。",
     )
     audit = _parse_generation_audit_response(raw)
     if "structural_issues" in audit and "issues" not in audit:
@@ -1890,50 +1587,6 @@ def _coerce_bid_plan(bid_plan: BidPlan | dict | None) -> BidPlan | None:
         return None
 
 
-def _generate_section_fallback(
-    section_title: str,
-    requirements: TenderRequirements,
-    retrieved_chunks: list[str],
-) -> str:
-    project_name = _project_title(requirements)
-    relevant_requirements = _relevant_requirement_text(section_title, requirements)
-    template_points = "\n".join(
-        f"- {chunk[:260].strip()}" for chunk in retrieved_chunks[:3] if chunk.strip()
-    )
-    if not template_points:
-        template_points = "- 参考企业既有公路工程投标文件的施工组织设计格式组织编写。"
-    first_section, second_section = _fallback_subsections(section_title)
-
-    return f"""## {section_title}
-
-### 第一节、{first_section}
-
-#### 一、编制原则
-我单位针对{project_name}的招标文件要求、工程特点、工期目标、质量标准和安全目标进行综合分析，按照企业既有投标文件“施工组织设计”的编制深度组织本章节内容。本章节坚持“响应招标文件、结合现场条件、突出重点难点、保证履约落地”的原则，确保技术方案内容完整、措施明确、责任清晰。
-
-#### 二、招标要求响应
-{relevant_requirements}
-
-#### 三、企业模板依据
-{template_points}
-
-### 第二节、{second_section}
-
-#### 一、组织实施措施
-本公司将组建高效、精干、专业配套的项目管理机构，实行项目经理负责制，统筹工程技术、质量安全、计划合约、物资设备和综合协调等工作。各专业施工队伍按施工区段和工序流水组织进场，做到人员、机械、材料和技术方案同步落实。
-
-#### 二、过程控制措施
-施工过程中严格执行技术交底、样板引路、过程检查、隐蔽验收、资料同步归档等管理制度。对涉及工期、质量、安全、环保和文明施工的关键节点，项目部实行日检查、周调度、月总结，发现偏差及时纠偏，确保各项承诺满足招标文件要求。
-
-| 控制项目 | 主要措施 | 责任岗位 | 形成资料 |
-| --- | --- | --- | --- |
-| 技术交底 | 分部分项工程开工前完成书面交底，明确工艺、质量、安全和环保要求 | 技术负责人、施工员 | 技术交底记录 |
-| 过程检查 | 对关键工序实行旁站、巡检和隐蔽验收，发现偏差及时整改闭合 | 质量员、安全员 | 检查记录、整改闭合单 |
-| 资料归档 | 施工记录、试验检测、验收资料与现场进度同步形成 | 资料员、专业工程师 | 施工资料台账 |
-
-#### 三、风险与合规控制
-针对招标文件列明的否决投标、重大偏差和实质性响应要求，我单位将在投标文件编制、施工准备、过程实施和交验收尾各阶段逐项复核，确保工期、质量、安全、资质、人员、设备、保证金及其他承诺均实质性响应招标文件。
-"""
 
 
 def _bid_text_chunks(chunks: list[RetrievalResult | str]) -> list[str]:

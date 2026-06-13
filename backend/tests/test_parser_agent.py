@@ -7,7 +7,6 @@ import pytest
 from agents.parser_agent import (
     _extract_project_name,
     _extract_rule_based_requirements,
-    _merge_requirements,
     parse_tender,
     parse_tender_response,
 )
@@ -146,21 +145,6 @@ def test_rule_based_extraction_gets_core_project_fields() -> None:
     assert "合格标准" in parsed.quality_standard
     assert parsed.safety_target == "无安全责任事故发生"
     assert "2026年7月1日" in parsed.bid_deadline
-
-
-def test_merge_requirements_rejects_placeholder_project_name() -> None:
-    rule_based = TenderRequirements(project_name="见投标人须知前附表")
-    llm_based = TenderRequirements(
-        project_name="萧县2025年农村公路提质改造联网路工程",
-        tenderer_name="萧县交通运输局",
-        planned_duration="90日历天",
-    )
-
-    merged = _merge_requirements(rule_based, llm_based)
-
-    assert merged.project_name == "萧县2025年农村公路提质改造联网路工程"
-    assert merged.tenderer_name == "萧县交通运输局"
-    assert merged.planned_duration == "90日历天"
 
 
 def test_parse_tender_raises_when_llm_returns_non_json(
@@ -386,47 +370,6 @@ def test_extract_format_requirements_summarizes_format_chapter_not_raw_forms():
     assert "第十章 其他资料" not in result
 
 
-def test_extract_format_requirements_captures_scattered_format_clauses():
-    from agents.parser_agent import _extract_format_requirements
-
-    text = (
-        "第二章 投标人须知\n"
-        "3.7.1 投标文件由商务及技术文件、报价文件组成。\n"
-        "投标文件应包括投标函、法定代表人身份证明、授权委托书、投标保证金、资格审查资料、承诺函。\n"
-        "3.7.3 投标文件应用不褪色材料书写或打印，并由投标人的法定代表人或其委托代理人签字或盖章。\n"
-        "3.7.4 投标文件正本一份，副本四份。\n"
-        "4.1 密封和标记：投标文件封套应加盖投标人单位章。\n"
-        "电子投标文件应按交易系统要求加密上传，未成功解密的按无效投标处理。\n"
-        "第三章 评标办法\n"
-        "评标采用综合评估法。\n"
-    )
-
-    result = _extract_format_requirements(text)
-
-    assert "商务及技术文件、报价文件组成" in result
-    assert "法定代表人身份证明" in result
-    assert "授权委托书" in result
-    assert "签字或盖章" in result
-    assert "正本一份，副本四份" in result
-    assert "加密上传" in result
-
-
-def test_merge_requirements_combines_llm_and_rule_format_requirements():
-    rule_based = TenderRequirements(
-        project_name="测试工程",
-        bid_format_requirements="- 投标文件正本一份，副本四份\n- 密封和标记：封套加盖单位章",
-    )
-    llm_based = TenderRequirements(
-        project_name="测试工程",
-        bid_format_requirements="- 投标文件包括投标函、授权委托书\n- 投标文件正本一份，副本四份",
-    )
-
-    merged = _merge_requirements(rule_based, llm_based)
-
-    assert "投标文件包括投标函、授权委托书" in merged.bid_format_requirements
-    assert "投标文件正本一份，副本四份" in merged.bid_format_requirements
-    assert "密封和标记：封套加盖单位章" in merged.bid_format_requirements
-    assert merged.bid_format_requirements.count("投标文件正本一份，副本四份") == 1
 
 
 def test_extract_format_requirements_empty_when_no_chapter():

@@ -82,166 +82,8 @@ def _clean_chunk(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def build_section_prompt(
-    section_title: str,
-    requirements: TenderRequirements,
-    retrieved_chunks: list[str],
-    knowledge_images: list[dict[str, object]] | None = None,
-) -> list[dict[str, str]]:
-    cleaned_chunks = [
-        c for c in (redact_pii(_clean_chunk(chunk)) for chunk in retrieved_chunks) if c
-    ]
-    chunks_text = "\n\n".join(
-        f"[企业真实投标文件/知识库片段 {index + 1}]\n{chunk}"
-        for index, chunk in enumerate(cleaned_chunks)
-    )
-    user_prompt = f"""请撰写【技术标】章节：{section_title}
-
-项目名称：{requirements.project_name}
-
-资格要求：
-{_format_items([item.description for item in requirements.qualification_list])}
-
-技术评分/评审要求：
-{_format_items([item.description for item in requirements.technical_score_items])}
-
-废标/否决风险：
-{_format_items([item.description for item in requirements.invalid_bid_items])}
-
-可参考的企业素材（仅供吸收措辞与深度，禁止照抄其页码、点线或残句）：
-{chunks_text or "暂无可参考片段，请按企业既有公路/市政/建筑投标文件的施工组织设计深度撰写。"}
-
-{_format_knowledge_images(knowledge_images)}
-
-写作约束必须遵守：
-- 输出 Markdown。
-- 第一行必须是二级标题 `## {section_title}`。
-- 不得改写传入的章节标题；章内小节可使用：`### 第一节、...`、`#### 一、...`、`#### 1. ...`、`#### （1）...`。
-- 内容必须像正式投标文件，语气使用“我单位”“本公司”“本项目部”，每个小节由完整段落组成，保持承诺性、落地性。
-- 每章至少写 2 个小节，每个小节至少 2 段连贯论述或一张规范表格。
-- 进度计划、劳动力计划、机械设备计划、质量/安全责任分工、资格响应清单等天然表格内容必须输出 Markdown 表格。
-- 只有在【可插入知识库图片资料】中存在匹配资料时，才可在需要插图的位置单独一行输出知识库图片标记；禁止编造图片编号。
-- 必须明确响应招标文件中的工期、质量、安全、资质、评分点和废标/否决风险，并转化为我方措施与承诺。
-- 涉及人员、证书、业绩、报价等无依据的企业事实数据时，按规范留下划线空白“________”，禁止编造，禁止写“人工确认点/待补充”等提示词。
-- 严禁出现页码、页眉页脚、目录点线、自查语句或解释性旁白。
-"""
-    return [
-        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
 
 
-def build_long_context_prompt(
-    *,
-    requirements: TenderRequirements,
-    company_name: str,
-    document_outline: list[dict[str, Any]],
-    bid_plan: dict[str, Any] | None = None,
-    template_name: str = "",
-    pricing_strategy: dict[str, Any] | None = None,
-    knowledge_chunks: list[dict[str, Any]] | None = None,
-    knowledge_images: list[dict[str, Any]] | None = None,
-    tender_text: str = "",
-    company_profile_block: str = "",
-) -> list[dict[str, str]]:
-    """Build the simple long-context generation prompt.
-
-    This prompt is intentionally document-level: selected knowledge is provided
-    as reference material, while the model must produce the complete bid in one
-    pass so tender nuance is not lost between per-section calls.
-    """
-    chunks = _format_long_context_chunks(knowledge_chunks or [])
-    images = _format_knowledge_images(knowledge_images)
-    profile_section = (
-        "\n【投标人企业档案（已人工核实，必须直接用于投标人基本状况表、"
-        "投标函落款、资格审查资料等处，禁止改写或留空）】\n"
-        f"{company_profile_block}\n"
-        if company_profile_block
-        else ""
-    )
-    user_prompt = f"""请一次性生成完整投标文件 Markdown 成稿。
-
-项目名称：{requirements.project_name or "投标项目"}
-投标人：{company_name}
-公司风格案例：{template_name or "未选择，完全按招标文件格式和系统确认目录生成"}
-{profile_section}
-
-【项目核心字段】
-- 招标人/采购人：{requirements.tenderer_name or "________"}
-- 建设地点：{requirements.project_location or "________"}
-- 招标范围/工程内容：{requirements.tender_scope or "________"}
-- 计划工期：{requirements.planned_duration or "________"}
-- 质量标准：{requirements.quality_standard or "________"}
-- 安全目标：{requirements.safety_target or "________"}
-- 投标截止时间：{requirements.bid_deadline or "________"}
-
-【招标文件格式要求（最高权威，商务卷组成和表单必须逐项满足）】
-{requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；商务卷按【完整标书目录/人工确认结构】输出。"}
-
-【必须输出的卷册】
-请严格按下面三个内部卷册标记输出，标记本身必须原样保留，便于系统拆分 DOCX：
-<!-- tdg:volume:commercial -->
-# {requirements.project_name or "投标项目"} 商务文件
-
-<!-- tdg:volume:technical -->
-# {requirements.project_name or "投标项目"} 技术文件
-
-<!-- tdg:volume:pricing -->
-# {requirements.project_name or "投标项目"} 报价文件
-
-【完整标书目录/人工确认结构】
-{_format_outline(document_outline)}
-
-【生成计划/BidPlan】
-{_format_bid_plan(bid_plan)}
-
-【招标文件解析要求】
-资格要求：
-{_format_items([item.description for item in requirements.qualification_list])}
-
-技术评分/评审要求：
-{_format_items([item.description for item in requirements.technical_score_items])}
-
-废标/否决风险：
-{_format_items([item.description for item in requirements.invalid_bid_items])}
-
-【招标文件全文关键内容】
-{_format_tender_text(tender_text)}
-
-【商务/报价约束】
-{_format_pricing_strategy(pricing_strategy)}
-
-【已选择/检索企业资料】
-{chunks or "暂无文本资料。请按招标文件要求和企业常规投标文件深度生成，不得编造企业事实。"}
-
-{images}
-
-【生成要求】
-- 输出只能是 Markdown 正文，不要解释你如何生成。
-- 必须同时覆盖商务/资格资料、技术标/施工组织设计、附图附表、报价/经济标说明。
-- 章节结构权威顺序：招标文件中明确规定的投标文件组成、格式要求和表单清单优先于一切历史案例；【完整标书目录/人工确认结构】是人工确认后的本项目目录。两者如有冲突，必须服从招标文件格式要求，不要自行发明大目录。
-- 商务标写成真实投标文件语气，包含投标函、授权/法人证明、资格审查、保证金、承诺函等需要的正式内容。
-- 技术标必须写成可交付的施工组织设计成稿，不要写评分点摘要或空泛原则；必须吸收招标文件全文中的工程范围、施工内容、工期、质量标准、安全环保、交通组织、材料/机械/人员、关键节点和验收要求。
-- 每个施工组织设计主章至少包含 3 个有项目针对性的小节；每个小节至少 2 段连贯论述，不能只写一两句。
-- 进度计划、劳动力/机械设备投入、项目管理机构、资格响应、主要施工工序、质量/安全责任分工等天然表格内容必须输出 Markdown 表格，表格数据无依据时用“________”，不要省略表格。
-- 正文必须出现具体项目名称、工程类别、施工范围和招标文件要求的响应内容；禁止只输出通用格式壳。
-- 报价文件只写真实报价文件目录、编制依据和响应说明；具体金额、清单单价、合价、税金等没有依据时留“________”，不得编造。
-- 需要插入知识库图片时，单独一行使用 `{{{{knowledge_image:document_id=数字 caption="说明"}}}}`，只能使用【可插入知识库图片资料】列出的 document_id。
-- 【投标人企业档案】中已提供的字段（公司名称、法定代表人、注册资本、资质等级、项目经理等）必须原样填入对应表格和正文，禁止留“________”。
-- 企业档案未提供且缺少其他事实依据的人员姓名、证书编号、业绩金额、保证金金额、报价金额等，使用“________”或“详见已标价工程量清单”，禁止写“人工确认点/待补充/系统不自动生成”等提示语。
-- 禁止输出页眉页脚、页码、目录点线、RAG 残片、自查表、AI 说明或生成器语气。
-"""
-    return [
-        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-
-
-_VOLUME_LABELS = {
-    "commercial": "商务/资格文件",
-    "technical": "技术文件/施工组织设计",
-    "pricing": "报价文件/经济标",
-}
 
 
 def build_volume_agent_prompt(
@@ -292,6 +134,9 @@ def build_volume_agent_prompt(
 【招标文件格式要求（最高权威）】
 {requirements.bid_format_requirements or "- 招标文件未提取到明确格式要求；按本卷人工确认目录输出。"}
 
+【本卷必需节点（从格式章节提取，逐项生成，不得增减）】
+{_format_volume_node_tree(requirements, volume)}
+
 【本项目标书框架 Skill 输出（分发前已确认，必须服从）】
 {framework_brief or build_bid_framework_brief(requirements, document_outline)}
 
@@ -313,6 +158,21 @@ def build_volume_agent_prompt(
 
 【招标文件全文关键内容】
 {_format_tender_text(tender_text)}
+
+【生成规则——区分"照抄表单"和"自由撰写"】
+本卷节点分为两类，你必须严格遵守各自的规则：
+
+1. 照抄表单（投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、各类表格等）：
+   - 必须从招标文件全文关键内容中定位对应的模板原文，逐字照抄。
+   - 表格必须原样复制表头和列项，不得改顺序、不得增删列。
+   - 只允许替换公司信息（投标人名称→{company_name}、日期、法人代表等已提供的企业档案字段）。
+   - 公司档案未提供的、无依据的事实数据，保留招标文件原文的下划线空白"________"。
+   - 禁止改写、简写、用自己的话重述。
+
+2. 自由撰写（施工组织设计、技术方案、施工部署等）：
+   - 必须是成稿的连贯论述，不是评分点摘要。
+   - 必须吸收招标文件全文中的工程范围、工期、质量标准、安全目标。
+   - 每个主章至少3个小节，每节至少2段连贯论述。
 
 【商务/报价约束】
 {_format_pricing_strategy(pricing_strategy)}
@@ -373,6 +233,9 @@ def build_volume_revision_prompt(
 【总审打回修改意见】
 {audit_feedback or "- 首轮本卷自查：补齐漏项、删除越卷内容、修正生成器语气。"}
 
+【本卷必需节点树（从招标文件格式章节提取，必须逐项匹配，不得增减）】
+{_format_volume_node_tree(requirements, volume)}
+
 【生成计划/BidPlan】
 {_format_bid_plan(bid_plan)}
 
@@ -388,6 +251,21 @@ def build_volume_revision_prompt(
 
 【招标文件全文关键内容】
 {_format_tender_text(tender_text)}
+
+【生成规则——区分"照抄表单"和"自由撰写"】
+本卷节点分为两类，你必须严格遵守各自的规则：
+
+1. 照抄表单（投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、各类表格等）：
+   - 必须从招标文件全文关键内容中定位对应的模板原文，逐字照抄。
+   - 表格必须原样复制表头和列项，不得改顺序、不得增删列。
+   - 只允许替换公司信息（投标人名称→{company_name}、日期、法人代表等已提供的企业档案字段）。
+   - 公司档案未提供的、无依据的事实数据，保留招标文件原文的下划线空白"________"。
+   - 禁止改写、简写、用自己的话重述。
+
+2. 自由撰写（施工组织设计、技术方案、施工部署等）：
+   - 必须是成稿的连贯论述，不是评分点摘要。
+   - 必须吸收招标文件全文中的工程范围、工期、质量标准、安全目标。
+   - 每个主章至少3个小节，每节至少2段连贯论述。
 
 【商务/报价约束】
 {_format_pricing_strategy(pricing_strategy)}
@@ -463,6 +341,7 @@ def build_structure_audit_prompt(
 }}
 - status=pass 当且仅当三卷结构完全匹配格式目录树（节点数量、层级、归属卷全部一致）。
 - 只要有任一卷缺失必需节点、多出未要求节点、子节点层级错位或归属卷错误，status 必须是 revise。
+- **status=revise 时，structural_issues 不能为空**——必须逐条写清楚哪个 volume、什么问题、怎么改。
 - revision_prompt 只给结构层面的修改指令。不得涉及内容质量、废标风险或文笔。
 """
     return [
@@ -506,6 +385,21 @@ def build_generation_audit_prompt(
 【招标文件全文关键内容】
 {_format_tender_text(tender_text)}
 
+【生成规则——区分"照抄表单"和"自由撰写"】
+本卷节点分为两类，你必须严格遵守各自的规则：
+
+1. 照抄表单（投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、各类表格等）：
+   - 必须从招标文件全文关键内容中定位对应的模板原文，逐字照抄。
+   - 表格必须原样复制表头和列项，不得改顺序、不得增删列。
+   - 只允许替换公司信息（投标人名称→{company_name}、日期、法人代表等已提供的企业档案字段）。
+   - 公司档案未提供的、无依据的事实数据，保留招标文件原文的下划线空白"________"。
+   - 禁止改写、简写、用自己的话重述。
+
+2. 自由撰写（施工组织设计、技术方案、施工部署等）：
+   - 必须是成稿的连贯论述，不是评分点摘要。
+   - 必须吸收招标文件全文中的工程范围、工期、质量标准、安全目标。
+   - 每个主章至少3个小节，每节至少2段连贯论述。
+
 【待审查三卷】
 【commercial / 商务资格卷】
 {commercial_markdown}
@@ -538,11 +432,6 @@ def build_generation_audit_prompt(
         {"role": "system", "content": GENERATOR_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-
-
-def build_chief_editor_prompt(**kwargs: Any) -> list[dict[str, str]]:
-    """Backward-compatible alias: chief editor now audits and never merges."""
-    return build_generation_audit_prompt(**kwargs)
 
 
 def build_bid_framework_brief(
@@ -708,6 +597,30 @@ def _outline_item_matches_volume(item: dict[str, Any], volume: str) -> bool:
     return _outline_volume_key(text) == volume
 
 
+def _format_volume_node_tree(requirements: TenderRequirements, volume: str) -> str:
+    """Render the format_outline_tree for a single volume as an exact node list."""
+    nodes = requirements.format_outline_tree.get(volume, [])
+    if not nodes:
+        return f"- 未提取到{_VOLUME_LABELS.get(volume, volume)}格式树；按人工确认目录和格式要求生成。"
+
+    lines: list[str] = []
+    for node in nodes:
+        title = node.title if hasattr(node, "title") else node.get("title", "")
+        children = node.children if hasattr(node, "children") else node.get("children", [])
+        lines.append(f"- {title}")
+        for child in children:
+            ct = child.title if hasattr(child, "title") else child.get("title", "")
+            gc = child.children if hasattr(child, "children") else child.get("children", [])
+            if gc:
+                lines.append(f"  - {ct}")
+                for g in gc:
+                    gt = g.title if hasattr(g, "title") else g.get("title", "")
+                    lines.append(f"    - {gt}")
+            else:
+                lines.append(f"  - {ct}")
+    return "\n".join(lines)
+
+
 def _outline_volume_key(text: str) -> str:
     if any(keyword in text for keyword in ("报价", "经济", "清单", "price")):
         return "pricing"
@@ -761,6 +674,9 @@ def _text_matches_volume(text: str, volume: str) -> bool:
     return any(
         keyword in text for keyword in ("商务", "资格", "证书", "营业执照", "授权", "保证金", "承诺")
     )
+
+
+_VOLUME_LABELS = {"commercial": "商务文件", "technical": "技术文件", "pricing": "报价文件"}
 
 
 def _volume_label(volume: str) -> str:

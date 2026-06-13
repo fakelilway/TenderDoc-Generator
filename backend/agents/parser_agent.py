@@ -280,14 +280,6 @@ def _extract_core_project_fields(text: str) -> dict[str, str]:
     }
 
 
-def _prefer_text(primary: str, secondary: str) -> str:
-    primary = _normalize_candidate_text(primary or "")
-    if primary and not _is_placeholder_field_value(primary):
-        return primary
-    secondary = _normalize_candidate_text(secondary or "")
-    return "" if _is_placeholder_field_value(secondary) else secondary
-
-
 def _is_placeholder_field_value(value: str) -> bool:
     normalized = _normalize_candidate_text(value)
     if not normalized:
@@ -840,56 +832,6 @@ def _extract_rule_based_requirements(text: str) -> TenderRequirements:
         qualification_list=_dedupe_items(qualification_items),
         technical_score_items=_dedupe_items(score_items),
         invalid_bid_items=_dedupe_items(invalid_items),
-    )
-
-
-def _merge_requirements(
-    rule_based: TenderRequirements, llm_based: TenderRequirements
-) -> TenderRequirements:
-    project_name = rule_based.project_name
-    if not project_name or _is_placeholder_project_name(project_name):
-        project_name = llm_based.project_name
-    if _is_placeholder_project_name(project_name):
-        project_name = ""
-
-    return TenderRequirements(
-        project_name=project_name,
-        tenderer_name=_prefer_text(rule_based.tenderer_name, llm_based.tenderer_name),
-        project_location=_prefer_text(
-            rule_based.project_location, llm_based.project_location
-        ),
-        tender_scope=_prefer_text(rule_based.tender_scope, llm_based.tender_scope),
-        planned_duration=_prefer_text(
-            rule_based.planned_duration, llm_based.planned_duration
-        ),
-        quality_standard=_prefer_text(
-            rule_based.quality_standard, llm_based.quality_standard
-        ),
-        safety_target=_prefer_text(rule_based.safety_target, llm_based.safety_target),
-        bid_deadline=_prefer_text(rule_based.bid_deadline, llm_based.bid_deadline),
-        # 格式要求是废标敏感信息：LLM 的整理版不能覆盖规则抓取的原文兜底，
-        # 二者合并去重后一起交给生成器。
-        bid_format_requirements=_merge_format_requirements(
-            llm_based.bid_format_requirements, rule_based.bid_format_requirements
-        ),
-        qualification_list=_dedupe_items(
-            [*rule_based.qualification_list, *llm_based.qualification_list]
-        ),
-        technical_score_items=_dedupe_items(
-            [*rule_based.technical_score_items, *llm_based.technical_score_items]
-        ),
-        invalid_bid_items=_dedupe_items(
-            [*rule_based.invalid_bid_items, *llm_based.invalid_bid_items]
-        ),
-    )
-
-
-def _has_rule_based_content(requirements: TenderRequirements) -> bool:
-    return bool(
-        requirements.project_name
-        or requirements.qualification_list
-        or requirements.technical_score_items
-        or requirements.invalid_bid_items
     )
 
 

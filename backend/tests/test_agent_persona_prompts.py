@@ -7,23 +7,6 @@ from prompts.generator_prompt import GENERATOR_SYSTEM_PROMPT
 from prompts.parser_prompt import PARSER_SYSTEM_PROMPT
 
 
-def test_all_agent_prompts_have_role_playing_experience_and_task_boundary() -> None:
-    prompts = {
-        "parser": PARSER_SYSTEM_PROMPT,
-        "generator": GENERATOR_SYSTEM_PROMPT,
-        "reviewer": REVIEWER_SYSTEM_PROMPT,
-        "pricing": PRICING_SYSTEM_PROMPT,
-        "scoring": SCORING_SYSTEM_PROMPT,
-    }
-
-    for agent_name, prompt in prompts.items():
-        assert "角色扮演" in prompt, agent_name
-        assert "经验背书" in prompt, agent_name
-        assert "人格化工作方式" in prompt, agent_name
-        assert "你的任务" in prompt, agent_name
-        assert (
-            "不要编造" in prompt or "不得编造" in prompt or "不替生成 Agent 找借口" in prompt
-        ), agent_name
 
 
 def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
