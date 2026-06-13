@@ -28,25 +28,26 @@ def export_markdown_for_project(
     *,
     original_format_path: str | None = None,
 ) -> tuple[str, str]:
-    # Defense in depth: workflow meta sections and tdg volume markers must
-    # never reach the delivered document, even if the caller forgot to strip.
     markdown = strip_meta_notes(markdown)
     title = _extract_markdown_title(markdown) or "投标文件"
     with TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         markdown_path = tmp_path / f"project_{project_id}_bid.md"
-        docx_path = tmp_path / f"project_{project_id}_bid.docx"
         markdown_path.write_text(markdown, encoding="utf-8")
-        if original_format_path:
-            try:
-                from pathlib import Path as _P
-                if _P(original_format_path).exists():
-                    import shutil
-                    shutil.copy2(original_format_path, docx_path)
-                    _append_prose_to_docx(docx_path, markdown)
-            except Exception:
-                pass
-        if not original_format_path and not _try_export_original_docx_format(project_id, docx_path):
+        docx_path = tmp_path / f"project_{project_id}_bid.docx"
+
+        if original_format_path and Path(original_format_path).exists():
+            import shutil
+            # Export three independent volume DOCX from the format file
+            for vol in ("commercial", "technical", "pricing"):
+                vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
+                shutil.copy2(original_format_path, vol_path)
+                if vol == "technical":
+                    _append_prose_to_docx(vol_path, markdown)
+            # Main docx = technical (has prose), or commercial as fallback
+            shutil.copy2(original_format_path, docx_path)
+            _append_prose_to_docx(docx_path, markdown)
+        elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 markdown,
                 docx_path,
@@ -64,6 +65,15 @@ def export_markdown_for_project(
         docx_object = f"projects/{project_id}/generated/bid.docx"
         minio_client.upload_file(settings.minio_bucket, markdown_path, markdown_object)
         minio_client.upload_file(settings.minio_bucket, docx_path, docx_object)
+
+        # Upload three independent volume DOCX files
+        for vol in ("commercial", "technical", "pricing"):
+            vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
+            if vol_path.exists():
+                minio_client.upload_file(
+                    settings.minio_bucket, vol_path,
+                    f"projects/{project_id}/generated/{vol}.docx"
+                )
 
     _update_generation_paths(
         project_id,
