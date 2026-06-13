@@ -4,35 +4,22 @@
 
 ---
 
-## 当前状态 (2026-06-14 00:02)
+## 当前状态 (2026-06-14 00:40)
 
-**V2 原文复制骨架 — 全线完成并接入 API**
+**V2 全文复制骨架 — 流程跑通，正在优化内容质量**
 
 ```
-✅ V2-M1  格式页提取器      extract_format_pages()         零LLM
-✅ V2-M2  原文模板抽取      Codex 已完成                   零LLM
-✅ V2-M3  Form Filler       fill_page_template()           零LLM
-✅ V2-M4  Content Writer    fill_technical_volume()         1次LLM
-✅ V2-M5  三层审计          full_audit()                   1次LLM
-✅ V2-M6  端到端管线        generate_v2_bid_package()      已接入API
-✅ V2-M7  5/5真实case验证   长丰/萧县/南陵/颍州/鸠江 全过
+✅ V2-M1~M7 全部完成
+✅ 5/5 真实 case 格式提取通过
+✅ API: BID_GENERATION_MODE=v2 (3bc10f8)
+✅ Content Writer 强化: ≥5段/节, 真实中标风格示例
+✅ Form Filler 强化: 招标人/项目名/工期/质量自动填入
+🔧 待加强: 表格数量少(3 vs 49-75)、施工方案篇幅薄(9K vs 41K-322K字)
+
+📊 VS 真实中标标书基线:
+  南陵县三里镇(183页/41K字) + 萧县2025(892页/322K字) = 黄金标准
+  每次生成后对比: 表格密度/施工篇幅/项目针对性/填空率
 ```
-
-**API 模式:** `BID_GENERATION_MODE=v2` (.env)，切回 V1 改 `multi_agent`
-
-**关键决定:**
-- Pass 1 结构审计去 LLM — 确定性比对，不再幻觉假阳性
-- 结构从"代码生成"升级到"原文复制"（第一性原理）
-- 零 LLM 层：格式提取 + 表单填空 + 格式审计 + 证据审计
-
-**测试:** 235 passed, 3 skipped
-
-**下一步建议:**
-- 跑一次前端端到端（点「重新生成」→ 查看输出）
-- 从 V1 Markdown 骨架完全切换到 V2
-- 删除 `_enforce_skeleton_headings` 和 LLM Pass 1 等 V1 专用代码
-
-**原则铁律:** 结构交给原文；原文 > 代码 > LLM
 
 ## 开发环境
 
