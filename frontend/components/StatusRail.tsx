@@ -9,7 +9,8 @@ import {
   Loader2,
   ShieldCheck,
   UploadCloud,
-  UserCheck
+  UserCheck,
+  X
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -87,7 +88,7 @@ function statusIndex(status: string) {
   if (["uploading", "uploaded"].includes(value)) {
     return 0;
   }
-  if (["parsing", "parsed", "parsed_confirmed", "outline_ready", "outline_review", "outline_confirmed"].includes(value)) {
+  if (["parsing", "parsed", "parsed_confirmed"].includes(value)) {
     return 1;
   }
   if (["processing", "generating", "generated"].includes(value)) {
@@ -116,9 +117,9 @@ function readableStatus(status: string) {
     parsing: "解析招标文件",
     parsed: "解析完成",
     parsed_confirmed: "解析已确认",
-    outline_ready: "目录待确认",
-    outline_review: "等待确认目录",
-    outline_confirmed: "目录已确认",
+    outline_ready: "可以生成",
+    outline_review: "可以生成",
+    outline_confirmed: "可以生成",
     processing: "准备生成",
     generating: "正在生成标书",
     generated: "生成完成",
@@ -166,9 +167,6 @@ function stageProgress(
     parsing: 55,
     parsed: 100,
     parsed_confirmed: 100,
-    outline_ready: 85,
-    outline_review: 85,
-    outline_confirmed: 100,
     processing: 35,
     generating: 70,
     generated: 100,
@@ -382,12 +380,14 @@ export function StatusProgressOverlay({
   open,
   status,
   busy,
-  traceEvents = []
+  traceEvents = [],
+  onDismiss
 }: {
   open: boolean;
   status: string;
   busy: boolean;
   traceEvents?: WorkflowTraceEvent[];
+  onDismiss?: () => void;
 }) {
   const current = statusIndex(status);
   const activeIndex = current >= 0 ? current : 0;
@@ -433,6 +433,16 @@ export function StatusProgressOverlay({
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-2xl backdrop-saturate-50">
       <div className="absolute inset-0 bg-black/20" />
       <section className="ios-glass relative w-full max-w-[520px] rounded-[32px] border p-6 text-[#1d1d1f] shadow-[0_34px_90px_rgba(0,0,0,0.34)]">
+        {onDismiss ? (
+          <button
+            type="button"
+            title="关闭并返回工作台"
+            className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full bg-black/[0.04] text-[#6e6e73] transition hover:bg-black/[0.08] hover:text-[#1d1d1f]"
+            onClick={onDismiss}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
         <div className="flex items-start gap-4">
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[18px] bg-[#007aff]/10 text-[#007aff]">
             {progress >= 100 ? (

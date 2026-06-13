@@ -95,9 +95,12 @@ export function RagSelectionPanel({
   ];
 
   return (
-    <section className="rounded-lg border border-line bg-white p-4">
+    <section className="ios-panel rounded-[26px] border p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-ink">资料选择（可选）</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-[#1d1d1f]">资料选择</h2>
+          <span className="text-[11px] font-medium text-[#6e6e73]">可选</span>
+        </div>
         {selectedIds.length > 0 ? (
           <span className="rounded-md border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-ok">
             已采用 {selectedIds.length} 个片段
@@ -105,7 +108,7 @@ export function RagSelectionPanel({
         ) : null}
       </div>
 
-      <p className="mt-2 rounded-md border border-line bg-field px-3 py-2 text-xs leading-5 text-muted">
+      <p className="mt-2 rounded-[16px] border border-black/[0.06] bg-white/56 px-3 py-2 text-xs leading-5 text-muted">
         不勾选时，生成会<span className="font-medium text-ink">自动从知识库检索</span>最相关的资料；
         勾选后，生成<span className="font-medium text-ink">只使用勾选的资料</span>。
         勾选即生效，无需另外保存。
@@ -158,7 +161,7 @@ export function RagSelectionPanel({
           </div>
         ) : null}
 
-        <details className="group rounded-md border border-line bg-field">
+        <details className="group rounded-[16px] border border-black/[0.06] bg-white/48">
           <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-xs font-medium text-muted">
             高级筛选
             <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
@@ -209,7 +212,7 @@ export function RagSelectionPanel({
         ))}
       </div>
       {references.length ? (
-        <div className="mt-3 rounded-md border border-line bg-field p-3 text-xs text-muted">
+        <div className="mt-3 rounded-[16px] border border-black/[0.06] bg-white/56 p-3 text-xs text-muted">
           已采用 {references.length} 个资料片段，生成时只使用这些资料。
         </div>
       ) : null}

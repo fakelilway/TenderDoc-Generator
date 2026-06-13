@@ -27,7 +27,9 @@
 - `backend/agents/content_writer_agent.py`：技术正文写作和模型路由。
 - `backend/agents/parser_agent.py`：结构化解析和格式目录树。
 - `backend/agents/reviewer_agent.py`：废标风险审查。
-- `frontend/components/ParsedReviewPanel.tsx`：解析确认和格式方式展示。
+- `frontend/components/TenderWorkspace.tsx`：工作台主组件，三栏 Tab 化布局。
+- `frontend/components/ParsedReviewPanel.tsx`：解析确认展示。
+- `frontend/components/StatusRail.tsx`：6步进度条和生成浮层。
 
 ## 最近修复点
 
@@ -36,6 +38,15 @@
 - PDF 原格式 DOCX 每页写入隐藏页标记，拆卷按页块移动。
 - 原格式拆卷追加技术正文时，只追加技术卷 Markdown，不再追加完整合并稿。
 - 文档已收敛到当前 V2 架构。
+
+## 前端 v2 UX 重构（2026-06-14）
+
+- 移除 OutlineEditor 组件：v2 不再需要用户手动编辑大纲，确认解析后系统自动生成并确认大纲，直接进入可生成状态。
+- 中心列 Tab 化：解析确认、正文编辑、标书预览三个面板改为 Tab 切换，工作流状态自动切换 Tab。
+- 渐进式展示：左栏 StatusRail 和 RagSelectionPanel 仅在有项目时出现；右栏 DeliveryVolumePanel/RiskPanel 仅在有数据时出现。
+- 统一视觉风格：所有面板使用 ios-panel rounded-[26px] border 样式。
+- 进度浮层可关闭：StatusProgressOverlay 右上角 X 按钮，关闭后后台继续运行。
+- canStartWorkflow：确认解析后即可开始生成（自动确认大纲，status 推进到 outline_confirmed）。
 
 ## 下个接手者优先看
 

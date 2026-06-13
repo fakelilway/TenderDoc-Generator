@@ -34,10 +34,10 @@ export function StrategyPanel({
   onSelectLine
 }: Props) {
   return (
-    <section className="rounded-lg border border-line bg-white p-4">
+    <section className="ios-panel rounded-[26px] border p-4">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-ink">策略与评分</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-[#1d1d1f]">策略与评分</h2>
         </div>
         {busy ? <Loader2 className="h-4 w-4 animate-spin text-brand" /> : null}
       </div>

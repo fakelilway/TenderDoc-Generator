@@ -18,9 +18,11 @@ export function DraftEditor({
   onChecklist
 }: Props) {
   return (
-    <section className="ios-panel rounded-[26px] border p-4">
+    <div>
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-ink">正文编辑</h2>
+        <p className="text-xs text-muted">
+          编辑 Markdown 正文，保存后生效。审查问题点击可跳转到对应行。
+        </p>
         <div className="flex gap-2">
           <button
             type="button"
@@ -45,8 +47,8 @@ export function DraftEditor({
       <textarea
         value={markdown}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-3 min-h-[520px] w-full resize-y rounded-[22px] border border-black/[0.08] bg-white/62 p-4 font-mono text-xs leading-5 text-ink outline-none focus:border-[#007aff]"
+        className="mt-3 min-h-[500px] w-full resize-y rounded-[20px] border border-black/[0.08] bg-white/62 p-4 font-mono text-xs leading-5 text-ink outline-none focus:border-[#007aff]"
       />
-    </section>
+    </div>
   );
 }

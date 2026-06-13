@@ -23,11 +23,10 @@ import { FinalChecklistPanel } from "@/components/FinalChecklistPanel";
 import { HumanActionPrompt } from "@/components/HumanActionPrompt";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
 import { NavLinkButton } from "@/components/NavLinkButton";
-import { OutlineEditor } from "@/components/OutlineEditor";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
-import { StatusProgressOverlay } from "@/components/StatusRail";
+import { StatusRail, StatusProgressOverlay } from "@/components/StatusRail";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { UploadPanel } from "@/components/UploadPanel";
 import {
@@ -137,9 +136,9 @@ function readableStatus(status: string) {
     parsing: "解析中",
     parsed: "已解析",
     parsed_confirmed: "解析已确认",
-    outline_ready: "大纲待确认",
-    outline_confirmed: "大纲已确认",
-    outline_review: "待确认大纲",
+    outline_ready: "可以生成",
+    outline_review: "可以生成",
+    outline_confirmed: "可以生成",
     processing: "处理中",
     generating: "生成中",
     generated: "已生成",
@@ -163,10 +162,7 @@ function nextStepCopy(status: string, hasProject: boolean) {
     uploaded: "下一步：解析招标文件，确认项目名称、招标人、工期、质量标准等字段。",
     parsing: "正在解析招标文件，请等待结构化结果出现。",
     parsed: "下一步：检查解析字段，确认无误后生成标书目录。",
-    parsed_confirmed: "下一步：生成并确认商务、技术、报价目录。",
-    outline_ready: "下一步：检查目录结构，必要时调整后保存。",
-    outline_review: "下一步：确认解析结果和目录，然后开始生成。",
-    outline_confirmed: "下一步：点击“开始生成”，系统会调用大模型生成完整标书。",
+    parsed_confirmed: "下一步：点击「开始生成」，系统会调用大模型生成完整标书。",
     processing: "正在准备生成上下文，系统会读取招标文件、知识库和可选风格案例。",
     generating: "正在调用大模型生成标书。长文档会停留较久，请看实时状态。",
     reviewing: "正在审查废标风险和响应完整性。",
@@ -318,6 +314,8 @@ export function TenderWorkspace({
   const dirtyFields = useRef<Set<DirtyField>>(new Set());
   const chunkSaveSeq = useRef(0);
   const [knowledgeTags, setKnowledgeTags] = useState<string[]>([]);
+  const [centerTab, setCenterTab] = useState<"parsed" | "draft" | "preview">("parsed");
+  const [overlayDismissed, setOverlayDismissed] = useState(false);
 
   const reportError = useCallback((caught: unknown) => {
     const message = errorMessage(caught);
@@ -362,7 +360,7 @@ export function TenderWorkspace({
   );
   const canStartWorkflow = Boolean(
     projectId &&
-      ["outline_confirmed", "outline_review", "failed", "generation_failed"].includes(
+      ["parsed_confirmed", "outline_ready", "outline_review", "outline_confirmed", "failed", "generation_failed"].includes(
         status
       )
   );
@@ -375,11 +373,23 @@ export function TenderWorkspace({
     [projectId, status]
   );
   const statusBusy = busy || actionBusy || runningStatuses.has(status);
-  const progressOverlayOpen = Boolean(
+  const progressOverlayOpen = !overlayDismissed && Boolean(
     busy ||
       runningStatuses.has(status) ||
       ["processing", "generating", "reviewing"].includes(status)
   );
+  // Reset overlay dismissed flag when status changes
+  useEffect(() => {
+    setOverlayDismissed(false);
+    // Auto-switch center tab based on workflow status
+    if (status === "parsed" || status === "parsed_confirmed") {
+      setCenterTab("parsed");
+    } else if (
+      ["generated", "reviewing", "human_review", "needs_revision", "draft_saved", "approved", "finished"].includes(status)
+    ) {
+      setCenterTab("preview");
+    }
+  }, [status]);
   const clearWorkflowDerivedState = useCallback(() => {
     setWorkflowState(null);
     setReviewReport(null);
@@ -881,11 +891,18 @@ export function TenderWorkspace({
       setStatus(confirmed.status);
       setParsedJson(confirmed.confirmed_parsed_json);
       setParsedJsonText(JSON.stringify(confirmed.confirmed_parsed_json, null, 2));
+      // Build outline, then auto-confirm it (outline editor UI removed in v2)
       const built = await buildProjectOutline(projectId);
       dirtyFields.current.delete("outline");
-      setStatus(built.status);
       setOutline(built.bid_outline);
       setDocumentOutline(built.document_outline ?? []);
+      // Auto-confirm outline so user can start generation immediately
+      const saved = await saveProjectOutline(
+        projectId,
+        built.bid_outline,
+        built.document_outline
+      );
+      setStatus(saved.status);
     } catch (confirmError) {
       reportError(confirmError);
     } finally {
@@ -1378,7 +1395,8 @@ export function TenderWorkspace({
         </div>
       ) : null}
 
-      <div className="mx-auto grid max-w-[1840px] gap-4 p-4 lg:grid-cols-[330px_minmax(0,1fr)_380px] lg:p-6">
+      <div className="mx-auto grid max-w-[1840px] gap-4 p-4 lg:grid-cols-[340px_minmax(0,1fr)_360px] lg:p-6">
+        {/* Left column: Upload + Status + RAG */}
         <div className="space-y-4">
           <UploadPanel
             projectName={projectName}
@@ -1392,76 +1410,115 @@ export function TenderWorkspace({
             onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
           />
-          <RagSelectionPanel
-            query={ragQuery}
-            projectType={ragProjectType}
-            documentType={ragDocumentType}
-            documentCategory={ragDocumentCategory}
-            specialty={ragSpecialty}
-            volume={ragVolume}
-            region={ragRegion}
-            certificateType={ragCertificateType}
-            usageScope={ragUsageScope}
-            verifiedStatus={ragVerifiedStatus}
-            tagText={ragTagText}
-            availableTags={knowledgeTags}
-            results={ragResults}
-            selectedIds={selectedChunkIds}
-            references={ragReferences}
-            busy={actionBusy}
-            onQueryChange={setRagQuery}
-            onProjectTypeChange={setRagProjectType}
-            onDocumentTypeChange={setRagDocumentType}
-            onDocumentCategoryChange={setRagDocumentCategory}
-            onSpecialtyChange={setRagSpecialty}
-            onVolumeChange={setRagVolume}
-            onRegionChange={setRagRegion}
-            onCertificateTypeChange={setRagCertificateType}
-            onUsageScopeChange={setRagUsageScope}
-            onVerifiedStatusChange={setRagVerifiedStatus}
-            onTagTextChange={setRagTagText}
-            onSearch={handleSearchKnowledge}
-            onToggle={handleToggleChunk}
-          />
+          {projectId ? (
+            <StatusRail
+              status={status}
+              busy={statusBusy}
+              traceEvents={workflowState?.trace_events ?? []}
+            />
+          ) : null}
+          {projectId ? (
+            <RagSelectionPanel
+              query={ragQuery}
+              projectType={ragProjectType}
+              documentType={ragDocumentType}
+              documentCategory={ragDocumentCategory}
+              specialty={ragSpecialty}
+              volume={ragVolume}
+              region={ragRegion}
+              certificateType={ragCertificateType}
+              usageScope={ragUsageScope}
+              verifiedStatus={ragVerifiedStatus}
+              tagText={ragTagText}
+              availableTags={knowledgeTags}
+              results={ragResults}
+              selectedIds={selectedChunkIds}
+              references={ragReferences}
+              busy={actionBusy}
+              onQueryChange={setRagQuery}
+              onProjectTypeChange={setRagProjectType}
+              onDocumentTypeChange={setRagDocumentType}
+              onDocumentCategoryChange={setRagDocumentCategory}
+              onSpecialtyChange={setRagSpecialty}
+              onVolumeChange={setRagVolume}
+              onRegionChange={setRagRegion}
+              onCertificateTypeChange={setRagCertificateType}
+              onUsageScopeChange={setRagUsageScope}
+              onVerifiedStatusChange={setRagVerifiedStatus}
+              onTagTextChange={setRagTagText}
+              onSearch={handleSearchKnowledge}
+              onToggle={handleToggleChunk}
+            />
+          ) : null}
         </div>
 
-        <div className="space-y-4">
-          <ParsedReviewPanel
-            parsed={parsedJson}
-            value={parsedJsonText}
-            busy={actionBusy}
-            onChange={handleParsedJsonTextChange}
-            onSave={handleConfirmParsed}
-          />
-          <OutlineEditor
-            outline={outline}
-            documentOutline={documentOutline}
-            busy={actionBusy}
-            onChange={handleOutlineChange}
-            onBuild={handleBuildOutline}
-            onSave={handleSaveOutline}
-          />
-          <DraftEditor
-            markdown={markdown}
-            busy={actionBusy}
-            onChange={handleMarkdownChange}
-            onSave={handleSaveDraft}
-            onChecklist={handleFinalChecklist}
-          />
-          <MarkdownPreview markdown={markdown} activeLine={activeLine} />
+        {/* Center column: Tab-based layout for parsed / draft / preview */}
+        <div className="space-y-0">
+          <div className="ios-panel rounded-[26px] border">
+            {/* Tab bar */}
+            <div className="flex h-12 items-center gap-1 border-b border-black/[0.06] px-3">
+              <TabButton
+                active={centerTab === "parsed"}
+                label="解析确认"
+                badge={parsedJson ? "ok" : undefined}
+                onClick={() => setCenterTab("parsed")}
+              />
+              <TabButton
+                active={centerTab === "draft"}
+                label="正文编辑"
+                badge={markdown.trim() ? "ok" : undefined}
+                onClick={() => setCenterTab("draft")}
+              />
+              <TabButton
+                active={centerTab === "preview"}
+                label="标书预览"
+                badge={markdown.trim() ? "ok" : undefined}
+                onClick={() => setCenterTab("preview")}
+              />
+            </div>
+            {/* Tab content */}
+            <div className="p-4">
+              {centerTab === "parsed" ? (
+                <ParsedReviewPanel
+                  parsed={parsedJson}
+                  value={parsedJsonText}
+                  busy={actionBusy}
+                  onChange={handleParsedJsonTextChange}
+                  onSave={handleConfirmParsed}
+                />
+              ) : null}
+              {centerTab === "draft" ? (
+                <DraftEditor
+                  markdown={markdown}
+                  busy={actionBusy}
+                  onChange={handleMarkdownChange}
+                  onSave={handleSaveDraft}
+                  onChecklist={handleFinalChecklist}
+                />
+              ) : null}
+              {centerTab === "preview" ? (
+                <MarkdownPreview markdown={markdown} activeLine={activeLine} />
+              ) : null}
+            </div>
+          </div>
         </div>
 
+        {/* Right column: Progressive disclosure */}
         <div className="space-y-4">
-          <DeliveryVolumePanel
-            volumes={deliveryPreview}
-            activeVolume={activeDeliveryVolume}
-            onActiveVolumeChange={setActiveDeliveryVolume}
-          />
-          <RiskPanel
-            report={reviewReport}
-            activeLine={activeLine}
-            onSelect={setActiveLine}
-          />
+          {deliveryPreview ? (
+            <DeliveryVolumePanel
+              volumes={deliveryPreview}
+              activeVolume={activeDeliveryVolume}
+              onActiveVolumeChange={setActiveDeliveryVolume}
+            />
+          ) : null}
+          {reviewReport ? (
+            <RiskPanel
+              report={reviewReport}
+              activeLine={activeLine}
+              onSelect={(line) => { setActiveLine(line); if (line != null) setCenterTab("preview"); }}
+            />
+          ) : null}
           <FinalChecklistPanel
             checklist={finalChecklist}
             versions={finalVersions}
@@ -1476,8 +1533,16 @@ export function TenderWorkspace({
             onBuildPricing={handleBuildPricingStrategy}
             onBuildScore={handleBuildScorePrediction}
             onBuildMatrix={handleBuildResponseMatrix}
-            onSelectLine={setActiveLine}
+            onSelectLine={(line) => { setActiveLine(line); if (line != null) setCenterTab("preview"); }}
           />
+          {!deliveryPreview && !reviewReport && !finalChecklist && !projectId ? (
+            <div className="ios-panel grid min-h-[200px] place-items-center rounded-[26px] border p-6 text-center">
+              <div>
+                <p className="text-sm font-medium text-[#1d1d1f]">右侧面板</p>
+                <p className="mt-1 text-xs text-[#6e6e73]">上传招标文件后，分卷预览、审查报告和评分分析将在这里显示</p>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1502,8 +1567,39 @@ export function TenderWorkspace({
         status={status}
         busy={statusBusy}
         traceEvents={workflowState?.trace_events}
+        onDismiss={() => setOverlayDismissed(true)}
       />
     </main>
+  );
+}
+
+function TabButton({
+  active,
+  label,
+  badge,
+  onClick
+}: {
+  active: boolean;
+  label: string;
+  badge?: "ok" | "warn";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "relative inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition",
+        active
+          ? "bg-[#007aff]/10 text-[#007aff]"
+          : "text-[#6e6e73] hover:bg-black/[0.04] hover:text-[#1d1d1f]"
+      ].join(" ")}
+    >
+      {label}
+      {badge === "ok" ? (
+        <span className="h-1.5 w-1.5 rounded-full bg-[#34c759]" />
+      ) : null}
+    </button>
   );
 }
 
@@ -1519,7 +1615,7 @@ function DeliveryVolumePanel({
   const active = volumes?.[activeVolume] ?? null;
 
   return (
-    <section className="ios-panel flex max-h-[640px] flex-col rounded-[26px] border">
+    <section className="ios-panel flex max-h-[480px] flex-col rounded-[26px] border">
       <div className="flex h-14 items-center justify-between border-b border-black/[0.06] px-4">
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-[#007aff]/10 text-[#007aff]">
@@ -1590,22 +1686,7 @@ function buildHumanActionPrompt(
   if (status === "parsed") {
     return {
       title: "需要确认解析结果",
-      message: "招标文件已经解析完成。请检查项目名称、资质要求、评分项和废标条款，确认后再进入大纲生成。",
-      actions: [
-        {
-          label: "去确认",
-          tone: "primary" as const,
-          icon: "check" as const,
-          onClick: context.onClose
-        }
-      ]
-    };
-  }
-
-  if (status === "outline_ready") {
-    return {
-      title: "需要确认生成大纲",
-      message: "默认标书大纲已经生成。请检查章节顺序和每章重点，确认后系统才会进入 RAG 检索和正文生成。",
+      message: "招标文件已经解析完成。请检查项目名称、资质要求、评分项和废标条款，确认后即可开始生成。",
       actions: [
         {
           label: "去确认",
@@ -1619,8 +1700,8 @@ function buildHumanActionPrompt(
 
   if (status === "outline_review") {
     return {
-      title: "等待人工确认大纲",
-      message: "工作流已暂停在生成前确认节点。请先保存确认版解析结果和大纲，再开始生成标书。",
+      title: "解析已确认，可以开始生成",
+      message: "解析结果和大纲已就绪。点击「开始生成」，系统将检索知识库并生成标书正文。",
       actions: [
         {
           label: "开始生成",

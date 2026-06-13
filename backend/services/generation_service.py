@@ -144,6 +144,11 @@ def _export_profile_from_tender(tender: dict[str, object]) -> dict[str, object]:
                 "项目名称": parsed.get("project_name") or tender.get("name") or "",
                 "tenderer_name": parsed.get("tenderer_name") or "",
                 "招标人": parsed.get("tenderer_name") or "",
+                "工期": parsed.get("planned_duration") or "",
+                "质量": parsed.get("quality_standard") or "",
+                "安全": parsed.get("safety_target") or "",
+                "投标有效期": parsed.get("bid_deadline") or "",
+                "投标截止时间": parsed.get("bid_deadline") or "",
             }
         )
     try:

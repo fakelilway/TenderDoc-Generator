@@ -67,7 +67,7 @@ export function RiskPanel({
   const findings = report?.findings ?? [];
 
   return (
-    <section className="ios-panel flex min-h-[560px] flex-col rounded-[26px] border">
+    <section className="ios-panel flex min-h-[320px] flex-col rounded-[26px] border">
       <div className="flex h-14 items-center justify-between border-b border-black/[0.06] px-4">
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-[#34c759]/10 text-[#34c759]">

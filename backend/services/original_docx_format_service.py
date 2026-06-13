@@ -124,6 +124,10 @@ def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
     project_name = str(profile.get("项目名称") or profile.get("project_name") or "")
     tenderer = str(profile.get("招标人") or profile.get("tenderer_name") or "")
     company = str(profile.get("company_name") or profile.get("投标人") or "")
+    duration = str(profile.get("工期") or profile.get("planned_duration") or "")
+    quality = str(profile.get("质量") or profile.get("quality_standard") or "")
+    safety = str(profile.get("安全") or profile.get("safety_target") or "")
+    deadline = str(profile.get("投标有效期") or profile.get("投标截止时间") or profile.get("bid_deadline") or "")
     return {
         "（招标人）": tenderer,
         "（招标人名称）": tenderer,
@@ -132,6 +136,16 @@ def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
         "（招标项目名称）": project_name,
         "（项目名称）": project_name,
         "（投标人名称）": company,
+        "（工期）": duration,
+        "（计划工期）": duration,
+        "（质量标准）": quality,
+        "（质量要求）": quality,
+        "（质量目标）": quality,
+        "（安全目标）": safety,
+        "（安全生产目标）": safety,
+        "（投标有效期）": deadline,
+        "（投标截止时间）": deadline,
+        "（开标时间）": deadline,
     }
 
 

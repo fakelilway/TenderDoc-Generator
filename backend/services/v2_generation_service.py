@@ -96,6 +96,21 @@ def generate_v2_bid_package(
     profile["company_name"] = company_name
     retrieved = retrieved_chunks_by_section or {}
 
+    # Build combined profile with project-specific fields from requirements.
+    # These must be available BEFORE Phase 0 so the PDF format copy can fill
+    # placeholders with Parser-extracted values (质量标准, 安全目标, etc.).
+    project_fields = {
+        "招标人": str(requirements.tenderer_name or ""),
+        "项目名称": str(requirements.project_name or ""),
+        "工期": str(requirements.planned_duration or ""),
+        "质量": str(requirements.quality_standard or "符合国家现行工程质量验收标准规范合格标准"),
+        "安全": str(requirements.safety_target or "无安全责任事故发生"),
+        "投标有效期": str(requirements.bid_deadline or ""),
+        "投标截止时间": str(requirements.bid_deadline or ""),
+        "开标时间": str(requirements.bid_deadline or ""),
+    }
+    combined_profile = {**profile, **project_fields}
+
     # ── Phase 0: Build original format DOCX if PDF ──
     built_format_docx: str | None = None
     if original_format_docx_available and tender_bytes:
@@ -110,7 +125,7 @@ def generate_v2_bid_package(
             )
 
             built_format_docx = build_original_format_docx_from_pdf(
-                tender_bytes, tmp_path, profile=profile
+                tender_bytes, tmp_path, profile=combined_profile
             )
         except Exception:
             logger.error("PDF format conversion failed", exc_info=True)
@@ -128,17 +143,7 @@ def generate_v2_bid_package(
 
     classified = assign_page_volumes(all_pages["commercial"], requirements)
 
-    # Build combined profile with project-specific fields from requirements
-    project_fields = {
-        "招标人": str(requirements.tenderer_name or ""),
-        "项目名称": str(requirements.project_name or ""),
-        "工期": str(requirements.planned_duration or ""),
-        "质量": "符合国家现行工程质量验收标准规范合格标准",
-        "安全": "无安全责任事故发生",
-    }
-
     # ── Phase 2: Fill form templates (skip in original format mode) ──
-    combined_profile = {**profile, **project_fields}
 
     filled_pages: dict[str, list[tuple[str, str, str]]] = {
         "commercial": [],
@@ -247,7 +252,7 @@ def generate_v2_bid_package(
 
             # Clean content: strip HTML, keep plain markdown
             content = _clean_for_markdown(content)
-            content = re.sub(r"_{3,}", "________", content)
+            content = _RE_UNDERSCORE.sub("________", content)
             content = _render_locked_format_content(
                 title,
                 original,
