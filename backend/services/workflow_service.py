@@ -12,7 +12,6 @@ from agents.generator_agent import (
     GeneratorAgentError,
     build_bid_outline,
     build_bid_document_outline,
-    generate_bid_package,
 )
 from agents.parser_agent import ParserAgentError, parse_tender
 from agents.pricing_agent import (
@@ -260,7 +259,7 @@ def run_bid_workflow(
         logger.warning("Company profile unavailable; generating without it")
         company_profile = None
 
-    gen_mode = getattr(settings, "bid_generation_mode", "multi_agent")
+    gen_mode = getattr(settings, "bid_generation_mode", "v2")
     if gen_mode == "v2":
         # Download tender bytes for PDF original format conversion during generation
         tender_bytes: bytes | None = None
@@ -287,22 +286,6 @@ def run_bid_workflow(
             audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
         else:
             audit_summary = "审查未执行"
-    else:
-        bid_package = generate_bid_package(
-            requirements,
-            retrieved_by_section,
-            bid_template,
-            pricing_strategy=pricing_strategy,
-            knowledge_images=knowledge_images,
-            bid_plan=bid_plan,
-            tender_text=state.tender_text,
-            company_profile=company_profile,
-            document_outline=state.document_outline,
-        )
-        state.draft_volumes = bid_package.volume_map()
-        state.draft_markdown = bid_package.combined_markdown
-        generation_mode = bid_package.generation_mode
-        audit_summary = ""
     mode_note = f"生成模式：{generation_mode}"
     if audit_summary:
         mode_note += f" | {audit_summary}"
