@@ -748,6 +748,63 @@ def _format_knowledge_images(
             "、".join(str(tag) for tag in tags[:4]) if isinstance(tags, list) else ""
         )
         lines.append(
-            f'- document_id={document_id}；caption="{caption}"；file="{file_name}"；tags="{tag_text}"；插入标记：{{{{knowledge_image:document_id={document_id} caption="{caption}"}}}}'
+            f'- document_id={document_id}；caption="{caption}"；file="{file_name}"；tags="{tag_text}"；插入标记'
         )
     return "\n".join(lines)
+
+
+def build_node_fill_prompt(
+    *,
+    node_title: str,
+    project_name: str,
+    requirements: dict[str, Any],
+    company_name: str,
+    knowledge_chunks: list[dict[str, Any]] | None = None,
+    previous_node_content: str = "",
+    tender_text: str = "",
+) -> list[dict[str, str]]:
+    """Focused prompt for filling one construction-plan prose node."""
+    tenderer = str(requirements.get("tenderer_name", "") or "")
+    duration = str(requirements.get("planned_duration", "") or "")
+    scope = str(requirements.get("project_scope", "") or "")
+
+    chunk_text = ""
+    if knowledge_chunks:
+        snippets = [str(c.get("content", "") or c.get("snippet", ""))[:300]
+                    for c in knowledge_chunks[:5] if isinstance(c, dict)]
+        if snippets:
+            chunk_text = "\n".join(snippets)
+
+    prev = ""
+    if previous_node_content:
+        prev = f"\n前一节内容（连贯性参考，不可重复）：\n{previous_node_content}"
+
+    user_prompt = f"""## 任务
+撰写施工组织设计章节"{node_title}"的正文内容。
+
+## 项目背景
+- 项目名称：{project_name}
+- 招标人：{tenderer or '见招标文件'}
+- 投标人：{company_name}
+- 工期：{duration or '见招标文件'}
+- 招标范围：{scope or '见招标文件'}
+
+## 知识库参考
+{chunk_text or '（未匹配到相关知识片段）'}
+
+{prev}
+
+## 规则
+1. 只写本节正文，不得输出任何标题（不含 #）。
+2. 每节≥2段连贯论述，工程化风格，针对本项目。
+3. 列表型内容用 Markdown 表格。
+4. 不写"人工确认点""待补充""TODO""AI生成"等元话语。
+5. 不编造金额、人名、证号。
+
+## 输出
+直接输出本节正文。不输出标题。"""
+
+    return [
+        {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
