@@ -10,6 +10,7 @@ venv/
 # Environment files
 backend/.env
 .env
+.env.local
 
 # macOS metadata
 .DS_Store

@@ -1,6 +1,7 @@
 import type {
   AuthMeResponse,
   BidOutlineResponse,
+  BidDocumentOutlineSection,
   BidOutlineSection,
   CompanyProfile,
   CompanyProfileResponse,
@@ -255,11 +256,12 @@ export function buildProjectOutline(projectId: number) {
 
 export function saveProjectOutline(
   projectId: number,
-  outline: BidOutlineSection[]
+  outline: BidOutlineSection[],
+  documentOutline?: BidDocumentOutlineSection[]
 ) {
   return requestJson<BidOutlineResponse>(`/api/project/${projectId}/outline`, {
     method: "PATCH",
-    body: JSON.stringify({ outline })
+    body: JSON.stringify({ outline, document_outline: documentOutline })
   });
 }
 

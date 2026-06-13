@@ -704,7 +704,7 @@ export function TenderWorkspace({
   }, [initialProjectId]);
 
   useEffect(() => {
-    if (!projectId || finalStatuses.has(status)) {
+    if (!projectId || busy || actionBusy || finalStatuses.has(status)) {
       return;
     }
 
@@ -713,7 +713,7 @@ export function TenderWorkspace({
     }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [projectId, refreshProject, status]);
+  }, [actionBusy, busy, projectId, refreshProject, status]);
 
   useEffect(() => {
     if (!projectId) {
@@ -855,6 +855,7 @@ export function TenderWorkspace({
     if (!projectId) {
       return;
     }
+    refreshSeq.current += 1;
     setActionBusy(true);
     setError(null);
     try {
@@ -880,6 +881,7 @@ export function TenderWorkspace({
     if (!projectId) {
       return;
     }
+    refreshSeq.current += 1;
     setActionBusy(true);
     setError(null);
     try {
@@ -899,10 +901,11 @@ export function TenderWorkspace({
     if (!projectId) {
       return;
     }
+    refreshSeq.current += 1;
     setActionBusy(true);
     setError(null);
     try {
-      const saved = await saveProjectOutline(projectId, outline);
+      const saved = await saveProjectOutline(projectId, outline, documentOutline);
       dirtyFields.current.delete("outline");
       setStatus(saved.status);
       setOutline(saved.bid_outline);

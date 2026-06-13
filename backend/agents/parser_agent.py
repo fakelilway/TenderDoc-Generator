@@ -16,55 +16,6 @@ class ParserAgentError(RuntimeError):
     pass
 
 
-RELEVANT_KEYWORDS = (
-    "项目名称",
-    "工程名称",
-    "招标项目名称",
-    "投标人资格",
-    "资格要求",
-    "资格审查",
-    "资质",
-    "安全生产许可证",
-    "项目经理",
-    "项目总工",
-    "评分",
-    "评分因素",
-    "评分标准",
-    "技术评分",
-    "施工组织设计",
-    "评标办法",
-    "否决",
-    "废标",
-    "无效投标",
-    "重大偏差",
-    # 投标文件格式/组成要求直接关系废标风险，长文本裁剪时必须保留。
-    "投标文件的组成",
-    "投标文件组成",
-    "投标文件格式",
-    "投标文件的编制",
-    "投标文件的签署",
-    "投标文件的密封",
-    "密封和标记",
-    "签字",
-    "签章",
-    "盖章",
-    "正本",
-    "副本",
-    "第一信封",
-    "第二信封",
-    "商务及技术文件",
-    "报价文件",
-    "电子投标文件",
-    "加密投标文件",
-    "投标函",
-    "授权委托书",
-    "法定代表人身份证明",
-    "投标保证金",
-    "资格审查资料",
-    "已标价工程量清单",
-)
-
-
 PROJECT_NAME_PLACEHOLDERS = (
     "见投标人须知前附表",
     "见招标公告",
@@ -149,53 +100,6 @@ def _extract_json_object(content: str) -> str:
 
 def _remove_trailing_commas(content: str) -> str:
     return re.sub(r",\s*([}\]])", r"\1", content)
-
-
-def _prepare_tender_text(text: str, max_chars: int = 45000) -> str:
-    """Keep the LLM input focused on parser-relevant tender sections."""
-    if len(text) <= max_chars:
-        return text
-
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    selected_indexes: list[int] = []
-    seen: set[int] = set()
-
-    def add_index(index: int) -> None:
-        if index not in seen:
-            selected_indexes.append(index)
-            seen.add(index)
-
-    for index, _line in enumerate(lines[:40]):
-        add_index(index)
-
-    for index, line in enumerate(lines):
-        if _is_format_chapter_heading(line):
-            start = max(0, index - 2)
-            end = min(len(lines), index + 1200)
-            for selected_index in range(start, end):
-                if selected_index > index and _is_next_chapter_heading(
-                    lines[selected_index]
-                ):
-                    break
-                add_index(selected_index)
-            continue
-        if any(keyword in line for keyword in RELEVANT_KEYWORDS):
-            start = max(0, index - 4)
-            end = min(len(lines), index + 12)
-            for selected_index in range(start, end):
-                add_index(selected_index)
-
-    focused_lines: list[str] = []
-    current_length = 0
-    for index in selected_indexes:
-        line = lines[index]
-        next_length = current_length + len(line) + 1
-        if next_length > max_chars:
-            continue
-        focused_lines.append(line)
-        current_length = next_length
-
-    return "\n".join(focused_lines)
 
 
 def _make_item(title: str, description: str, source_text: str) -> RequirementItem:
@@ -1090,7 +994,9 @@ def parse_tender(text: str) -> TenderRequirements:
     except ParserAgentError as error:
         raise ParserAgentError(f"Parser LLM is not configured: {error}") from error
 
-    tender_text = _prepare_tender_text(text)
+    # Pass the full tender text to the LLM. Modern models (DeepSeek V4 128K)
+    # handle ~100K chars comfortably; keyword-based trimming was losing context.
+    tender_text = text[:120000]
 
     try:
         timeout_seconds = _get_parser_timeout_seconds()
@@ -1111,4 +1017,12 @@ def parse_tender(text: str) -> TenderRequirements:
     except Exception as error:
         raise ParserAgentError(f"Parser LLM failed: {error}") from error
 
+    # Format requirements: rule-based extraction from the format chapter is the
+    # primary and most reliable source.  LLM provides supplementary scattered
+    # clauses (sealing, electronic submission, etc.) that live outside the
+    # format chapter.  Both are merged and deduplicated.
+    rule_format = _extract_format_requirements(text)
+    llm_based.bid_format_requirements = _merge_format_requirements(
+        llm_based.bid_format_requirements, rule_format
+    )
     return llm_based

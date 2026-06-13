@@ -450,6 +450,35 @@ def test_confirm_parsed_result_requires_bid_format_requirements() -> None:
         )
 
 
+def test_confirm_parsed_result_updates_workflow_snapshot(monkeypatch) -> None:
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "status": "parsed_confirmed",
+                "confirmed_parsed_json": {},
+            }
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    project_service.confirm_parsed_result(
+        7,
+        {
+            "project_name": "项目",
+            "bid_format_requirements": "- 投标文件包括商务文件、技术文件、报价文件",
+            "qualification_list": [],
+            "technical_score_items": [],
+            "invalid_bid_items": [],
+        },
+    )
+
+    _statement, params = cursor.statements[-1]
+    workflow_patch = params[2].adapted
+    assert workflow_patch["status"] == "parsed_confirmed"
+    assert workflow_patch["parsed"]["project_name"] == "项目"
+
+
 def test_save_project_outline_preserves_manual_image_slots(monkeypatch) -> None:
     cursor = FakeCursor(
         [
@@ -490,6 +519,7 @@ def test_save_project_outline_preserves_manual_image_slots(monkeypatch) -> None:
 
     _statement, params = cursor.statements[-1]
     saved_outline = params[0].adapted
+    workflow_patch = params[2].adapted
     assert saved_outline[0]["manual_image_slots"] == [
         {
             "title": "施工总平面布置图",
@@ -497,6 +527,95 @@ def test_save_project_outline_preserves_manual_image_slots(monkeypatch) -> None:
             "description": "人工插入现场总平面图。",
         }
     ]
+    assert workflow_patch["status"] == "outline_confirmed"
+    assert (
+        workflow_patch["bid_outline"][0]["manual_image_slots"]
+        == saved_outline[0]["manual_image_slots"]
+    )
+    assert workflow_patch["document_outline"][0]["title"] == "五、施工组织设计"
+
+
+def test_review_report_hydrates_saved_outline_when_workflow_is_stale(
+    monkeypatch,
+) -> None:
+    cursor = FakeCursor(
+        [
+            _download_project_row(
+                status="outline_confirmed",
+                workflow_state_json={"project_id": 7, "status": "parsed"},
+                parsed_json={
+                    "project_name": "项目",
+                    "bid_format_requirements": "- 投标文件包括技术文件",
+                    "qualification_list": [],
+                    "technical_score_items": [],
+                    "invalid_bid_items": [],
+                },
+                bid_outline_json=[
+                    {
+                        "title": "施工组织设计",
+                        "required": True,
+                        "source_item": "",
+                        "focus_points": ["施工部署"],
+                    }
+                ],
+                document_outline_json=[
+                    {
+                        "title": "五、施工组织设计",
+                        "volume": "技术标",
+                        "section_type": "construction_design",
+                        "required": True,
+                        "source_item": "",
+                        "focus_points": [],
+                        "children": [],
+                    }
+                ],
+            )
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    report = project_service.get_project_review_report(7)
+
+    assert report["status"] == "outline_confirmed"
+    assert report["workflow_state"]["status"] == "outline_confirmed"
+    assert report["workflow_state"]["bid_outline"][0]["title"] == "施工组织设计"
+    assert report["workflow_state"]["document_outline"][0]["title"] == "五、施工组织设计"
+
+
+def test_review_report_builds_workflow_snapshot_for_saved_outline_without_cache(
+    monkeypatch,
+) -> None:
+    cursor = FakeCursor(
+        [
+            _download_project_row(
+                status="outline_ready",
+                workflow_state_json=None,
+                parsed_json={
+                    "project_name": "项目",
+                    "bid_format_requirements": "- 投标文件包括技术文件",
+                    "qualification_list": [],
+                    "technical_score_items": [],
+                    "invalid_bid_items": [],
+                },
+                bid_outline_json=[
+                    {
+                        "title": "施工组织设计",
+                        "required": True,
+                        "source_item": "",
+                        "focus_points": ["施工部署"],
+                    }
+                ],
+                document_outline_json=[],
+            )
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    report = project_service.get_project_review_report(7)
+
+    assert report["status"] == "outline_ready"
+    assert report["workflow_state"]["status"] == "outline_ready"
+    assert report["workflow_state"]["bid_outline"][0]["title"] == "施工组织设计"
 
 
 def test_authorize_project_access_allows_owner(monkeypatch) -> None:
@@ -976,3 +1095,26 @@ def test_get_project_status_keeps_running_status(monkeypatch) -> None:
     status = project_service.get_project_status(7)
 
     assert status == {"project_id": 7, "status": "parsing", "parsed": False}
+
+
+def test_get_project_status_does_not_rewind_manual_outline_status(
+    monkeypatch,
+) -> None:
+    cursor = FakeCursor(
+        [
+            {
+                "id": 7,
+                "name": "项目",
+                "status": "outline_confirmed",
+                "owner_user_id": 5,
+                "created_at": None,
+                "parsed": True,
+                "workflow_status": "parsed",
+            }
+        ]
+    )
+    monkeypatch.setattr(project_service, "_connect", lambda: FakeConnection(cursor))
+
+    status = project_service.get_project_status(7)
+
+    assert status == {"project_id": 7, "status": "outline_confirmed", "parsed": True}

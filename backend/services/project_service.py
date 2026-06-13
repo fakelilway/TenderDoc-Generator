@@ -50,6 +50,28 @@ class ProjectAccessError(Exception):
 
 
 _RUNNING_STATUSES = {"uploading", "parsing", "processing", "generating", "reviewing"}
+_STATUS_ORDER = {
+    "idle": 0,
+    "uploading": 1,
+    "uploaded": 2,
+    "parsing": 3,
+    "parsed": 4,
+    "parsed_confirmed": 5,
+    "outline_ready": 6,
+    "outline_review": 6,
+    "outline_confirmed": 7,
+    "processing": 8,
+    "generating": 9,
+    "reviewing": 10,
+    "human_review": 11,
+    "needs_revision": 11,
+    "draft_saved": 12,
+    "generated": 13,
+    "approved": 14,
+    "finished": 15,
+    "generation_failed": 98,
+    "failed": 99,
+}
 
 
 @contextmanager
@@ -73,6 +95,57 @@ def _safe_filename(filename: str) -> str:
 
 def _tender_object_name(project_id: int, filename: str) -> str:
     return f"projects/{project_id}/tender/{uuid4().hex}_{_safe_filename(filename)}"
+
+
+def _status_rank(status: str | None) -> int:
+    if not status:
+        return -1
+    return _STATUS_ORDER.get(status, -1)
+
+
+def _resolve_project_status(project_status: str, workflow_status: str | None) -> str:
+    """Prefer the newest known status without letting stale workflow JSON rewind UI."""
+    if project_status in _RUNNING_STATUSES:
+        return project_status
+    if workflow_status and _status_rank(workflow_status) > _status_rank(project_status):
+        return workflow_status
+    return project_status
+
+
+def _workflow_patch(project_id: int, status: str, **fields: Any) -> dict[str, Any]:
+    return {
+        "project_id": project_id,
+        "status": status,
+        **fields,
+    }
+
+
+def _hydrated_workflow_state(project: dict[str, Any]) -> dict[str, Any] | None:
+    workflow_state = dict(project.get("workflow_state_json") or {})
+    parsed_json = project.get("confirmed_parsed_json") or project.get("parsed_json")
+    has_saved_workflow_context = any(
+        (
+            parsed_json,
+            project.get("bid_outline_json"),
+            project.get("document_outline_json"),
+            project.get("selected_chunk_ids"),
+        )
+    )
+    if not workflow_state and not has_saved_workflow_context:
+        return None
+
+    status = _resolve_project_status(project["status"], workflow_state.get("status"))
+    workflow_state["project_id"] = project["id"]
+    workflow_state["status"] = status
+    if parsed_json:
+        workflow_state["parsed"] = parsed_json
+    if project.get("bid_outline_json") is not None:
+        workflow_state["bid_outline"] = project.get("bid_outline_json") or []
+    if project.get("document_outline_json") is not None:
+        workflow_state["document_outline"] = project.get("document_outline_json") or []
+    if project.get("selected_chunk_ids") is not None:
+        workflow_state["selected_chunk_ids"] = project.get("selected_chunk_ids") or []
+    return workflow_state
 
 
 def _fetch_project(project_id: int) -> dict[str, Any]:
@@ -265,11 +338,7 @@ def delete_project(project_id: int) -> None:
 def _project_summary(row: dict[str, Any]) -> dict[str, Any]:
     workflow_state = row.get("workflow_state_json") or {}
     project_status = row["status"]
-    status = (
-        project_status
-        if project_status in _RUNNING_STATUSES
-        else workflow_state.get("status") or project_status
-    )
+    status = _resolve_project_status(project_status, workflow_state.get("status"))
     return {
         "project_id": int(row["id"]),
         "name": row["name"],
@@ -337,10 +406,9 @@ def get_project_status(project_id: int) -> dict[str, Any]:
     project_status = project["status"]
     return {
         "project_id": project["id"],
-        "status": (
-            project_status
-            if project_status in _RUNNING_STATUSES
-            else project["workflow_status"] or project_status
+        "status": _resolve_project_status(
+            project_status,
+            project["workflow_status"],
         ),
         "parsed": bool(project["parsed"]),
     }
@@ -520,11 +588,24 @@ def confirm_parsed_result(
                 UPDATE projects
                 SET confirmed_parsed_json = %s,
                     parsed_json = %s,
+                    workflow_state_json = COALESCE(workflow_state_json, '{}'::jsonb) || %s::jsonb,
                     status = %s
                 WHERE id = %s
                 RETURNING id, status, confirmed_parsed_json
                 """,
-                (Json(confirmed), Json(confirmed), "parsed_confirmed", project_id),
+                (
+                    Json(confirmed),
+                    Json(confirmed),
+                    Json(
+                        _workflow_patch(
+                            project_id,
+                            "parsed_confirmed",
+                            parsed=confirmed,
+                        )
+                    ),
+                    "parsed_confirmed",
+                    project_id,
+                ),
             )
             row = cursor.fetchone()
     if not row:
@@ -599,11 +680,25 @@ def save_project_outline(
                 UPDATE projects
                 SET bid_outline_json = %s,
                     document_outline_json = %s,
+                    workflow_state_json = COALESCE(workflow_state_json, '{}'::jsonb) || %s::jsonb,
                     status = %s
                 WHERE id = %s
                 RETURNING id, status, bid_outline_json, document_outline_json
                 """,
-                (Json(clean_outline), Json(clean_document_outline), status, project_id),
+                (
+                    Json(clean_outline),
+                    Json(clean_document_outline),
+                    Json(
+                        _workflow_patch(
+                            project_id,
+                            status,
+                            bid_outline=clean_outline,
+                            document_outline=clean_document_outline,
+                        )
+                    ),
+                    status,
+                    project_id,
+                ),
             )
             row = cursor.fetchone()
     if not row:
@@ -1275,7 +1370,7 @@ def _build_review_report_markdown(project: dict[str, Any]) -> str:
 
 def get_project_review_report(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
-    workflow_state = project.get("workflow_state_json")
+    workflow_state = _hydrated_workflow_state(project)
     project_status = project["status"]
     running_statuses = {"uploading", "parsing", "processing", "generating", "reviewing"}
     return {

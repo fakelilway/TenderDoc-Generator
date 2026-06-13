@@ -8,7 +8,6 @@ from agents.parser_agent import (
     _extract_project_name,
     _extract_rule_based_requirements,
     _merge_requirements,
-    _prepare_tender_text,
     parse_tender,
     parse_tender_response,
 )
@@ -72,51 +71,6 @@ def test_supported_upload_extensions_include_office_and_images() -> None:
     assert {".pdf", ".doc", ".docx", ".txt", ".md", ".jpg", ".jpeg", ".png"}.issubset(
         SUPPORTED_EXTENSIONS
     )
-
-
-def test_prepare_tender_text_keeps_relevant_sections() -> None:
-    long_text = "\n".join(
-        [
-            "前言",
-            *[f"普通行{i}" for i in range(200)],
-            "投标人资格要求：具备施工资质",
-            "项目经理须具备二级建造师",
-            *[f"更多普通行{i}" for i in range(200)],
-            "评分标准：施工组织设计 40 分",
-            "否决投标：未提交保证金",
-        ]
-    )
-
-    focused = _prepare_tender_text(long_text, max_chars=500)
-
-    assert len(focused) <= 500
-    assert "投标人资格要求" in focused
-    assert "评分标准" in focused
-    assert "否决投标" in focused
-
-
-def test_prepare_tender_text_keeps_bid_format_sections() -> None:
-    long_text = "\n".join(
-        [
-            "前言",
-            *[f"普通行{i}" for i in range(200)],
-            "第八章 投标文件格式",
-            "投标文件（商务文件）",
-            "一、投标函",
-            "二、法定代表人身份证明",
-            "投标文件（技术文件）",
-            "施工组织设计",
-            "投标文件（报价文件）",
-            *[f"更多普通行{i}" for i in range(200)],
-        ]
-    )
-
-    focused = _prepare_tender_text(long_text, max_chars=500)
-
-    assert len(focused) <= 500
-    assert "第八章 投标文件格式" in focused
-    assert "投标文件（商务文件）" in focused
-    assert "法定代表人身份证明" in focused
 
 
 def test_rule_based_extraction_covers_real_fixture_baseline() -> None:
