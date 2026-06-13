@@ -410,3 +410,285 @@ def _node_children(node: Any) -> list[Any]:
     else:
         children = getattr(node, "children", []) or []
     return children if isinstance(children, list) else []
+
+
+# ── V2-M1: Format Page Extractor ──────────────────────────────────────────
+
+
+def extract_format_pages(tender_text: str) -> dict[str, list[FormatPage]]:
+    """Extract actual form template pages from the tender's format chapter.
+
+    Uses format_outline_tree for accurate volume classification, then overlays
+    raw template text extracted from the format chapter.
+    """
+    chapter_text = _locate_format_chapter(tender_text)
+    if not chapter_text:
+        return {"commercial": [], "technical": [], "pricing": []}
+
+    # Extract all raw pages from the chapter
+    all_pages = _extract_section_pages(chapter_text, "commercial")
+    
+    # Return as flat list initially — volume assignment happens later
+    # when we cross-reference with format_outline_tree
+    return {"commercial": all_pages, "technical": [], "pricing": []}
+
+
+def assign_page_volumes(
+    pages: list[FormatPage],
+    requirements: TenderRequirements,
+) -> dict[str, list[FormatPage]]:
+    """Cross-reference extracted pages with format_outline_tree to assign volumes."""
+    result = {"commercial": [], "technical": [], "pricing": []}
+    
+    # Build a set of known node titles per volume from format_outline_tree
+    volume_titles: dict[str, set[str]] = {"commercial": set(), "technical": set(), "pricing": set()}
+    
+    def collect_titles(nodes: list, volume: str):
+        for n in nodes:
+            t = _node_title(n)
+            if t:
+                # Normalize: remove numbering prefixes for matching
+                key = re.sub(r'^[一二三四五六七八九十]+[、.．]?\s*', '', t)
+                volume_titles[volume].add(t)
+                volume_titles[volume].add(key)
+            ch = _node_children(n)
+            if ch:
+                collect_titles(ch, volume)
+    
+    for vol in ("commercial", "technical", "pricing"):
+        collect_titles(requirements.format_outline_tree.get(vol, []), vol)
+    
+    for page in pages:
+        title_clean = re.sub(r'^[一二三四五六七八九十]+[、.．]?\s*', '', page.title)
+        assigned = False
+        for vol in ("commercial", "technical", "pricing"):
+            if page.title in volume_titles[vol] or title_clean in volume_titles[vol]:
+                page.volume = vol
+                result[vol].append(page)
+                assigned = True
+                break
+        if not assigned:
+            # Best guess: check title content
+            if any(kw in page.title for kw in ['施工', '技术', '方案', '进度', '质量', '安全']):
+                result["technical"].append(page)
+            elif any(kw in page.title for kw in ['报价', '清单', '投标总价', '经济']):
+                result["pricing"].append(page)
+            else:
+                result["commercial"].append(page)
+    
+    return result
+
+
+class FormatPage:
+    """One page/form/section from the format chapter."""
+    title: str
+    raw_template: str
+    page_type: str  # letter_template | table_template | prose_section | free_material
+    volume: str     # commercial | technical | pricing
+    children: list[FormatPage]
+
+    def __init__(self, title: str, raw: str = "", ptype: str = "free_material",
+                 volume: str = "commercial", children: list[FormatPage] | None = None):
+        self.title = title
+        self.raw_template = raw
+        self.page_type = ptype
+        self.volume = volume
+        self.children = children or []
+
+
+def _locate_format_chapter(text: str) -> str:
+    """Find the format chapter body, bypassing TOC phantom content.
+
+    PDF text extraction often places TOC entries far from actual chapter bodies.
+    We find the chapter heading, then scan forward for actual form content markers
+    (投标函 templates, volume headers, blank fields).
+    """
+    patterns = [
+        r'第[一二三四五六七八九十百\d]+章\s*[投响]应?文件格式',
+        r'第[一二三四五六七八九十百\d]+章\s*响应文件格式',
+        r'第[一二三四五六七八九十百\d]+章\s*投标文件格式',
+    ]
+    
+    # Find ALL matches — there may be TOC entries and actual chapter bodies
+    matches: list[tuple[int, str]] = []
+    for pattern in patterns:
+        for m in re.finditer(pattern, text):
+            matches.append((m.start(), m.group()))
+    matches.sort(key=lambda x: x[0])
+    
+    if not matches:
+        return ""
+    
+    # Use the LAST match as the actual chapter body (furthest in document)
+    chapter_start = matches[-1][0]
+    
+    # Scan forward for actual form content
+    body_start = _find_chapter_body(text, chapter_start)
+    if body_start < chapter_start:
+        body_start = chapter_start
+    
+    # Find the end: next chapter OR end of useful content
+    next_ch = re.search(
+        r'第[一二三四五六七八九十百\d]+章\s+(?!投[标响]应?文件格式)(?!响应文件格式)',
+        text[body_start + 10:]
+    )
+    end = body_start + 10 + (next_ch.start() if next_ch else min(50000, len(text) - body_start))
+    
+    return text[body_start:end]
+
+
+def _find_chapter_body(text: str, chapter_start: int) -> int:
+    """Skip past table-of-contents entries to find actual form content."""
+    # Look for volume markers: first envelope, second envelope, or 投标文件（
+    key_markers = [
+        r'第一信封', r'第二信封',
+        r'投标文件[（(]商务文件[）)]', r'投标文件[（(]技术文件[）)]',
+        r'投标文件[（(]报价文件[）)]',
+        r'一、投标函', r'一、磋商响应函',
+        r'商务文件', r'技术文件', r'报价文件',
+    ]
+    for marker_pat in key_markers:
+        m = re.search(marker_pat, text[chapter_start:chapter_start + 15000])
+        if m:
+            # Found actual format content — walk back to find section start
+            pos = chapter_start + m.start()
+            # Walk back past blank lines to get clean start
+            back = pos
+            while back > chapter_start and text[back - 1] in '\n\r ':
+                back -= 1
+            return max(chapter_start, back)
+    return chapter_start + 10
+
+
+def _split_into_volumes(chapter_text: str) -> dict[str, list[FormatPage]]:
+    """Split the format chapter into commercial/technical/pricing volumes."""
+    volumes: dict[str, list[FormatPage]] = {
+        "commercial": [], "technical": [], "pricing": []
+    }
+
+    # Identify volume boundaries
+    volume_markers = [
+        ("第一信封", "first_envelope"),
+        ("第二信封", "second_envelope"),
+        ("投标文件（商务文件）", "commercial"),
+        ("投标文件（技术文件）", "technical"),
+        ("投标文件（报价文件）", "pricing"),
+        ("商务文件", "commercial"),
+        ("技术文件", "technical"),
+        ("报价文件", "pricing"),
+        ("响应文件", "commercial"),  # 竞争性磋商通常是单卷
+    ]
+
+    # Find all volume boundaries
+    boundaries: list[tuple[int, str]] = []
+    for marker, vol in volume_markers:
+        for m in re.finditer(re.escape(marker), chapter_text):
+            boundaries.append((m.start(), vol))
+
+    boundaries.sort(key=lambda x: x[0])
+
+    if not boundaries:
+        # No volume boundaries found — try to classify sections individually
+        pages = _extract_section_pages(chapter_text, "commercial")
+        volumes["commercial"] = pages
+        return volumes
+
+    # Split text by volume boundaries
+    current_vol = "commercial"
+    for i, (pos, vol) in enumerate(boundaries):
+        next_pos = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(chapter_text)
+        section_text = chapter_text[pos:next_pos]
+
+        # Map envelope to volume
+        if vol == "first_envelope":
+            current_vol = "commercial"  # 商务+技术
+        elif vol == "second_envelope":
+            current_vol = "pricing"
+        else:
+            current_vol = vol
+
+        pages = _extract_section_pages(section_text, current_vol)
+        if current_vol == "commercial" and vol == "first_envelope":
+            # Split first envelope into commercial and technical
+            for page in pages:
+                if "施工组织" in page.title or "技术" in page.title:
+                    page.volume = "technical"
+                    volumes["technical"].append(page)
+                else:
+                    volumes["commercial"].append(page)
+        else:
+            volumes[current_vol].extend(pages)
+
+    return volumes
+
+
+def _extract_section_pages(text: str, default_volume: str) -> list[FormatPage]:
+    """Extract individual form/section pages from volume text."""
+    pages: list[FormatPage] = []
+
+    # Split by Chinese numbered headings (一、二、三、...)
+    section_pattern = re.compile(r'(?:^|\n)\s*([一二三四五六七八九十]+)[、.．]\s*(.+?)(?:\n|$)')
+
+    sections = list(section_pattern.finditer(text))
+    if not sections:
+        return pages
+
+    for i, m in enumerate(sections):
+        title = f"{m.group(1)}、{m.group(2).strip()}"
+        start = m.end()
+        end = sections[i + 1].start() if i + 1 < len(sections) else len(text)
+        raw = text[start:end].strip()
+
+        # Determine page type
+        ptype = _classify_page_type(title, raw)
+
+        page = FormatPage(
+            title=title,
+            raw=raw,
+            ptype=ptype,
+            volume=default_volume,
+        )
+
+        # Extract sub-sections if present
+        if ptype in ("letter_template", "prose_section"):
+            sub_pattern = re.compile(r'(?:^|\n)\s*[（(][一二三四五六七八九十]+[）)]\s*(.+?)(?:\n|$)')
+            for sm in sub_pattern.finditer(raw):
+                sub_title = f"（{sm.group(0).strip().lstrip('（(').rstrip('）)')}）{sm.group(1).strip()}"[:60]
+                page.children.append(FormatPage(
+                    title=sub_title[:60],
+                    raw="",
+                    ptype=ptype,
+                    volume=default_volume,
+                ))
+
+        pages.append(page)
+
+    return pages
+
+
+def _classify_page_type(title: str, raw: str) -> str:
+    """Classify a format page as letter, table, prose, or free."""
+    title_lower = title.lower()
+    raw_lower = (raw or "").lower()
+
+    # Letters/forms
+    letter_keywords = ['投标函', '承诺', '声明', '授权', '法定代表人', '委托', '联合体']
+    for kw in letter_keywords:
+        if kw in title or kw in raw:
+            return "letter_template"
+
+    # Tables
+    table_indicators = ['|', '表格', '基本情况表', '汇总表', '附表', '清单']
+    if any(kw in raw[:500] for kw in table_indicators):
+        return "table_template"
+    if raw.count('\n') > 10 and raw.count('｜') + raw.count('|') > 2:
+        return "table_template"
+
+    # Prose/construction plan
+    if any(kw in title for kw in ['施工', '方案', '措施', '部署', '计划', '进度']):
+        return "prose_section"
+
+    if '说明' in title or '编制' in title:
+        return "prose_section"
+
+    return "free_material"
