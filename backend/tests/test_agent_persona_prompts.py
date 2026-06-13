@@ -20,6 +20,8 @@ def test_generator_persona_is_real_bid_writer_not_generic_assistant() -> None:
         document_outline=[],
     )
     user = prompt[1]["content"]
+    assert "本卷确定性骨架" in user
+    assert "逐字保留" in user
     assert "节点不可变" in user
     assert "表单照抄" in user
     assert "不知道的留空" in user

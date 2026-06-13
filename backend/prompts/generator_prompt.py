@@ -54,6 +54,7 @@ def build_volume_agent_prompt(
     company_name: str,
     document_outline: list[dict[str, Any]],
     framework_brief: str = "",
+    volume_skeleton: str = "",
     bid_plan: dict[str, Any] | None = None,
     template_name: str = "",
     pricing_strategy: dict[str, Any] | None = None,
@@ -74,19 +75,27 @@ def build_volume_agent_prompt(
         else ""
     )
 
-    user_prompt = f"""## 任务
-生成{label}卷的投标文件正文。
+    skeleton_block = (
+        volume_skeleton.strip()
+        or f"# {requirements.project_name or '投标项目'} {label}\n\n{node_tree}"
+    )
 
-## 你必须输出的节点（逐字照抄以下标题。一个不能多、一个不能少。此规则高于一切其他指令，由系统 Pass 1 自动审计核查。）
+    user_prompt = f"""## 任务
+在【本卷确定性骨架】内填充{label}卷正文。
+
+## 本卷确定性骨架（来自招标文件投标文件格式，必须逐字保留）
+{skeleton_block}
+
+## 节点清单（用于核对标题、顺序和层级）
 {node_tree}
 
 ## 规则（优先级从高到低）
 
 ### 规则1：节点不可变
-上面列出的节点是唯一允许的结构。不得新增、删除、合并或重命名任何节点。"其他内容""其他材料"等只有标题的兜底节点也必须保留标题占位，哪怕只有一行。如果节点树和下面任何规则或信息冲突，以节点树为准。违反此规则会被 Pass 1 审计打回重写。
+【本卷确定性骨架】是唯一允许的结构。必须逐字保留所有标题、顺序和层级；不得新增、删除、合并或重命名任何标题。"其他内容""其他材料"等只有标题的兜底节点也必须保留标题占位，哪怕只有一行。如果骨架和下面任何规则或信息冲突，以骨架为准。违反此规则会被 Pass 1 审计打回重写。
 
 ### 规则2：表单照抄
-投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、资格审查表格、各类声明→从下面【招标文件关键内容】找模板原文，逐字照抄。表格原样复制表头和列项，不改顺序不增删列。只替换公司名（→{company_name}）、法人代表、日期等已提供字段。无依据的留"________"。禁止改写。
+投标函、法定代表人证明、授权委托书、保证金凭证、承诺书、资格审查表格、各类声明→优先使用【本卷确定性骨架】中已经抽取出的招标文件原文模板；骨架缺原文时再从下面【招标文件关键内容】找模板原文，逐字照抄。表格原样复制表头和列项，不改顺序不增删列。只替换公司名（→{company_name}）、法人代表、日期等已提供字段。无依据的留"________"。禁止改写。
 
 ### 规则3：方案自由写
 施工组织设计、技术方案、施工部署→工程化连贯论述，每节≥2段。吸收工期/质量/安全信息。不写评分点摘要。正文用 Markdown 表格表达进度计划/人员配置/机械配置等列表型内容。
@@ -120,7 +129,7 @@ def build_volume_agent_prompt(
 {images}
 
 ## 输出
-直接输出{label}卷 Markdown。第一行 `# {requirements.project_name or "投标项目"} {label}`。不得输出解释、JSON、自查表、元话语。
+直接输出填充后的完整{label}卷 Markdown。第一行必须与【本卷确定性骨架】第一行一致。不得输出解释、JSON、自查表、元话语。
 """
     return [
         {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},
@@ -136,6 +145,7 @@ def build_volume_revision_prompt(
     company_name: str,
     document_outline: list[dict[str, Any]],
     framework_brief: str = "",
+    volume_skeleton: str = "",
     audit_feedback: str = "",
     bid_plan: dict[str, Any] | None = None,
     pricing_strategy: dict[str, Any] | None = None,
@@ -143,10 +153,17 @@ def build_volume_revision_prompt(
 ) -> list[dict[str, str]]:
     label = _volume_label(volume)
     node_tree = _format_volume_node_tree(requirements, volume)
+    skeleton_block = (
+        volume_skeleton.strip()
+        or f"# {requirements.project_name or '投标项目'} {label}\n\n{node_tree}"
+    )
     user_prompt = f"""## 任务
 修订{label}卷，补齐漏项、修正格式、删除越卷内容和元话语。你不是重新生成整份标书，只改需要改的地方。
 
-## 你必须输出的节点（逐字照抄以下标题。一个不能多、一个不能少。此规则高于一切其他指令。）
+## 本卷确定性骨架（来自招标文件投标文件格式，必须逐字保留）
+{skeleton_block}
+
+## 节点清单（用于核对标题、顺序和层级）
 {node_tree}
 
 项目名称：{requirements.project_name or "投标项目"}
@@ -165,8 +182,8 @@ def build_volume_revision_prompt(
 {_format_tender_text(tender_text)}
 
 ### 规则（同初稿规则，优先级不变）
-1. 节点不可变——以上节点树是唯一结构，不得增删改任何节点标题
-2. 表单照抄——从招标文件关键内容找模板原文逐字复制，只替换公司名→{company_name}
+1. 节点不可变——以上确定性骨架是唯一结构，不得增删改任何节点标题
+2. 表单照抄——优先保留确定性骨架里的招标文件原文模板；骨架缺原文时再从招标文件关键内容找模板原文逐字复制，只替换公司名→{company_name}
 3. 方案自由写——施工内容连贯论述，每节≥2段
 4. 不知道的留空——无依据字段留"________"，不编造，不写"人工确认点"
 
@@ -174,7 +191,7 @@ def build_volume_revision_prompt(
 {draft_markdown}
 
 ## 输出
-只输出修订后的{label}卷 Markdown。第一行一级标题。补齐所有缺失节点（包括"其他内容"类兜底节点——必须保留标题占位）。删除越卷表单。不输出解释。
+只输出修订后的完整{label}卷 Markdown。第一行必须与【本卷确定性骨架】第一行一致。补齐所有缺失节点（包括"其他内容"类兜底节点——必须保留标题占位）。删除越卷表单。不输出解释。
 """
     return [
         {"role": "system", "content": GENERATOR_WRITER_SYSTEM_PROMPT},

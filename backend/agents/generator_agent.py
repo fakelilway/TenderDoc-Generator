@@ -26,6 +26,10 @@ from schemas.strategy import PricingStrategy
 from schemas.tender import RequirementItem, TenderRequirements
 from services.bid_tone_checker import line_has_forbidden_tone
 from services.company_profile_service import company_profile_prompt_block
+from services.format_skeleton_service import (
+    expected_volume_titles,
+    render_all_volume_skeletons,
+)
 from utils.docx_exporter import (
     combine_delivery_volumes,
     split_delivery_markdown,
@@ -414,6 +418,23 @@ def generate_bid_package_multi_agent(
     company_profile_block = company_profile_prompt_block(company_profile)
     template_name = bid_template.template_name if bid_template else ""
     framework_brief = build_bid_framework_brief(requirements, document_outline)
+    missing_format_volumes = [
+        VOLUME_HEADINGS[volume]
+        for volume in VOLUME_ORDER
+        if not expected_volume_titles(requirements, volume)
+    ]
+    if missing_format_volumes:
+        raise GeneratorAgentError(
+            "未提取到完整的招标文件投标文件格式树，不能生成标书正文。"
+            "缺失分卷："
+            + "、".join(missing_format_volumes)
+            + "。请先重新解析招标文件格式章节并人工确认。"
+        )
+    volume_skeletons = render_all_volume_skeletons(
+        requirements,
+        company_name=company_name,
+        tender_text=tender_text,
+    )
 
     def build_volume(volume: str, audit_feedback: str = "") -> tuple[str, str]:
         draft = _generate_volume_with_llm(
@@ -422,6 +443,7 @@ def generate_bid_package_multi_agent(
             company_name=company_name,
             document_outline=document_outline,
             framework_brief=framework_brief,
+            volume_skeleton=volume_skeletons.get(volume, ""),
             bid_plan=bid_plan_json,
             template_name=template_name,
             pricing_strategy=pricing_strategy_json,
@@ -437,6 +459,7 @@ def generate_bid_package_multi_agent(
             company_name=company_name,
             document_outline=document_outline,
             framework_brief=framework_brief,
+            volume_skeleton=volume_skeletons.get(volume, ""),
             audit_feedback=audit_feedback,
             bid_plan=bid_plan_json,
             pricing_strategy=pricing_strategy_json,
@@ -458,15 +481,20 @@ def generate_bid_package_multi_agent(
     structure_audit: dict[str, Any] = {"status": "pass", "issues": []}
     for audit_round in range(MULTI_AGENT_AUDIT_MAX_ITERATIONS + 1):
         _validate_nonempty_volumes(volumes)
-        structure_audit = _run_structure_audit_with_llm(
+        structure_audit = _deterministic_structure_audit(
             requirements=requirements,
-            company_name=company_name,
-            document_outline=document_outline,
-            framework_brief=framework_brief,
-            commercial_markdown=volumes["commercial"],
-            technical_markdown=volumes["technical"],
-            pricing_markdown=volumes["pricing"],
+            volumes=volumes,
         )
+        if _audit_passed(structure_audit):
+            structure_audit = _run_structure_audit_with_llm(
+                requirements=requirements,
+                company_name=company_name,
+                document_outline=document_outline,
+                framework_brief=framework_brief,
+                commercial_markdown=volumes["commercial"],
+                technical_markdown=volumes["technical"],
+                pricing_markdown=volumes["pricing"],
+            )
         if _audit_passed(structure_audit):
             break
         if audit_round >= MULTI_AGENT_AUDIT_MAX_ITERATIONS:
@@ -497,6 +525,7 @@ def generate_bid_package_multi_agent(
                             company_name,
                             document_outline,
                             framework_brief,
+                            volume_skeletons.get(v, ""),
                             feedback_by_volume[v],
                             bid_plan_json,
                             pricing_strategy_json,
@@ -550,6 +579,7 @@ def generate_bid_package_multi_agent(
                             company_name,
                             document_outline,
                             framework_brief,
+                            volume_skeletons.get(v, ""),
                             feedback_by_volume[v],
                             bid_plan_json,
                             pricing_strategy_json,
@@ -1049,6 +1079,7 @@ def _generate_volume_with_llm(
     company_name: str,
     document_outline: list[dict[str, object]],
     framework_brief: str,
+    volume_skeleton: str,
     bid_plan: dict[str, Any] | None,
     template_name: str,
     pricing_strategy: dict[str, Any] | None,
@@ -1063,6 +1094,7 @@ def _generate_volume_with_llm(
         company_name=company_name,
         document_outline=document_outline,
         framework_brief=framework_brief,
+        volume_skeleton=volume_skeleton,
         bid_plan=bid_plan,
         template_name=template_name,
         pricing_strategy=pricing_strategy,
@@ -1086,6 +1118,7 @@ def _revise_volume_with_llm(
     company_name: str,
     document_outline: list[dict[str, object]],
     framework_brief: str,
+    volume_skeleton: str,
     bid_plan: dict[str, Any] | None,
     pricing_strategy: dict[str, Any] | None,
     tender_text: str,
@@ -1098,6 +1131,7 @@ def _revise_volume_with_llm(
         company_name=company_name,
         document_outline=document_outline,
         framework_brief=framework_brief,
+        volume_skeleton=volume_skeleton,
         audit_feedback=audit_feedback,
         bid_plan=bid_plan,
         pricing_strategy=pricing_strategy,
@@ -1138,6 +1172,52 @@ def _run_structure_audit_with_llm(
     return _parse_generation_audit_response(raw)
 
 
+def _deterministic_structure_audit(
+    *,
+    requirements: TenderRequirements,
+    volumes: dict[str, str],
+) -> dict[str, Any]:
+    """Cheap preflight for exact required headings before the LLM audit."""
+    issues: list[dict[str, str]] = []
+    for volume in VOLUME_ORDER:
+        text = _normalized_heading_text(volumes.get(volume, ""))
+        missing = [
+            title
+            for title in expected_volume_titles(requirements, volume)
+            if _normalize_heading(title) not in text
+        ]
+        if not missing:
+            continue
+        label = VOLUME_HEADINGS.get(volume, volume)
+        issues.append(
+            {
+                "volume": volume,
+                "problem": "缺失节点",
+                "expected": "、".join(missing),
+                "actual": f"{label}未输出上述招标文件格式节点",
+                "revision_prompt": (
+                    "严格以本卷确定性骨架重写：补齐以下缺失标题并保持原顺序、原层级："
+                    + "、".join(missing)
+                ),
+            }
+        )
+    if not issues:
+        return {"status": "pass", "summary": "确定性标题预审通过。", "issues": []}
+    return {
+        "status": "revise",
+        "summary": "确定性标题预审发现缺失节点。",
+        "issues": issues,
+    }
+
+
+def _normalized_heading_text(markdown: str) -> str:
+    return _normalize_heading(markdown)
+
+
+def _normalize_heading(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
 def _revise_single_volume(
     volume: str,
     draft_markdown: str,
@@ -1145,6 +1225,7 @@ def _revise_single_volume(
     company_name: str | None,
     document_outline: list[dict[str, Any]],
     framework_brief: str,
+    volume_skeleton: str,
     audit_feedback: str,
     bid_plan: dict[str, Any] | None,
     pricing_strategy: dict[str, Any] | None,
@@ -1157,6 +1238,7 @@ def _revise_single_volume(
         company_name=company_name,
         document_outline=document_outline,
         framework_brief=framework_brief,
+        volume_skeleton=volume_skeleton,
         audit_feedback=audit_feedback,
         bid_plan=bid_plan,
         pricing_strategy=pricing_strategy,

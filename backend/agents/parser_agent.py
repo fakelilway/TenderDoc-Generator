@@ -854,6 +854,15 @@ def parse_tender_response(content: str) -> TenderRequirements:
     except json.JSONDecodeError as exc:
         raise ParserAgentError(f"Failed to decode parser JSON: {exc}") from exc
 
+    # Normalize source fields: LLM sometimes outputs plain strings instead of
+    # the {"source_text": "...", "page_number": null} object.
+    for list_key in ("qualification_list", "technical_score_items", "invalid_bid_items"):
+        items = data.get(list_key)
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and isinstance(item.get("source"), str):
+                    item["source"] = {"source_text": item["source"], "page_number": None}
+
     result = TenderRequirements.model_validate(data)
 
     # Ensure format_outline_tree has the three required volume keys.

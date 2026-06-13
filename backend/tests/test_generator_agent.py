@@ -16,7 +16,7 @@ from prompts.generator_prompt import (
 from schemas.bid import BidSectionOutline
 from schemas.bid_plan import BidPlan, BidPlanSection
 from schemas.bid_template import BidTemplate, BidTemplateSection
-from schemas.tender import RequirementItem, TenderRequirements
+from schemas.tender import FormatOutlineNode, RequirementItem, TenderRequirements
 from utils.docx_exporter import VOLUME_MARKERS, split_delivery_markdown
 
 
@@ -54,6 +54,35 @@ def _requirements() -> TenderRequirements:
             RequirementItem(title="工期计划", description="进度计划 10 分"),
         ],
         invalid_bid_items=[RequirementItem(title="无效投标", description="未提交保证金按无效投标处理")],
+        format_outline_tree={
+            "commercial": [
+                FormatOutlineNode(
+                    title="投标文件（商务文件）",
+                    children=[
+                        FormatOutlineNode(title="一、投标函"),
+                        FormatOutlineNode(title="二、法定代表人身份证明或授权委托书"),
+                    ],
+                )
+            ],
+            "technical": [
+                FormatOutlineNode(
+                    title="投标文件（技术文件）",
+                    children=[
+                        FormatOutlineNode(title="一、施工组织设计"),
+                        FormatOutlineNode(title="二、其他内容"),
+                    ],
+                )
+            ],
+            "pricing": [
+                FormatOutlineNode(
+                    title="投标文件（报价文件）",
+                    children=[
+                        FormatOutlineNode(title="一、投标函"),
+                        FormatOutlineNode(title="二、工程量清单报价书"),
+                    ],
+                )
+            ],
+        },
     )
 
 
@@ -156,9 +185,18 @@ def _mock_multi_agent(monkeypatch, captured: dict | None = None) -> None:
         if captured is not None:
             captured.setdefault("volume_calls", []).append(kwargs)
         return {
-            "commercial": "# 商务文件\n\n我单位承诺响应商务和资格要求。",
-            "technical": "# 技术文件\n\n施工组织设计正文，包含质量、安全、进度措施。",
-            "pricing": "# 报价文件\n\n投标报价详见已标价工程量清单，金额为________元。",
+            "commercial": (
+                "# 商务文件\n\n## 一、投标函\n\n我单位承诺响应商务和资格要求。"
+                "\n\n## 二、法定代表人身份证明或授权委托书\n\n________"
+            ),
+            "technical": (
+                "# 技术文件\n\n## 一、施工组织设计\n\n施工组织设计正文，包含质量、安全、进度措施。"
+                "\n\n## 二、其他内容\n\n________"
+            ),
+            "pricing": (
+                "# 报价文件\n\n## 一、投标函\n\n投标报价详见已标价工程量清单。"
+                "\n\n## 二、工程量清单报价书\n\n金额为________元。"
+            ),
         }[volume]
 
     def fake_revise_volume(**kwargs):
@@ -218,9 +256,13 @@ def test_generator_prompt_forbids_reusing_sample_personal_data() -> None:
         requirements=_requirements(),
         company_name="正奇建设",
         document_outline=[],
+        volume_skeleton="# 测试项目 技术文件\n\n## 一、施工组织设计\n\n________",
         tender_text="测试招标文件全文",
     )
     user = prompt[1]["content"]
+    assert "本卷确定性骨架" in user
+    assert "逐字保留" in user
+    assert "## 一、施工组织设计" in user
     assert "不编造" in user
     assert "________" in user
 
@@ -431,6 +473,10 @@ def test_generate_bid_package_multi_agent_runs_volume_revision_and_audit(
     assert all(
         call["document_outline"] == document_outline for call in volume_calls.values()
     )
+    assert all(
+        call["volume_skeleton"].startswith("# 星河湾二期高层住宅施工总承包项目")
+        for call in volume_calls.values()
+    )
     assert {
         image["document_id"] for image in volume_calls["commercial"]["knowledge_images"]
     } == {101}
@@ -466,6 +512,18 @@ def test_generate_bid_package_multi_agent_fails_without_silent_fallback(
         generator_agent.generate_bid_package(_requirements(), {})
 
 
+def test_generate_bid_package_fails_when_format_tree_is_missing(
+    monkeypatch,
+) -> None:
+    _enable_llm_generation(monkeypatch, mode="multi_agent")
+
+    with pytest.raises(
+        generator_agent.GeneratorAgentError,
+        match="未提取到完整的招标文件投标文件格式树",
+    ):
+        generator_agent.generate_bid_package(TenderRequirements(project_name="测试项目"), {})
+
+
 def test_generate_bid_package_multi_agent_revises_failed_audit(
     monkeypatch,
 ) -> None:
@@ -475,15 +533,28 @@ def test_generate_bid_package_multi_agent_revises_failed_audit(
 
     def fake_generate_volume(**kwargs):
         return {
-            "commercial": "# 商务文件\n\n## 投标函\n\n商务投标函。\n\n## 投标函（报价文件）\n\n错误越卷内容。",
-            "technical": "# 技术文件\n\n施工组织设计正文。",
-            "pricing": "# 报价文件\n\n投标报价详见已标价工程量清单。",
+            "commercial": (
+                "# 商务文件\n\n## 一、投标函\n\n商务投标函。"
+                "\n\n## 二、法定代表人身份证明或授权委托书\n\n________"
+                "\n\n## 投标函（报价文件）\n\n错误越卷内容。"
+            ),
+            "technical": (
+                "# 技术文件\n\n## 一、施工组织设计\n\n施工组织设计正文。"
+                "\n\n## 二、其他内容\n\n________"
+            ),
+            "pricing": (
+                "# 报价文件\n\n## 一、投标函\n\n投标报价详见已标价工程量清单。"
+                "\n\n## 二、工程量清单报价书\n\n________"
+            ),
         }[kwargs["volume"]]
 
     def fake_revise_volume(**kwargs):
         revision_calls.append(kwargs)
         if kwargs["volume"] == "commercial" and kwargs.get("audit_feedback"):
-            return "# 商务文件\n\n## 投标函\n\n商务投标函。"
+            return (
+                "# 商务文件\n\n## 一、投标函\n\n商务投标函。"
+                "\n\n## 二、法定代表人身份证明或授权委托书\n\n________"
+            )
         return kwargs["draft_markdown"]
 
     def fake_audit(**kwargs):
@@ -523,3 +594,81 @@ def test_generate_bid_package_multi_agent_revises_failed_audit(
     )
     assert "错误越卷内容" not in package.commercial_markdown
     assert VOLUME_MARKERS["commercial"] in package.combined_markdown
+
+
+def test_generate_bid_package_multi_agent_passes_format_skeleton_to_revisions(
+    monkeypatch,
+) -> None:
+    _enable_llm_generation(monkeypatch, mode="multi_agent")
+    revision_calls: list[dict] = []
+    requirements = _requirements()
+    requirements.format_outline_tree = {
+        "commercial": [
+            FormatOutlineNode(
+                title="投标文件（商务文件）",
+                children=[
+                    FormatOutlineNode(title="一、投标函"),
+                    FormatOutlineNode(title="十、其他材料"),
+                ],
+            )
+        ],
+        "technical": [
+            FormatOutlineNode(
+                title="投标文件（技术文件）",
+                children=[
+                    FormatOutlineNode(title="一、施工组织设计"),
+                    FormatOutlineNode(title="二、其他内容"),
+                ],
+            )
+        ],
+        "pricing": [
+            FormatOutlineNode(
+                title="投标文件（报价文件）",
+                children=[
+                    FormatOutlineNode(title="一、投标函"),
+                    FormatOutlineNode(
+                        title="二、工程量清单报价书",
+                        children=[
+                            FormatOutlineNode(title="（一）投标报价说明"),
+                            FormatOutlineNode(title="（二）建设项目投标报价汇总表"),
+                        ],
+                    ),
+                ],
+            )
+        ],
+    }
+
+    def fake_generate_volume(**kwargs):
+        return {
+            "commercial": "# 商务文件\n\n## 一、投标函\n\n商务投标函。",
+            "technical": "# 技术文件\n\n## 一、施工组织设计\n\n施工组织。",
+            "pricing": "# 报价文件\n\n## 一、投标函\n\n报价投标函。",
+        }[kwargs["volume"]]
+
+    def fake_revise_volume(**kwargs):
+        revision_calls.append(kwargs)
+        if kwargs.get("audit_feedback"):
+            return kwargs["volume_skeleton"]
+        return kwargs["draft_markdown"]
+
+    monkeypatch.setattr(
+        generator_agent, "_generate_volume_with_llm", fake_generate_volume
+    )
+    monkeypatch.setattr(generator_agent, "_revise_volume_with_llm", fake_revise_volume)
+    monkeypatch.setattr(
+        generator_agent,
+        "_run_structure_audit_with_llm",
+        lambda **kwargs: {"status": "pass", "summary": "结构匹配。", "issues": []},
+    )
+    monkeypatch.setattr(
+        generator_agent,
+        "_run_generation_audit_with_llm",
+        lambda **kwargs: {"status": "pass", "summary": "内容通过。", "issues": []},
+    )
+
+    generator_agent.generate_bid_package(requirements, {})
+
+    skeletons = {call["volume"]: call["volume_skeleton"] for call in revision_calls}
+    assert "## 十、其他材料" in skeletons["commercial"]
+    assert "## 二、其他内容" in skeletons["technical"]
+    assert "### （二）建设项目投标报价汇总表" in skeletons["pricing"]
