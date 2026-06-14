@@ -1,34 +1,23 @@
 "use client";
 
-import { BarChart3, Calculator, Loader2, Search, Table2 } from "lucide-react";
-import type {
-  PricingStrategy,
-  PricingStrategyReport,
-  ResponseMatrix,
-  ScorePrediction
-} from "@/lib/types";
+import { BarChart3, Loader2, Search, Table2 } from "lucide-react";
+import type { ResponseMatrix, ScorePrediction } from "@/lib/types";
 
 type Props = {
-  pricingStrategy: PricingStrategy | null;
-  pricingReport: PricingStrategyReport | null;
   scorePrediction: ScorePrediction | null;
   responseMatrix: ResponseMatrix | null;
   busy: boolean;
   disabled: boolean;
-  onBuildPricing: () => void;
   onBuildScore: () => void;
   onBuildMatrix: () => void;
   onSelectLine: (line: number | null) => void;
 };
 
 export function StrategyPanel({
-  pricingStrategy,
-  pricingReport,
   scorePrediction,
   responseMatrix,
   busy,
   disabled,
-  onBuildPricing,
   onBuildScore,
   onBuildMatrix,
   onSelectLine
@@ -42,13 +31,7 @@ export function StrategyPanel({
         {busy ? <Loader2 className="h-4 w-4 animate-spin text-brand" /> : null}
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <ActionButton
-          icon="pricing"
-          label="报价"
-          disabled={busy || disabled}
-          onClick={onBuildPricing}
-        />
+      <div className="mt-3 grid grid-cols-2 gap-2">
         <ActionButton
           icon="score"
           label="评分"
@@ -62,22 +45,6 @@ export function StrategyPanel({
           onClick={onBuildMatrix}
         />
       </div>
-
-      {pricingReport || pricingStrategy ? (
-        <div className="mt-4 border-t border-line pt-3">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-ink">
-            <Calculator className="h-3.5 w-3.5 text-brand" />
-            报价策略
-          </div>
-          <Metric label="人工填写项" value={pricingStrategy?.manual_fields.length ?? 0} />
-          <Metric label="付款条件" value={pricingStrategy?.payment_terms.length ?? 0} />
-          <Metric
-            label="担保约束"
-            value={pricingStrategy?.guarantee_requirements.length ?? 0}
-          />
-          <TextList items={pricingReport?.risk_warnings ?? []} />
-        </div>
-      ) : null}
 
       {scorePrediction ? (
         <div className="mt-4 border-t border-line pt-3">
@@ -159,13 +126,12 @@ function ActionButton({
   disabled,
   onClick
 }: {
-  icon: "pricing" | "score" | "matrix";
+  icon: "score" | "matrix";
   label: string;
   disabled: boolean;
   onClick: () => void;
 }) {
-  const Icon =
-    icon === "pricing" ? Calculator : icon === "score" ? BarChart3 : Table2;
+  const Icon = icon === "score" ? BarChart3 : Table2;
   return (
     <button
       type="button"

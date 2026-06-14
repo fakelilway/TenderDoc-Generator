@@ -30,7 +30,6 @@ import { StatusRail, StatusProgressOverlay } from "@/components/StatusRail";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { UploadPanel } from "@/components/UploadPanel";
 import {
-  buildProjectPricingStrategy,
   buildProjectOutline,
   buildProjectResponseMatrix,
   buildProjectScorePrediction,
@@ -64,8 +63,6 @@ import type {
   FinalChecklist,
   FinalVersion,
   KnowledgeSearchResult,
-  PricingStrategy,
-  PricingStrategyReport,
   RagReference,
   ResponseMatrix,
   ReviewReport,
@@ -286,8 +283,6 @@ export function TenderWorkspace({
   const [ragReferences, setRagReferences] = useState<RagReference[]>([]);
   const [finalChecklist, setFinalChecklist] = useState<FinalChecklist | null>(null);
   const [finalVersions, setFinalVersions] = useState<FinalVersion[]>([]);
-  const [pricingStrategy, setPricingStrategy] = useState<PricingStrategy | null>(null);
-  const [pricingReport, setPricingReport] = useState<PricingStrategyReport | null>(null);
   const [scorePrediction, setScorePrediction] = useState<ScorePrediction | null>(null);
   const [responseMatrix, setResponseMatrix] = useState<ResponseMatrix | null>(null);
   const [markdown, setMarkdown] = useState("");
@@ -396,8 +391,6 @@ export function TenderWorkspace({
     setReviewReport(null);
     setFinalChecklist(null);
     setFinalVersions([]);
-    setPricingStrategy(null);
-    setPricingReport(null);
     setScorePrediction(null);
     setResponseMatrix(null);
     if (!dirtyFields.current.has("markdown")) {
@@ -475,12 +468,6 @@ export function TenderWorkspace({
         }
         if (state.review_report) {
           setStateIfChanged(setReviewReport, state.review_report);
-        }
-        if (state.pricing_strategy) {
-          setStateIfChanged(
-            setPricingStrategy,
-            state.pricing_strategy as PricingStrategy
-          );
         }
       } else {
         clearWorkflowDerivedState();
@@ -759,7 +746,7 @@ export function TenderWorkspace({
     setHumanPromptOpen(true);
   }, [humanActionPrompt, projectId, status]);
 
-  // Auto-trigger pricing / score / matrix analyses once workflow produces a draft.
+  // Auto-trigger score / matrix analyses once workflow produces a draft.
   useEffect(() => {
     if (!projectId) return;
     const triggerStatuses = new Set([
@@ -772,13 +759,6 @@ export function TenderWorkspace({
     const key = `${projectId}:${status}`;
     if (autoAnalysisTriggered.current.has(key)) return;
     autoAnalysisTriggered.current.add(key);
-
-    buildProjectPricingStrategy(projectId)
-      .then((r) => {
-        setPricingStrategy(r.pricing_strategy);
-        setPricingReport(r.pricing_report);
-      })
-      .catch(() => {});
 
     buildProjectScorePrediction(projectId)
       .then((r) => setScorePrediction(r.score_prediction))
@@ -830,8 +810,6 @@ export function TenderWorkspace({
     setRagReferences([]);
     setFinalChecklist(null);
     setFinalVersions([]);
-    setPricingStrategy(null);
-    setPricingReport(null);
     setScorePrediction(null);
     setResponseMatrix(null);
     setMarkdown("");
@@ -1040,23 +1018,6 @@ export function TenderWorkspace({
       }
     } catch (checklistError) {
       reportError(checklistError);
-    } finally {
-      setActionBusy(false);
-    }
-  }
-
-  async function handleBuildPricingStrategy() {
-    if (!projectId) {
-      return;
-    }
-    setActionBusy(true);
-    setError(null);
-    try {
-      const result = await buildProjectPricingStrategy(projectId);
-      setPricingStrategy(result.pricing_strategy);
-      setPricingReport(result.pricing_report);
-    } catch (strategyError) {
-      reportError(strategyError);
     } finally {
       setActionBusy(false);
     }
@@ -1330,7 +1291,7 @@ export function TenderWorkspace({
             <div>
               <p className="font-semibold">标书已完成，可按投递网站要求下载</p>
               <p className="text-xs text-[#6e6e73]">
-                商务文件、技术文件、报价文件分别下载投递。
+                商务文件、技术文件分别下载投递；报价文件由造价软件单独制作。
               </p>
             </div>
           </div>
@@ -1528,13 +1489,10 @@ export function TenderWorkspace({
             versions={finalVersions}
           />
           <StrategyPanel
-            pricingStrategy={pricingStrategy}
-            pricingReport={pricingReport}
             scorePrediction={scorePrediction}
             responseMatrix={responseMatrix}
             busy={actionBusy}
             disabled={!projectId}
-            onBuildPricing={handleBuildPricingStrategy}
             onBuildScore={handleBuildScorePrediction}
             onBuildMatrix={handleBuildResponseMatrix}
             onSelectLine={(line) => { setActiveLine(line); if (line != null) setCenterTab("preview"); }}
