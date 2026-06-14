@@ -419,12 +419,15 @@ def test_confirm_project_applies_corrections_on_top_of_edited_markdown(
     assert "旧草稿内容" not in state.draft_markdown
     # edited_markdown is consumed exactly once so it cannot go stale.
     assert cleared == [7]
-    # The workflow draft keeps the meta notes for the review loop, while the
-    # exported delivery markdown is stripped of notes and volume markers.
+    # The workflow draft keeps the meta notes for the review loop. Export now
+    # receives the marker-intact draft (it must split by tdg:volume markers,
+    # then strips notes/markers itself for the delivered files — see
+    # test_export_markdown_for_project_strips_meta_notes). Stripping before the
+    # split dropped the markers and leaked commercial sections into 技术卷.
     assert "人工修正意见" in state.draft_markdown
     assert exported
-    assert "人工修正意见" not in exported[0]
-    assert "tdg:volume" not in exported[0]
+    assert exported[0] == state.draft_markdown
+    assert "tdg:volume" in exported[0]
 
 
 def test_build_closure_test_report_calculates_detection_rate() -> None:

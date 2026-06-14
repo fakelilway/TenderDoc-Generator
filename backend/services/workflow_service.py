@@ -448,11 +448,15 @@ def confirm_project(
         "正在导出最终 Markdown 和 Word DOCX，并上传到 MinIO。",
         project_status="generating",
     )
-    delivery_markdown = _delivery_markdown(state.draft_markdown)
+    # Pass marker-intact markdown so export can split volumes by tdg:volume
+    # markers; export strips meta/markers itself for the readable bid.md.
+    # split-then-strip avoids leaking commercial sections into the technical卷.
     exported = generation_service.export_markdown_for_project(
         project_id,
-        delivery_markdown,
-        generation_service.evaluate_generation_quality(delivery_markdown),
+        state.draft_markdown,
+        generation_service.evaluate_generation_quality(
+            _delivery_markdown(state.draft_markdown)
+        ),
         original_format_path=getattr(state, 'v2_format_docx', None),
     )
     state.final_checklist = _build_final_checklist(requirements, state)

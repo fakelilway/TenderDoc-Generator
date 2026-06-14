@@ -266,6 +266,40 @@ def test_assemble_two_volumes_commercial_copies_format_technical_is_prose(tmp_pa
     )
 
 
+def test_two_volume_technical_excludes_commercial_sections(tmp_path) -> None:
+    """Regression: 资格响应/投标保证金/项目管理机构 (commercial) must NOT leak into
+    the technical卷. Bug was strip_meta_notes dropping tdg:volume markers before
+    the split → heading heuristic misrouted commercial sections into technical."""
+    format_path = tmp_path / "format.docx"
+    fmt = Document()
+    fmt.add_paragraph("一、投标函")
+    fmt.save(format_path)
+
+    combined = combine_delivery_volumes(
+        "测试项目",
+        {
+            "commercial": (
+                "# 测试项目 商务文件\n\n## 资格响应\n\n### 企业资质等级\n资质说明。\n\n"
+                "## 投标保证金\n保证金说明。\n\n## 项目管理机构\n机构说明。"
+            ),
+            "technical": "# 测试项目 技术文件\n\n## 施工组织设计\n\n施工部署正文。\n\n## 其他内容\n其他正文。",
+        },
+    )
+    # Combined still carries tdg:volume markers (as it does coming from the workflow).
+    main_docx = tmp_path / "bid.docx"
+    generation_service._assemble_two_volumes(
+        str(format_path), tmp_path, 9, combined, main_docx, "测试项目"
+    )
+
+    technical_text = "\n".join(
+        p.text for p in Document(tmp_path / "project_9_technical.docx").paragraphs
+    )
+    assert "施工部署正文" in technical_text
+    assert "资格响应" not in technical_text
+    assert "投标保证金" not in technical_text
+    assert "项目管理机构" not in technical_text
+
+
 def test_format_doc_has_page_markers_detection(tmp_path) -> None:
     marked = tmp_path / "marked.docx"
     d = Document()

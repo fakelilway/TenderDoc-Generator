@@ -33,12 +33,16 @@ def export_markdown_for_project(
     *,
     original_format_path: str | None = None,
 ) -> tuple[str, str]:
-    markdown = strip_meta_notes(markdown)
-    title = _extract_markdown_title(markdown) or "投标文件"
+    # Keep volume markers intact for splitting; strip meta/markers only for the
+    # human-readable bid.md and the non-format whole-doc render. Stripping before
+    # the split would drop the tdg:volume markers → split falls back to a heading
+    # heuristic that leaks commercial sections into the technical volume.
+    clean_markdown = strip_meta_notes(markdown)
+    title = _extract_markdown_title(clean_markdown) or "投标文件"
     with TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         markdown_path = tmp_path / f"project_{project_id}_bid.md"
-        markdown_path.write_text(markdown, encoding="utf-8")
+        markdown_path.write_text(clean_markdown, encoding="utf-8")
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
 
         if original_format_path and Path(original_format_path).exists():
@@ -58,7 +62,7 @@ def export_markdown_for_project(
                 )
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
-                markdown,
+                clean_markdown,
                 docx_path,
                 title=title,
                 subtitle="投标文件",
