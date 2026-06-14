@@ -105,7 +105,7 @@ def fill_technical_volume(
                 title, _compact_len(cleaned), MIN_NODE_CONTENT_CHARS,
             )
         results.append(NodeFillResult(title=title, content=cleaned, short=short))
-        previous_content = cleaned[:300]  # brief context for next node
+        previous_content = cleaned[:1200]  # context for next node (continuity)
 
     # Combine into one markdown per volume
     combined_parts = []

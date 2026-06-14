@@ -32,6 +32,27 @@ def test_prompt_injects_score_and_invalid_items() -> None:
     assert "逐条正面响应上述评分点" in content
 
 
+def test_prompt_includes_project_specifics_and_style() -> None:
+    messages = build_node_fill_prompt(
+        node_title="施工组织设计",
+        project_name="某村庄建设项目",
+        requirements={
+            "project_location": "长丰县罗塘乡",
+            "quality_standard": "合格",
+            "safety_target": "无重大事故",
+        },
+        company_name="安徽正奇建设有限公司",
+    )
+    content = _user_content(messages)
+    # project specifics surfaced for project-specificity
+    assert "建设地点：长丰县罗塘乡" in content
+    assert "质量目标：合格" in content
+    assert "安全目标：无重大事故" in content
+    # style/depth directives present
+    assert "写作风格与深度" in content
+    assert "避免可套用到任何项目的通用空话" in content
+
+
 def test_prompt_falls_back_when_no_items() -> None:
     messages = build_node_fill_prompt(
         node_title="施工部署",

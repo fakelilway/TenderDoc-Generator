@@ -65,6 +65,9 @@ def build_node_fill_prompt(
         or requirements.get("project_scope", "")
         or ""
     )
+    location = str(requirements.get("project_location", "") or "")
+    quality = str(requirements.get("quality_standard", "") or "")
+    safety = str(requirements.get("safety_target", "") or "")
 
     snippets: list[str] = []
     for chunk in (knowledge_chunks or [])[:8]:
@@ -88,7 +91,10 @@ def build_node_fill_prompt(
 - 项目名称：{project_name}
 - 招标人：{tenderer or '见招标文件'}
 - 投标人：{company_name}
+- 建设地点：{location or '见招标文件'}
 - 工期：{duration or '见招标文件'}
+- 质量目标：{quality or '见招标文件'}
+- 安全目标：{safety or '见招标文件'}
 - 招标范围：{scope or '见招标文件'}
 
 ## 知识库参考
@@ -101,6 +107,12 @@ def build_node_fill_prompt(
 {invalid_block or '（无直接对应废标项）'}
 
 {prev}
+
+## 写作风格与深度
+- 紧扣本工程的项目名称、建设地点、规模与招标范围展开，避免可套用到任何项目的通用空话。
+- 用确定性工程用语（"本工程采用""施工方法为""具体措施如下"），不写"我们建议""可考虑"等推测语。
+- 给出可量化指标（数值、规格、频次、验收标准、责任分工），少用形容词、多用数据与步骤。
+- 与前一节口吻、术语、详略保持一致，承接而不重复。
 
 ## 写作规则
 1. 只写本节点正文，不得输出任何标题或 Markdown 标题符号。
