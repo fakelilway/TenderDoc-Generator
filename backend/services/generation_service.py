@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -14,7 +13,6 @@ from services.company_profile_service import get_company_profile
 from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
     build_original_format_docx,
-    _clear_document_body as _clear_body,
 )
 from services.project_service import _connect
 from utils.docx_exporter import markdown_to_docx, strip_meta_notes
@@ -46,20 +44,12 @@ def export_markdown_for_project(
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
 
         if original_format_path and Path(original_format_path).exists():
-            import shutil
-
-            if _format_doc_has_page_markers(original_format_path):
-                # Image-fallback format doc: split by whole PDF page blocks.
-                _split_and_export_volumes(
-                    original_format_path, tmp_path, project_id, markdown
-                )
-                shutil.copy2(tmp_path / f"project_{project_id}_technical.docx", docx_path)
-            else:
-                # Editable 照抄 (pdf2docx/DOCX): 商务=格式章照抄, 技术=独立生成正文,
-                # 报价=外部造价软件，本系统不产出。
-                _assemble_two_volumes(
-                    original_format_path, tmp_path, project_id, markdown, docx_path, title
-                )
+            # 两卷装配：商务=整本格式章照抄(整页图+填空字段，copy2 保留图片),
+            # 技术=LLM 正文独立成文，报价=外部造价软件不产出。
+            # 不再按页块三卷拆分——格式章即商务卷，硬拆会错分页面、丢图片。
+            _assemble_two_volumes(
+                original_format_path, tmp_path, project_id, markdown, docx_path, title
+            )
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 clean_markdown,
@@ -379,7 +369,7 @@ def _split_and_export_volumes(
     technical_markdown = volumes.get("technical", "")
     commercial_markdown = volumes.get("commercial", "")
 
-    if _split_pdf_page_blocks(elements, body, tmp_path, project_id, technical_markdown, commercial_markdown):
+    if _split_pdf_page_blocks(elements, body, format_path, tmp_path, project_id, technical_markdown, commercial_markdown):
         return
 
     # Keyword boundary heuristic (only reached for marker-less docs passed directly).
@@ -416,9 +406,9 @@ def _split_and_export_volumes(
             project_id,
         )
         sections = {"commercial": list(elements), "technical": [], "pricing": []}
-        _write_volume_files(
-            sections, body, tmp_path, project_id,
-            technical_markdown, commercial_markdown,
+        _write_volumes_by_pruning(
+            format_path, _vol_by_child_index(elements, _id_to_vol(sections)),
+            tmp_path, project_id, technical_markdown, commercial_markdown,
         )
         return
 
@@ -432,39 +422,79 @@ def _split_and_export_volumes(
             boundary_idx += 1
         sections[current_vol].append(el)
 
-    _write_volume_files(
-        sections, body, tmp_path, project_id,
-        technical_markdown, commercial_markdown,
+    _write_volumes_by_pruning(
+        format_path, _vol_by_child_index(elements, _id_to_vol(sections)),
+        tmp_path, project_id, technical_markdown, commercial_markdown,
     )
 
 
-def _write_volume_files(
-    sections: dict[str, list],
-    src_body,
+def _id_to_vol(sections: dict[str, list]) -> dict[int, str]:
+    """Map each assigned element's identity → its volume."""
+    return {id(el): vol for vol, els in sections.items() for el in els}
+
+
+def _vol_by_child_index(elements: list, id_to_vol: dict[int, str]) -> dict[int, str | None]:
+    """Map body-child position (excluding sectPr) → volume, for copy-then-prune.
+
+    Positions match the source DOCX reopened from disk, so pruning preserves
+    image parts/relationships that deepcopy-into-a-fresh-Document would drop.
+    """
+    from docx.oxml.ns import qn
+
+    mapping: dict[int, str | None] = {}
+    index = 0
+    for el in elements:
+        if el.tag == qn("w:sectPr"):
+            continue
+        mapping[index] = id_to_vol.get(id(el))  # None → drop (e.g. page markers)
+        index += 1
+    return mapping
+
+
+def _write_volumes_by_pruning(
+    source_path: str,
+    vol_by_index: dict[int, str | None],
     tmp_path: Path,
     project_id: int,
     technical_markdown: str,
     commercial_markdown: str,
 ) -> None:
-    """Write the three volume DOCX files from pre-assigned element lists."""
+    """Write the three volume DOCX by copying the source (keeps embedded images
+    and their relationships) then removing the body children not in that volume.
+
+    Building a fresh Document and deepcopy-ing elements drops image parts —
+    delivered volumes then render blank. Copy-then-prune avoids that.
+    """
+    import shutil
+
     from docx import Document as _D
     from docx.oxml.ns import qn
 
     for vol in ("commercial", "technical", "pricing"):
-        doc = _D()
-        _clear_body(doc)
-        for el in sections.get(vol, []):
-            doc.element.body.append(deepcopy(el))
         vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
-        # Copy section properties from source
-        for el in src_body:
-            if el.tag == qn("w:sectPr"):
-                doc.element.body.append(deepcopy(el))
-                break
-        doc.save(str(vol_path))
+        has_pages = any(v == vol for v in vol_by_index.values())
+        if has_pages:
+            # Copy source (keeps embedded images + relationships), then prune
+            # body children not belonging to this volume.
+            shutil.copy2(source_path, vol_path)
+            doc = _D(str(vol_path))
+            body = doc.element.body
+            index = 0
+            for child in list(body):
+                if child.tag == qn("w:sectPr"):
+                    continue
+                keep = vol_by_index.get(index) == vol
+                index += 1
+                if not keep:
+                    body.remove(child)
+            doc.save(str(vol_path))
+        else:
+            # No format pages for this volume → fresh empty doc, not a 3MB copy
+            # of the source (which would carry unreferenced image bloat).
+            _D().save(str(vol_path))
         if vol == "technical":
             _append_prose_to_docx(vol_path, technical_markdown)
-        elif vol == "commercial":
+        elif vol == "commercial" and commercial_markdown:
             _append_prose_to_docx(vol_path, commercial_markdown)
 
 
@@ -472,37 +502,33 @@ def _write_volume_files(
 def _split_pdf_page_blocks(
     elements: list,
     body,
+    source_path: str,
     tmp_path: Path,
     project_id: int,
     technical_markdown: str,
     commercial_markdown: str = "",
 ) -> bool:
-    """Split our PDF-copy DOCX by whole page blocks instead of raw elements."""
-    from docx import Document as _D
+    """Split our PDF-copy DOCX by whole page blocks, preserving embedded images.
 
+    Uses copy-then-prune (see _write_volumes_by_pruning) so the full-page form
+    images survive into the delivered volumes; page markers are dropped.
+    """
     blocks = _collect_pdf_page_blocks(elements)
     if not blocks:
         return False
 
-    sections: dict[str, list] = {"commercial": [], "technical": [], "pricing": []}
+    id_to_vol: dict[int, str] = {}
     current_vol = "commercial"
     for block in blocks:
-        block_text = _docx_block_text(block)
-        current_vol = _classify_pdf_page_volume(block_text, current_vol)
-        sections[current_vol].extend(el for el in block if not _is_pdf_page_marker(el))
+        current_vol = _classify_pdf_page_volume(_docx_block_text(block), current_vol)
+        for el in block:
+            if not _is_pdf_page_marker(el):
+                id_to_vol[id(el)] = current_vol
 
-    for vol in ("commercial", "technical", "pricing"):
-        doc = _D()
-        _clear_body(doc)
-        for el in sections.get(vol, []):
-            doc.element.body.append(deepcopy(el))
-        _append_source_section_props(doc, body)
-        vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
-        doc.save(str(vol_path))
-        if vol == "technical":
-            _append_prose_to_docx(vol_path, technical_markdown)
-        elif vol == "commercial" and commercial_markdown:
-            _append_prose_to_docx(vol_path, commercial_markdown)
+    _write_volumes_by_pruning(
+        source_path, _vol_by_child_index(elements, id_to_vol),
+        tmp_path, project_id, technical_markdown, commercial_markdown,
+    )
     return True
 
 
@@ -605,13 +631,3 @@ def _classify_pdf_page_volume(text: str, current: str) -> str:
     return best[1] if best is not None else current
 
 
-def _append_source_section_props(doc, body) -> None:
-    from docx.oxml.ns import qn
-
-    for child in list(doc.element.body):
-        if child.tag == qn("w:sectPr"):
-            doc.element.body.remove(child)
-    for el in body:
-        if el.tag == qn("w:sectPr"):
-            doc.element.body.append(deepcopy(el))
-            return
