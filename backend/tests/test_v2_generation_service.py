@@ -116,7 +116,10 @@ def test_v2_technical_volume_uses_writer_content_without_repeating_format_page(
         tender_text="第八章 投标文件格式\n一、施工组织设计",
     )
 
-    assert package.technical_markdown.count("## 一、施工组织设计") == 1
+    # Thin tender technical outline now expands to the canonical deep
+    # construction-plan outline (25 sections derived from real winning bids).
+    assert "## 第一章 总体施工组织布置及规划" in package.technical_markdown
+    assert "## 质量管理体系与质量保证措施" in package.technical_markdown
     assert "投标文件（技术文件）\n投标人应按评审因素编制" not in package.technical_markdown
     assert "施工组织正文" in package.technical_markdown
 

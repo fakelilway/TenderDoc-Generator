@@ -61,6 +61,8 @@ def fill_technical_volume(
     tender_text: str = "",
     score_items: list[dict[str, Any]] | None = None,
     invalid_items: list[dict[str, Any]] | None = None,
+    section_guidance: str = "",
+    min_chars: int = 0,
 ) -> VolumeFillResult:
     """Fill all prose nodes in the technical volume.
 
@@ -69,8 +71,13 @@ def fill_technical_volume(
     parallelize via ThreadPoolExecutor.
 
     ``score_items`` / ``invalid_items`` are the relevant评分项/废标项 for these
-    nodes; they are forwarded to the prompt so prose responds to scored criteria.
+    nodes; ``section_guidance`` is the canonical must-cover points for the
+    section; ``min_chars`` is the per-section length target.
     """
+    # Per-section length budget (canonical outline targets), else the default.
+    target = min_chars or MIN_NODE_CONTENT_CHARS
+    threshold = max(int(target * 0.75), MIN_NODE_CONTENT_CHARS)
+
     results: list[NodeFillResult] = []
     previous_content: str = ""
 
@@ -85,6 +92,8 @@ def fill_technical_volume(
             tender_text=tender_text,
             score_items=score_items,
             invalid_items=invalid_items,
+            section_guidance=section_guidance,
+            target_chars=target,
         )
         raw = _generate_messages_with_llm(
             messages,
@@ -93,16 +102,16 @@ def fill_technical_volume(
         )
         cleaned = _clean_node_content(raw, title)
 
-        # Phase 1.3 — one rewrite when the node is below the length/depth budget.
-        if _compact_len(cleaned) < MIN_NODE_CONTENT_CHARS:
-            cleaned = _rewrite_node_deeper(messages, cleaned, title)
+        # Phase 1.3 — one rewrite when the node is below its length/depth budget.
+        if _compact_len(cleaned) < threshold:
+            cleaned = _rewrite_node_deeper(messages, cleaned, title, target)
 
-        short = _compact_len(cleaned) < MIN_NODE_CONTENT_CHARS
+        short = _compact_len(cleaned) < threshold
         if short:
             logger.warning(
                 "Technical node '%s' still below budget after rewrite "
                 "(%d < %d chars) — flagged for review, not silently accepted.",
-                title, _compact_len(cleaned), MIN_NODE_CONTENT_CHARS,
+                title, _compact_len(cleaned), threshold,
             )
         results.append(NodeFillResult(title=title, content=cleaned, short=short))
         previous_content = cleaned[:1200]  # context for next node (continuity)
@@ -120,7 +129,7 @@ def fill_technical_volume(
 
 
 def _rewrite_node_deeper(
-    base_messages: list[dict[str, str]], first_draft: str, title: str
+    base_messages: list[dict[str, str]], first_draft: str, title: str, target: int = 0
 ) -> str:
     """Rewrite a too-thin node once, deeper. Returns the longer of the two drafts.
 
@@ -128,6 +137,7 @@ def _rewrite_node_deeper(
     rewrite (not a continuation) so the result is self-contained. Falls back to
     the first draft if the rewrite call fails or comes back shorter.
     """
+    goal = target or MIN_NODE_CONTENT_CHARS
     deepen_messages = base_messages + [
         {"role": "assistant", "content": first_draft},
         {
@@ -137,7 +147,7 @@ def _rewrite_node_deeper(
                 f"在保留原有要点的前提下大幅扩充：补充具体工程参数与数据、"
                 f"分步施工工艺、质量验收标准、安全与环保及应急措施、"
                 f"人材机资源投入安排，并逐条正面响应评分点。"
-                f"只输出本节正文，不少于 {MIN_NODE_CONTENT_CHARS} 字，"
+                f"只输出本节正文，不少于 {goal} 字，"
                 f"不得输出标题或元话语。"
             ),
         },

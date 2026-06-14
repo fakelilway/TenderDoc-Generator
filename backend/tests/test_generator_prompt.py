@@ -93,3 +93,34 @@ def test_distribute_items_uses_catch_all_when_no_overlap() -> None:
 def test_distribute_items_empty_inputs() -> None:
     assert _distribute_requirement_items([], []) == {}
     assert _distribute_requirement_items(["施工组织设计"], []) == {"施工组织设计": []}
+
+
+def test_collect_technical_sections_expands_thin_outline() -> None:
+    from schemas.tender import TenderRequirements
+    from services.v2_generation_service import _collect_technical_sections
+
+    # Thin/generic tender outline → expand to canonical deep outline.
+    req = TenderRequirements(
+        project_name="某村庄建设项目",
+        format_outline_tree={"technical": [{"title": "一、施工组织设计", "children": []}]},
+    )
+    sections = _collect_technical_sections(req)
+    assert len(sections) >= 20  # canonical deep outline
+    assert any("总体施工组织布置" in s["title"] for s in sections)
+    assert all(s.get("target_chars", 0) > 0 for s in sections)
+    assert sum(s["target_chars"] for s in sections) > 30000  # winning-bid depth
+
+
+def test_prompt_includes_section_guidance_and_length() -> None:
+    messages = build_node_fill_prompt(
+        node_title="质量管理体系与质量保证措施",
+        project_name="某项目",
+        requirements={},
+        company_name="安徽正奇建设有限公司",
+        section_guidance="质量目标分解与承诺、三检制、检验批划分与试验频率",
+        target_chars=2400,
+    )
+    content = next(m["content"] for m in messages if m["role"] == "user")
+    assert "本节必须覆盖的工程要点" in content
+    assert "三检制" in content
+    assert "不少于 2400 字" in content

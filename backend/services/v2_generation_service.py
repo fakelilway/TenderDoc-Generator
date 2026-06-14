@@ -241,9 +241,13 @@ def generate_v2_bid_package(
     tech_content = ""
     prose_results: VolumeFillResult | None = None
 
-    def _call_content_writer(titles: list[str]) -> tuple[VolumeFillResult | None, str]:
-        """Write prose content per-node for depth. Each node gets a dedicated LLM call
-        for 2000+ character sections with engineering parameters and emergency plans."""
+    def _call_content_writer(
+        sections: list[dict],
+    ) -> tuple[VolumeFillResult | None, str]:
+        """Write prose per-node for depth. Each section gets a dedicated LLM call
+        with its must-cover guidance and per-section length budget, so the
+        technical volume reaches winning-bid depth (~25 deep sub-sections)."""
+        titles = [s["title"] for s in sections]
         chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
         # Distribute scored/废标 criteria across nodes once, so each node only
         # carries the items it should respond to (avoids cross-section bloat).
@@ -255,7 +259,8 @@ def generate_v2_bid_package(
         )
         all_results: list[str] = []
         first_result = None
-        for title in titles:
+        for section in sections:
+            title = section["title"]
             result = fill_technical_volume(
                 node_titles=[title],  # Single node for deep coverage
                 project_name=requirements.project_name or "投标项目",
@@ -272,6 +277,8 @@ def generate_v2_bid_package(
                 tender_text=tender_text,
                 score_items=score_by_title.get(title, []),
                 invalid_items=invalid_by_title.get(title, []),
+                section_guidance=str(section.get("must_cover", "")),
+                min_chars=int(section.get("target_chars", 0) or 0),
             )
             if first_result is None:
                 first_result = result
@@ -283,15 +290,15 @@ def generate_v2_bid_package(
     if not original_format_docx_available and classified.get("technical"):
         for page in classified["technical"]:
             if page.page_type == "prose_section" or "施工" in page.title:
-                tech_titles = _collect_technical_titles(requirements)
-                if not tech_titles:
-                    tech_titles = [page.title]
-                prose_results, tech_content = _call_content_writer(tech_titles)
+                tech_sections = _collect_technical_sections(requirements)
+                if not tech_sections:
+                    tech_sections = [{"title": page.title}]
+                prose_results, tech_content = _call_content_writer(tech_sections)
                 break
     elif original_format_docx_available:
-        tech_titles = _collect_technical_titles(requirements) or ["施工组织设计"]
+        tech_sections = _collect_technical_sections(requirements)
         try:
-            prose_results, tech_content = _call_content_writer(tech_titles)
+            prose_results, tech_content = _call_content_writer(tech_sections)
         except Exception as exc:
             logger.error("Content writer failed in original format mode", exc_info=True)
             raise ValueError(
@@ -486,6 +493,36 @@ def _collect_technical_titles(requirements: TenderRequirements) -> list[str]:
     if not titles:
         titles = ["施工组织设计"]
     return titles
+
+
+# Tender format trees usually list 技术卷 only as a coarse form requirement
+# ("一、施工组织设计 / 二、其他内容"). These are not a content outline — the
+# 施工组织设计 is authored by the bidder. When the tree is this thin, expand to
+# the canonical deep outline so the technical volume reaches winning-bid depth.
+_GENERIC_TECH_TITLES = (
+    "施工组织设计", "技术文件", "技术标", "技术方案", "其他内容", "其他材料", "正文",
+)
+
+
+def _collect_technical_sections(requirements: TenderRequirements) -> list[dict]:
+    """Return technical sub-sections to generate: {title, must_cover, target_chars}.
+
+    Uses the tender's own technical outline when it is genuinely detailed
+    (≥4 specific sub-sections); otherwise expands to the canonical
+    施工组织设计 outline (25 deep sections) derived from real winning bids.
+    """
+    from prompts.construction_plan_outline import CONSTRUCTION_PLAN_OUTLINE
+
+    titles = _collect_technical_titles(requirements)
+    specific = [
+        t for t in titles
+        if not any(g in t for g in _GENERIC_TECH_TITLES)
+    ]
+    if len(specific) >= 4:
+        # Tender provides a real technical content outline — honor it.
+        return [{"title": t, "must_cover": "", "target_chars": 1500} for t in titles]
+    # Thin/generic outline → use the canonical deep construction-plan outline.
+    return [dict(s) for s in CONSTRUCTION_PLAN_OUTLINE]
 
 
 def _strip_writer_top_level_headings(markdown: str) -> str:

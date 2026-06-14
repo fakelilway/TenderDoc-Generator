@@ -51,6 +51,8 @@ def build_node_fill_prompt(
     tender_text: str = "",
     score_items: list[dict[str, Any]] | None = None,
     invalid_items: list[dict[str, Any]] | None = None,
+    section_guidance: str = "",
+    target_chars: int = 0,
 ) -> list[dict[str, str]]:
     """Focused V2 prompt for filling one construction-plan prose node.
 
@@ -84,6 +86,16 @@ def build_node_fill_prompt(
     score_block = _format_requirement_items(score_items)
     invalid_block = _format_requirement_items(invalid_items)
 
+    guidance_block = ""
+    if section_guidance:
+        guidance_block = f"\n## 本节必须覆盖的工程要点\n{section_guidance}\n"
+    length_rule = ""
+    if target_chars:
+        length_rule = (
+            f"\n8. 本节篇幅不少于 {target_chars} 字，分层次（小标题/分条）充分展开，"
+            f"按上面'必须覆盖的工程要点'逐项写实写细，不灌水、不重复。"
+        )
+
     user_prompt = f"""## 任务
 撰写施工组织设计节点"{node_title}"的正文内容。
 
@@ -99,7 +111,7 @@ def build_node_fill_prompt(
 
 ## 知识库参考
 {chr(10).join(snippets) if snippets else '（未匹配到相关知识片段）'}
-
+{guidance_block}
 ## 本节点须正面响应的评分点
 {score_block or '（本节点无直接对应评分点，按通用施工组织设计深度撰写）'}
 
@@ -121,7 +133,7 @@ def build_node_fill_prompt(
 4. 不写"人工确认点""待补充""TODO""AI生成"等元话语。
 5. 不编造金额、人名、证号、日期；知识库只作素材，不得改变招标文件结构。
 6. 逐条正面响应上述评分点，给出对应的、可量化的工程措施与验收标准，不要泛泛而谈。
-7. 确保不触发上述废标项；涉及承诺事项用确定性表述明确承诺。
+7. 确保不触发上述废标项；涉及承诺事项用确定性表述明确承诺。{length_rule}
 
 ## 输出
 直接输出本节点正文。"""
