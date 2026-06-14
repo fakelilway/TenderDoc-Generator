@@ -579,9 +579,9 @@ def _hidden_marker_xml(text: str) -> Any:
     escaped = escape(text)
     xml = f"""
     <w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-      <w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr>
+      <w:pPr><w:spacing w:before="0" w:after="0" w:line="1" w:lineRule="exact"/></w:pPr>
       <w:r>
-        <w:rPr><w:vanish/></w:rPr>
+        <w:rPr><w:vanish/><w:sz w:val="2"/></w:rPr>
         <w:t xml:space="preserve">{escaped}</w:t>
       </w:r>
     </w:p>
@@ -629,7 +629,7 @@ def _editable_textbox_xml(span: dict[str, Any], page_num: int, index: int) -> An
          xmlns:v="urn:schemas-microsoft-com:vml"
          xmlns:o="urn:schemas-microsoft-com:office:office">
       <w:pPr>
-        <w:spacing w:before="0" w:after="0"/>
+        <w:spacing w:before="0" w:after="0" w:line="1" w:lineRule="exact"/>
       </w:pPr>
       <w:r>
         <w:pict>

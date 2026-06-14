@@ -48,9 +48,24 @@
 - 整页截图兜底文档（有 `TDG_PDF_PAGE_START` 页标记）仍走 `_split_pdf_page_blocks` 按页拆分。
 - 旧的关键字/`format_outline_tree` 三卷拆分已废弃：真实招标文件里技术=生成、报价=外部，转换出的格式章≈商务，没有可拆的三卷。
 
+## 首次 E2E 实测（招标#1，无知识库，2026-06-15）
+
+`generate_v2_bid_package` 跑通（audit 未阻断），技术正文 6169 压缩字。
+
+- 评分点响应率 **2/3 = 67%**，唯一未命中是「投标报价评分」——**报价项，本就外部造价软件管、不入技术卷**。技术相关评分点实为 **2/2**。
+- 废标项 **2/27 = 7%**，未命中全是**商务/报价废标**（商务文件形式/资格/响应性评审、报价文件评审…）。
+
+> **重要：响应率必须按卷分母。** 技术评分项 vs 技术正文；商务/报价废标 vs 商务卷照抄+填空 + reviewer 审查。拿全部 27 个（多为商务/报价）废标比技术正文 → 7% 是分母错位，不是质量问题。`benchmark_vs_baseline.py` 后续应按卷拆分响应率。
+
+## 视觉回归注意
+
+- `visual_regression.py`（soffice 渲染）对**技术卷**（markdown→docx，无 VML）可靠。
+- 对**商务卷**（整页图 + VML 填空框）**不可靠**：实测 16 页格式章被 soffice 渲成 46 页（每页夹 2 空白页）。已隔离证实是 **soffice 多节+浮动 VML 形状的渲染缺陷**（image-only 多节=16 页✓、单节+填空框=1 页✓，仅"多节+VML"在 soffice 膨胀），**很可能非 Word/新点的真实缺陷**，待用 Word 核实。商务卷视觉以"页标记数"为准。
+
 ## 待办
 
-- 响应率指标需要先用 Parser 解析出 `requirements.json`（含 `technical_score_items`/`invalid_bid_items`）才能算。
+- 响应率指标需要先用 Parser 解析出 `requirements.json`（含 `technical_score_items`/`invalid_bid_items`）才能算；并按卷拆分分母。
+- 用 Word/新点核实商务卷是否真有空白页（soffice 渲染不可信）。
 
 ## 验收流程
 
