@@ -368,9 +368,9 @@ def test_v2_raises_when_pdf_original_format_copy_fails(monkeypatch) -> None:
     def fail_copy(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    # Both the pdf2docx editable path and the page-image fallback fail → hard error.
+    # Both the image+fields primary and the plain page-image fallback fail → hard error.
     monkeypatch.setattr(
-        "services.original_docx_format_service.build_original_format_docx_from_pdf_editable",
+        "services.original_docx_format_service.build_original_format_docx_from_pdf_with_fields",
         fail_copy,
     )
     monkeypatch.setattr(

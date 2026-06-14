@@ -319,6 +319,172 @@ def build_original_format_docx_from_pdf_editable(
             pass
 
 
+# Label keyword → profile keys to pre-fill the adjacent blank. Conservative
+# allowlist; only single-value fields. Segmented blanks (成立时间 年/月/日) and
+# anything not listed stay empty-but-editable.
+_FILL_FIELD_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("投标人", ("company_name", "投标人", "公司名称")),
+    ("单位性质", ("company_type", "单位性质", "公司类型")),
+    ("址", ("registered_address", "注册地址", "地址")),  # 地 址 → '址：'
+    ("名", ("legal_representative", "法定代表人", "姓名")),  # 姓 名 → '名：'
+    ("法定代表", ("legal_representative", "法定代表人")),
+    ("联系电话", ("contact_phone", "联系电话", "电话")),
+    ("号码", ("contact_phone", "手机号码", "手机")),
+)
+# Labels whose blank is segmented or date-like → never auto-fill.
+_FILL_SKIP_KEYWORDS = ("成立", "日期", "经营期限", "别", "龄", "务", "年", "月", "日")
+
+
+def _detect_fill_underlines(page: Any) -> list[tuple[float, float, float]]:
+    """Detect horizontal fill-in underlines on a PDF page → (x0, y, length)."""
+    out: list[tuple[float, float, float]] = []
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return out
+    for d in drawings:
+        for item in d.get("items", []):
+            if item[0] == "l":  # line segment
+                p1, p2 = item[1], item[2]
+                if abs(p1.y - p2.y) < 1.5 and abs(p2.x - p1.x) > 25:
+                    x0 = min(p1.x, p2.x)
+                    out.append((x0, p1.y, abs(p2.x - p1.x)))
+    return out
+
+
+def _fill_labels(page: Any) -> list[tuple[str, float, float, float]]:
+    """Text spans ending in ：/: → (text, x0, y0, x1) used to anchor blanks."""
+    labels: list[tuple[str, float, float, float]] = []
+    for block in page.get_text("dict").get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = str(span.get("text") or "").strip()
+                if text.endswith("：") or text.endswith(":"):
+                    x0, y0, x1, _ = span.get("bbox", (0, 0, 0, 0))
+                    labels.append((text, x0, y0, x1))
+    return labels
+
+
+def _nearest_left_label(
+    line_x: float, line_y: float, labels: list[tuple[str, float, float, float]]
+) -> str | None:
+    """Label immediately left of a blank on the same row."""
+    best: str | None = None
+    best_dist = 1e9
+    for text, _x0, y0, x1 in labels:
+        if y0 <= line_y + 2 and (line_y - y0) < 18 and x1 <= line_x + 30:
+            dist = abs(line_y - y0) + (line_x - x1) * 0.01
+            if dist < best_dist:
+                best_dist = dist
+                best = text
+    return best
+
+
+def _fill_value_for_label(label: str | None, profile: dict[str, Any]) -> str:
+    if not label:
+        return ""
+    norm = label.rstrip("：:").replace(" ", "")
+    if any(kw in norm for kw in _FILL_SKIP_KEYWORDS):
+        return ""
+    for keyword, keys in _FILL_FIELD_ALIASES:
+        if keyword in norm:
+            for key in keys:
+                value = str(profile.get(key, "") or "").strip()
+                if value:
+                    return value
+            return ""
+    return ""
+
+
+def _add_pdf_fill_fields(
+    document: Document, page: Any, page_num: int, profile: dict[str, Any]
+) -> None:
+    """Overlay an editable text box on each detected fill-in underline, pre-filled
+    from the profile where the adjacent label maps to a known field."""
+    underlines = _detect_fill_underlines(page)
+    labels = _fill_labels(page)
+    for index, (x0, y_line, length) in enumerate(underlines):
+        label = _nearest_left_label(x0, y_line, labels)
+        value = _fill_value_for_label(label, profile)
+        span = {
+            "text": value,
+            "left_pt": x0 + 2,
+            "top_pt": y_line - 13,
+            "width_pt": max(length - 4, 10),
+            "height_pt": 13,
+            "font_size_pt": 10.5,
+        }
+        _append_body_element(
+            document, _editable_textbox_xml(span, page_num, 9000 + index)
+        )
+
+
+def build_original_format_docx_from_pdf_with_fields(
+    tender_pdf_bytes: bytes,
+    output_path: str | Path,
+    *,
+    profile: dict[str, Any] | None = None,
+) -> str:
+    """Pixel-perfect format pages (full-page image) + fillable field overlay.
+
+    Each PDF format page is rendered as a page-sized image (identical to the
+    tender原件, viewer-independent), and an editable text box is placed on every
+    detected fill-in underline — pre-filled from the company profile where the
+    adjacent label maps to a known field, otherwise blank-but-editable. This is
+    the primary PDF path: it solves pdf2docx's underline misalignment while
+    keeping blanks fillable (incl. knowledge-base values).
+    """
+    import os
+    import tempfile
+
+    import fitz
+    from docx.shared import Pt
+
+    profile = profile or {}
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+        tmp_pdf.write(tender_pdf_bytes)
+        pdf_path = tmp_pdf.name
+
+    try:
+        page_range = _find_format_page_range_in_pdf(pdf_path)
+        if not page_range:
+            raise ValueError("未能在 PDF 中定位“投标文件格式”章节")
+
+        pdf = fitz.open(pdf_path)
+        try:
+            docx = Document()
+            _clear_document_body(docx)
+            for index, page_num in enumerate(range(page_range[0], page_range[1])):
+                page = pdf[page_num]
+                section = docx.sections[0] if index == 0 else docx.add_section()
+                _match_section_to_pdf_page(section, page)
+                _append_pdf_page_marker(docx, page_num, page.get_text())
+
+                pix = page.get_pixmap(
+                    matrix=fitz.Matrix(PDF_RENDER_DPI / 72, PDF_RENDER_DPI / 72),
+                    alpha=False,
+                )
+                paragraph = docx.add_paragraph()
+                paragraph.paragraph_format.space_before = Pt(0)
+                paragraph.paragraph_format.space_after = Pt(0)
+                run = paragraph.add_run()
+                run.add_picture(BytesIO(pix.tobytes("png")), width=section.page_width)
+
+                _add_pdf_fill_fields(docx, page, page_num, profile)
+
+            path = Path(output_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            docx.save(path)
+        finally:
+            pdf.close()
+        return str(output_path)
+    finally:
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
+
+
 def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
     """Find zero-based, end-exclusive format chapter page range."""
     import fitz

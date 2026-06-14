@@ -7,6 +7,7 @@ from services.original_docx_format_service import (
     build_original_format_docx,
     build_original_format_docx_from_pdf,
     build_original_format_docx_from_pdf_editable,
+    build_original_format_docx_from_pdf_with_fields,
 )
 
 
@@ -122,3 +123,75 @@ def test_build_original_format_docx_from_pdf_editable_produces_real_text(
     assert len(doc.inline_shapes) == 0
     # No PDF page markers — editable DOCX rides the keyword split, not page blocks.
     assert PDF_PAGE_MARKER_PREFIX not in doc.element.xml
+
+
+def test_build_pdf_with_fields_overlays_editable_boxes_on_underlines(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Image base (pixel-perfect) + editable text boxes on detected fill-in
+    underlines, pre-filled from the profile where the label matches."""
+    import fitz
+
+    source_path = tmp_path / "tender.pdf"
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Chapter 8 Bid Format")
+    page = pdf.new_page()
+    page.insert_text((72, 100), "投标人：")
+    # a horizontal underline after the label (the fill-in blank)
+    page.draw_line(fitz.Point(140, 104), fitz.Point(400, 104))
+    pdf.save(source_path)
+    pdf.close()
+
+    monkeypatch.setattr(
+        "services.original_docx_format_service._find_format_page_range_in_pdf",
+        lambda _path: (1, 2),
+    )
+
+    output_path = tmp_path / "with_fields.docx"
+    build_original_format_docx_from_pdf_with_fields(
+        source_path.read_bytes(),
+        output_path,
+        profile={"company_name": "安徽正奇建设有限公司"},
+    )
+
+    doc = Document(output_path)
+    xml = doc.element.xml
+    # Pixel-perfect base image present.
+    assert len(doc.inline_shapes) == 1
+    # Editable overlay box placed on the detected underline.
+    assert "txbxContent" in xml
+    # Page marker kept (rides the page-block split as the commercial卷).
+    assert PDF_PAGE_MARKER_PREFIX in xml
+    # (Chinese pre-fill is verified by the unit tests below; fitz's default font
+    # cannot render CJK into a synthetic test PDF, so the label is unextractable
+    # here — the real-tender path fills it, as the prototype confirmed.)
+
+
+def test_fill_value_for_label_maps_and_skips() -> None:
+    from services.original_docx_format_service import _fill_value_for_label
+
+    profile = {
+        "company_name": "安徽正奇建设有限公司",
+        "registered_address": "合肥市某路1号",
+        "legal_representative": "张三",
+    }
+    assert _fill_value_for_label("投标人：", profile) == "安徽正奇建设有限公司"
+    assert _fill_value_for_label("址：", profile) == "合肥市某路1号"  # 地 址 → '址：'
+    assert _fill_value_for_label("名：", profile) == "张三"  # 姓 名 → '名：'
+    # Segmented / unmapped blanks stay empty (editable but not auto-filled).
+    assert _fill_value_for_label("成立时间：", profile) == ""
+    assert _fill_value_for_label("别：", profile) == ""  # 性别
+    assert _fill_value_for_label("日　期：", profile) == ""
+    assert _fill_value_for_label(None, profile) == ""
+
+
+def test_nearest_left_label_matches_same_row() -> None:
+    from services.original_docx_format_service import _nearest_left_label
+
+    labels = [("投标人：", 114.0, 141.0, 162.0), ("单位性质：", 114.0, 164.0, 174.0)]
+    # underline on the 投标人 row (y≈153), starting right of the label
+    assert _nearest_left_label(174.0, 153.0, labels) == "投标人："
+    # underline far above any label → no match
+    assert _nearest_left_label(174.0, 50.0, labels) is None

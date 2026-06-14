@@ -176,18 +176,19 @@ def generate_v2_bid_package(
         tmp.close()
         from services.original_docx_format_service import (
             build_original_format_docx_from_pdf,
-            build_original_format_docx_from_pdf_editable,
+            build_original_format_docx_from_pdf_with_fields,
         )
 
-        # Primary: pdf2docx editable 照抄 (商务/报价 can be filled, no LLM).
-        # Fallback: 整页截图 path when reconstruction fails or is empty.
+        # Primary: 整页截图(像素级保真) + 填空字段叠层(可编辑、知识库预填)。
+        # 解决 pdf2docx 下划线错位，同时保住填空可编辑。
+        # Fallback: 纯整页截图(无填空字段)。两者都失败才硬报错。
         try:
-            built_format_docx = build_original_format_docx_from_pdf_editable(
+            built_format_docx = build_original_format_docx_from_pdf_with_fields(
                 tender_bytes, tmp_path, profile=combined_profile
             )
         except Exception:
             logger.warning(
-                "pdf2docx editable conversion failed — falling back to page-image path",
+                "Image+fields format build failed — falling back to plain page-image",
                 exc_info=True,
             )
             try:
