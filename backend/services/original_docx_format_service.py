@@ -71,25 +71,38 @@ def _clear_document_body(document: Document) -> None:
             body.remove(child)
 
 
+def _is_toc_line(text: str) -> bool:
+    """A table-of-contents entry: dot/leader run, or leaders followed by a page no."""
+    return bool(
+        re.search(r"[.．·…]{4,}", text)
+        or re.search(r"[.．·…]{2,}\s*\d{1,4}\s*$", text)
+    )
+
+
 def _find_format_start(elements: list[Any]) -> int | None:
-    first_format_heading: int | None = None
+    """Locate the start of the format chapter body.
+
+    The chapter heading appears multiple times — in the TOC, in 须知 references,
+    and as the actual chapter title. Use the LAST non-TOC heading (the real
+    chapter usually follows the TOC and the body references), mirroring the PDF
+    path's "use the last match". Falls back to the first body-form marker.
+    """
+    format_headings: list[int] = []
     first_body_marker: int | None = None
     for index, element in enumerate(elements):
         text = _element_text(element)
         if not text:
             continue
         compact = re.sub(r"\s+", "", text)
-        if first_format_heading is None and FORMAT_CHAPTER_RE.search(compact):
-            first_format_heading = index
+        if FORMAT_CHAPTER_RE.search(compact) and not _is_toc_line(text):
+            format_headings.append(index)
         if first_body_marker is None and any(
             marker in compact for marker in FORMAT_BODY_MARKERS
         ):
             first_body_marker = index
-        if first_format_heading is not None and first_body_marker is not None:
-            break
-    return (
-        first_format_heading if first_format_heading is not None else first_body_marker
-    )
+    if format_headings:
+        return format_headings[-1]
+    return first_body_marker
 
 
 def _find_format_end(elements: list[Any], start: int) -> int:
