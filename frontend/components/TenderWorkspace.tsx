@@ -101,7 +101,8 @@ const previewStatuses = new Set([
   "needs_revision",
   "draft_saved",
   "approved",
-  "finished"
+  "finished",
+  "generation_failed"
 ]);
 
 type DirtyField = "markdown" | "parsed" | "outline" | "chunks";
@@ -385,7 +386,7 @@ export function TenderWorkspace({
     if (status === "parsed" || status === "parsed_confirmed") {
       setCenterTab("parsed");
     } else if (
-      ["generated", "reviewing", "human_review", "needs_revision", "draft_saved", "approved", "finished"].includes(status)
+      ["generated", "reviewing", "human_review", "needs_revision", "draft_saved", "approved", "finished", "generation_failed"].includes(status)
     ) {
       setCenterTab("preview");
     }

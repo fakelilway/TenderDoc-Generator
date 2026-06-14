@@ -264,11 +264,32 @@ def generate_v2_bid_package(
             lines.append("\n<!-- tdg:pagebreak -->\n")
             lines.append(f"\n## {title}\n\n{content}\n")
 
+        # Fallback: when volume_pages is empty (original format mode),
+        # the for-loop above never runs. Insert tech_content directly
+        # so the LLM output is not silently discarded.
+        if vol == "technical" and tech_content and not technical_content_inserted:
+            lines.append("\n<!-- tdg:pagebreak -->\n")
+            lines.append(
+                f"\n{_add_pagebreaks_before_headings(_clean_for_markdown(tech_content))}\n"
+            )
+            technical_content_inserted = True
+
         return "\n".join(lines)
 
     commercial_md = _assemble_markdown("commercial")
     technical_md = _assemble_markdown("technical")
     pricing_md = _assemble_markdown("pricing")
+
+    # ── Phase 4b: Enrich commercial/pricing markdown in original format mode ──
+    # When original_format_docx_available=True, format pages come from the
+    # original DOCX, but the markdown preview still needs compliance content.
+    if original_format_docx_available:
+        commercial_md = _enrich_commercial_markdown(
+            commercial_md, requirements, combined_profile
+        )
+        notes_md = _build_audit_notes(requirements)
+    else:
+        notes_md = ""
 
     # ── Phase 5: Audit ──
     filled_page_pairs = []
@@ -322,7 +343,7 @@ def generate_v2_bid_package(
             "technical": technical_md,
             "pricing": pricing_md,
         },
-        notes="",
+        notes=notes_md,
     )
 
     return V2BidPackage(
@@ -389,12 +410,20 @@ def _strip_writer_top_level_headings(markdown: str) -> str:
     """Keep format-tree titles as the only top-level headings.
 
     Content writer calls are scoped to a single node, but models often echo
-    ``#``/``##`` headings anyway. Removing those headings prevents generated
-    prose from adding or duplicating tender-format nodes.
+    ``#`` headings anyway. Remove only ``#`` (H1) headings and ``##`` headings
+    that duplicate the node title — preserve meaningful sub-section ``##`` headings
+    like "施工方法", "质量保证措施" etc.
     """
     lines = []
+    first_heading_stripped = False
     for line in markdown.splitlines():
-        if re.match(r"^\s*#{1,2}\s+", line):
+        # Always strip H1 (# ) — the volume heading is added by _assemble_markdown
+        if re.match(r"^\s*#\s+", line) and not re.match(r"^\s*##\s+", line):
+            continue
+        # Strip only the FIRST ## heading (usually the node title echo),
+        # keep all subsequent ## headings as valid sub-sections
+        if re.match(r"^\s*##\s+", line) and not first_heading_stripped:
+            first_heading_stripped = True
             continue
         lines.append(line)
     return "\n".join(lines).strip()
@@ -500,3 +529,157 @@ def _clean_for_markdown(text: str) -> str:
     text = _RE_BLANK_LINES.sub("\n\n", text)
     text = _RE_PAGE_NUM.sub("\n", text)
     return text.strip()
+
+
+def _enrich_commercial_markdown(
+    commercial_md: str,
+    requirements: TenderRequirements,
+    profile: dict[str, str],
+) -> str:
+    """Add compliance response sections to commercial volume in original format mode.
+
+    When the format pages come from the original DOCX, the markdown preview
+    would only show a header. This function appends deterministic compliance
+    text derived from the parsed requirements so the preview is informative.
+    """
+    # Only enrich if the markdown is just a header (original format mode)
+    lines = commercial_md.splitlines()
+    non_empty = [l for l in lines if l.strip() and not l.strip().startswith("#")]
+    if non_empty:
+        return commercial_md  # Already has content from form filling
+
+    parts = [commercial_md.rstrip()]
+
+    # Qualification compliance section
+    if requirements.qualification_list:
+        parts.append("\n<!-- tdg:pagebreak -->\n")
+        parts.append("\n## 资格响应\n")
+        for item in requirements.qualification_list:
+            parts.append(f"\n### {item.title}\n")
+            parts.append(f"\n{item.description}\n")
+            # Try to match with profile data
+            profile_value = _match_profile_field(item.title, profile)
+            if profile_value:
+                parts.append(f"\n**响应：** {profile_value}\n")
+
+    # Bid bond section
+    parts.append("\n<!-- tdg:pagebreak -->\n")
+    parts.append("\n## 投标保证金\n")
+    bond_info = []
+    if profile.get("bid_bond_amount"):
+        bond_info.append(f"金额：{profile['bid_bond_amount']}")
+    if requirements.bid_deadline:
+        bond_info.append(f"有效期至：{requirements.bid_deadline}")
+    if bond_info:
+        parts.append(f"\n{'，'.join(bond_info)}。\n")
+    else:
+        parts.append(
+            "\n投标保证金按招标文件要求提交，具体金额、方式和有效期详见投标保证金保函/凭证。\n"
+        )
+
+    # Project manager section
+    parts.append("\n<!-- tdg:pagebreak -->\n")
+    parts.append("\n## 项目管理机构\n")
+    pm_fields = []
+    if profile.get("project_manager"):
+        pm_fields.append(f"项目经理：{profile['project_manager']}")
+    if profile.get("pm_certificate"):
+        pm_fields.append(f"注册建造师证书：{profile['pm_certificate']}")
+    if profile.get("pm_specialty"):
+        pm_fields.append(f"专业：{profile['pm_specialty']}")
+    if pm_fields:
+        parts.append(f"\n{'，'.join(pm_fields)}。承诺在本项目实施期间在岗，不在其他项目兼职。\n")
+    else:
+        parts.append(
+            "\n拟派项目经理具备相应专业注册建造师证书，在岗承诺详见附件。"
+            "安全生产许可证有效且覆盖本项目施工活动。\n"
+        )
+
+    return "\n".join(parts)
+
+
+def _match_profile_field(title: str, profile: dict[str, str]) -> str:
+    """Try to find a matching profile value for a requirement title."""
+    title_lower = title.lower()
+    mapping = {
+        "资质": ["qualification_level", "qualification", "资质等级"],
+        "营业执照": ["business_license", "license", "营业执照号"],
+        "安全生产": ["safety_license", "safety_production_license", "安全生产许可证"],
+        "财务": ["financial", "财务状况"],
+        "业绩": ["performance", "业绩"],
+        "信誉": ["credit", "信誉"],
+    }
+    for keyword, keys in mapping.items():
+        if keyword in title_lower:
+            for key in keys:
+                val = profile.get(key, "")
+                if val:
+                    return val
+    return ""
+
+
+def _build_audit_notes(requirements: TenderRequirements) -> str:
+    """Build the notes volume with audit correction items from requirements.
+
+    This generates the 审查修正说明 section with compliance responses
+    derived from the parsed invalid_bid_items, qualification requirements,
+    and other compliance fields.
+    """
+    parts = ["## 审查修正说明\n"]
+
+    # Individual compliance items from requirements fields
+    compliance_items: list[tuple[str, str]] = []
+
+    # Project manager certificate
+    if any("项目经理" in (item.title + item.description) for item in requirements.qualification_list):
+        compliance_items.append((
+            "project_manager_certificate",
+            "在项目管理机构或人员配置章节明确项目经理注册建造师证书、专业、有效期和在岗承诺。",
+        ))
+
+    # Safety production license
+    if any("安全" in (item.title + item.description) for item in requirements.qualification_list):
+        compliance_items.append((
+            "safety_production_license",
+            "在资格响应或安全文明施工章节写明安全生产许可证有效、覆盖本项目施工活动。",
+        ))
+
+    # Bid bond
+    compliance_items.append((
+        "bid_bond",
+        "补充投标保证金或保函提交方式、金额、有效期和到账/开具时间响应。",
+    ))
+
+    # Qualification level
+    if requirements.qualification_list:
+        compliance_items.append((
+            "qualification_level",
+            "在资格响应章节明确企业施工资质等级，并与招标文件要求保持一致。",
+        ))
+
+    # Schedule response
+    if requirements.planned_duration:
+        compliance_items.append((
+            "schedule_response",
+            "在进度计划章节补充总工期、关键节点、资源投入和延期风险控制措施。",
+        ))
+
+    # Quality response
+    if requirements.quality_standard:
+        compliance_items.append((
+            "quality_response",
+            "在质量保证章节补充质量目标、三检制、隐蔽工程验收和资料归档措施。",
+        ))
+
+    # Invalid bid items
+    for idx, item in enumerate(requirements.invalid_bid_items, start=1):
+        compliance_items.append((
+            f"invalid_bid_item_{idx}",
+            item.description or item.title,
+        ))
+
+    # Render
+    for key, desc in compliance_items:
+        parts.append(f"\n-针对 `{key}`：{desc}\n")
+
+    return "\n".join(parts)
