@@ -32,7 +32,6 @@ def export_markdown_for_project(
     quality_report: dict[str, float | int],
     *,
     original_format_path: str | None = None,
-    format_outline_tree=None,
 ) -> tuple[str, str]:
     markdown = strip_meta_notes(markdown)
     title = _extract_markdown_title(markdown) or "投标文件"
@@ -43,15 +42,20 @@ def export_markdown_for_project(
         docx_path = tmp_path / f"project_{project_id}_bid.docx"
 
         if original_format_path and Path(original_format_path).exists():
-            # Split format DOCX into three independent volume files at OOXML level
-            _split_and_export_volumes(
-                original_format_path, tmp_path, project_id, markdown,
-                format_outline_tree=format_outline_tree,
-            )
-            # Main docx = technical (has prose)
             import shutil
 
-            shutil.copy2(tmp_path / f"project_{project_id}_technical.docx", docx_path)
+            if _format_doc_has_page_markers(original_format_path):
+                # Image-fallback format doc: split by whole PDF page blocks.
+                _split_and_export_volumes(
+                    original_format_path, tmp_path, project_id, markdown
+                )
+                shutil.copy2(tmp_path / f"project_{project_id}_technical.docx", docx_path)
+            else:
+                # Editable 照抄 (pdf2docx/DOCX): 商务=格式章照抄, 技术=独立生成正文,
+                # 报价=外部造价软件，本系统不产出。
+                _assemble_two_volumes(
+                    original_format_path, tmp_path, project_id, markdown, docx_path, title
+                )
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
                 markdown,
@@ -286,22 +290,78 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     doc.save(str(docx_path))
 
 
+def _format_doc_has_page_markers(format_path) -> bool:
+    """True when the format DOCX is the image-fallback path (hidden PDF page markers)."""
+    from docx import Document as _D
+
+    try:
+        doc = _D(str(format_path))
+    except Exception:
+        return False
+    return PDF_PAGE_MARKER_PREFIX in doc.element.xml
+
+
+def _assemble_two_volumes(
+    format_path: str,
+    tmp_path: Path,
+    project_id: int,
+    markdown: str,
+    main_docx_path: Path,
+    title: str,
+) -> None:
+    """Two-volume delivery for editable format docs (pdf2docx / DOCX 照抄).
+
+    - 商务卷 = the converted format chapter, copied verbatim (照抄) with known
+      fields already filled, then appended compliance prose if any.
+    - 技术卷 = the LLM-written prose as its OWN zhengqi-styled document (cover +
+      TOC), never glued onto the commercial format pages.
+    - 报价卷 = done externally in造价软件; this system does NOT produce it.
+
+    The main bid.docx mirrors the technical volume (the part with written prose).
+    """
+    import shutil
+
+    from utils.docx_exporter import split_delivery_markdown
+
+    volumes = split_delivery_markdown(markdown)
+    commercial_markdown = volumes.get("commercial", "")
+    technical_markdown = volumes.get("technical", "") or markdown
+
+    # 商务卷：照抄格式章 + 合规正文
+    commercial_path = tmp_path / f"project_{project_id}_commercial.docx"
+    shutil.copy2(format_path, commercial_path)
+    if commercial_markdown.strip():
+        _append_prose_to_docx(commercial_path, commercial_markdown)
+
+    # 技术卷：独立成文的施工组织设计正文
+    technical_path = tmp_path / f"project_{project_id}_technical.docx"
+    if technical_markdown.strip():
+        markdown_to_docx(
+            technical_markdown,
+            technical_path,
+            title=title,
+            subtitle="技术文件",
+            cover=True,
+            toc=True,
+            header_text=title,
+            page_numbers=True,
+            style_profile="zhengqi",
+            image_resolver=_resolve_knowledge_image,
+        )
+    else:
+        shutil.copy2(format_path, technical_path)
+
+    shutil.copy2(technical_path, main_docx_path)
+
+
 def _split_and_export_volumes(
     format_path: str,
     tmp_path: Path,
     project_id: int,
     markdown: str,
-    format_outline_tree=None,
 ) -> None:
-    """Split a merged format DOCX into three independent volume DOCX files
-    at OOXML element level, preserving tables, borders, and formatting.
-
-    Order of strategies (first that succeeds wins):
-    1. PDF page blocks (image path with hidden page markers).
-    2. format_outline_tree-driven: match each form heading to its volume from
-       the parser tree — robust to TOC/body keyword false-positives.
-    3. Keyword boundary heuristic (legacy fallback).
-    """
+    """Split an image-fallback format DOCX (hidden PDF page markers) into volume
+    files by whole page blocks. Editable 照抄 docs use _assemble_two_volumes."""
     import re, shutil
     from docx import Document as _D
     from docx.oxml.ns import qn
@@ -318,16 +378,7 @@ def _split_and_export_volumes(
     if _split_pdf_page_blocks(elements, body, tmp_path, project_id, technical_markdown, commercial_markdown):
         return
 
-    # Strategy 2: outline-tree-driven split (preferred when a tree is available).
-    tree_sections = _split_sections_by_outline_tree(elements, format_outline_tree)
-    if tree_sections is not None:
-        _write_volume_files(
-            tree_sections, body, tmp_path, project_id,
-            technical_markdown, commercial_markdown,
-        )
-        return
-
-    # Strategy 3: keyword boundary heuristic.
+    # Keyword boundary heuristic (only reached for marker-less docs passed directly).
     VOL_BOUNDARIES = {
         "commercial": re.compile(r"商务文件|商务标|商务及技术"),
         "technical": re.compile(r"技术文件|施工组织|技术标"),
@@ -412,129 +463,6 @@ def _write_volume_files(
         elif vol == "commercial":
             _append_prose_to_docx(vol_path, commercial_markdown)
 
-
-_VOL_ORDER = {"commercial": 0, "technical": 1, "pricing": 2}
-_VOL_BY_INDEX = ("commercial", "technical", "pricing")
-
-# Leading enumeration prefixes that differ between tree titles and rendered
-# headings: 一、 / （一） / (1) / 1. / 1． / 1、 / 第一 etc.
-_LEADING_NUMBERING = re.compile(
-    r"^[\s第]*"
-    r"(?:[一二三四五六七八九十百]+|\d+)?"
-    r"[\s、\.．：:）\)）\.]*"
-    r"|^[（(][一二三四五六七八九十\d]+[）)]\s*"
-)
-
-# Unambiguous volume divider headings (specific enough to beat false-positives).
-_VOL_DIVIDERS = (
-    (re.compile(r"(投标文件)?[（(]?技术文件[）)]?|技术部分|技术标书?$"), "technical"),
-    (re.compile(r"(投标文件)?[（(]?报价文件[）)]?|报价部分|已标价工程量清单|工程量清单报价"), "pricing"),
-    (re.compile(r"(投标文件)?[（(]?商务文件[）)]?|商务部分"), "commercial"),
-)
-
-
-def _strip_numbering(text: str) -> str:
-    prev = None
-    out = text
-    # Apply repeatedly to peel nested prefixes like "（一）1."
-    while out != prev:
-        prev = out
-        out = _LEADING_NUMBERING.sub("", out, count=1)
-    return out
-
-
-def _outline_form_titles(format_outline_tree) -> list[tuple[str, str]]:
-    """Flatten format_outline_tree → [(numbering-stripped title, volume)], longest first."""
-    out: list[tuple[str, str]] = []
-    if not format_outline_tree:
-        return out
-
-    def _nodes(vol: str):
-        if isinstance(format_outline_tree, dict):
-            return format_outline_tree.get(vol, []) or []
-        return getattr(format_outline_tree, vol, []) or []
-
-    def _title(node) -> str:
-        if isinstance(node, dict):
-            return str(node.get("title", "") or "")
-        return str(getattr(node, "title", "") or "")
-
-    def _children(node):
-        if isinstance(node, dict):
-            return node.get("children", []) or []
-        return getattr(node, "children", []) or []
-
-    for vol in ("commercial", "technical", "pricing"):
-        for node in _nodes(vol):
-            for title in (_title(node), *(_title(c) for c in _children(node))):
-                norm = _strip_numbering(re.sub(r"\s+", "", title))
-                if len(norm) >= 3:
-                    out.append((norm, vol))
-    out.sort(key=lambda x: len(x[0]), reverse=True)
-    return out
-
-
-def _split_sections_by_outline_tree(elements, format_outline_tree):
-    """Assign each element to a volume by matching form headings from the tree.
-
-    Returns a ``{volume: [elements]}`` dict, or ``None`` if no usable tree is
-    available or the resulting split is degenerate (so the caller falls back).
-
-    Robustness on real tenders:
-    - Strip leading numbering from both tree titles and headings (一、/（一）/1.)
-      so "一、施工组织设计" matches a rendered "施工组织设计".
-    - Recognize unambiguous volume divider headings (投标文件（技术文件）…).
-    - Enforce monotonic volume progression (commercial→technical→pricing): once
-      we enter pricing, a later "投标函" (which also exists in commercial) cannot
-      jump the cursor back.
-    """
-    from docx.oxml.ns import qn
-
-    titles = _outline_form_titles(format_outline_tree)
-    if not titles:
-        return None
-    vols_with_forms = {vol for _, vol in titles}
-    if len(vols_with_forms) < 2:
-        return None  # tree too thin to split meaningfully
-
-    sections: dict[str, list] = {"commercial": [], "technical": [], "pricing": []}
-    current_idx = 0  # default commercial — cover/目录 pages land here
-
-    def _divider_volume(norm_text: str) -> str | None:
-        for pat, vol in _VOL_DIVIDERS:
-            if pat.search(norm_text):
-                return vol
-        return None
-
-    def _form_volume(stripped: str) -> str | None:
-        for title, vol in titles:  # longest first
-            if stripped == title or (
-                stripped.startswith(title) and len(stripped) <= len(title) + 6
-            ):
-                return vol
-        return None
-
-    for el in elements:
-        if el.tag == qn("w:sectPr"):
-            continue
-        text = "".join(node.text or "" for node in el.iter(qn("w:t")))
-        norm = re.sub(r"\s+", "", text)
-        if 0 < len(norm) <= 60:  # heading-like length guard
-            # Dividers are short standalone headings (投标文件（报价文件）); a long
-            # line merely *mentioning* 报价文件 is body text, not a divider.
-            divider = _divider_volume(norm) if len(norm) <= 16 else None
-            if divider is not None:
-                current_idx = max(current_idx, _VOL_ORDER[divider])
-            else:
-                matched = _form_volume(_strip_numbering(norm))
-                if matched is not None:
-                    current_idx = max(current_idx, _VOL_ORDER[matched])
-        sections[_VOL_BY_INDEX[current_idx]].append(el)
-
-    for vol in vols_with_forms:
-        if not sections[vol]:
-            return None
-    return sections
 
 
 def _split_pdf_page_blocks(

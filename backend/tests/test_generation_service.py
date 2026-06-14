@@ -225,61 +225,56 @@ def test_split_original_pdf_docx_keeps_page_blocks_and_technical_only(tmp_path) 
     assert "报价页图层" in pricing
 
 
-def _tree(commercial, technical, pricing):
-    return {
-        "commercial": [{"title": t, "children": []} for t in commercial],
-        "technical": [{"title": t, "children": []} for t in technical],
-        "pricing": [{"title": t, "children": []} for t in pricing],
-    }
+def test_assemble_two_volumes_commercial_copies_format_technical_is_prose(tmp_path) -> None:
+    """Editable 照抄: 商务卷=格式章原样, 技术卷=独立生成正文, 不产出报价卷。"""
+    format_path = tmp_path / "format.docx"
+    fmt = Document()
+    fmt.add_paragraph("一、投标函")
+    fmt.add_paragraph("致：（招标人），我方愿按招标文件投标。")
+    table = fmt.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "投标人名称"
+    fmt.save(format_path)
 
-
-def test_split_by_outline_tree_assigns_forms_to_correct_volumes(tmp_path) -> None:
-    """Editable DOCX (no page markers) split by the parser's form tree, not
-    keyword substrings — rejecting the TOC line and body false-positives."""
-    source_path = tmp_path / "format.docx"
-    source = Document()
-    # TOC line concatenating titles + a body sentence mentioning 报价文件 — both
-    # must NOT flip the volume (they broke the old keyword split on real tenders).
-    source.add_paragraph("目录：一、投标函 二、法定代表人身份证明 三、已标价工程量清单")
-    source.add_paragraph("投标函")
-    source.add_paragraph("致：招标人，我方愿以报价文件投标函中的总报价实施本工程。")
-    source.add_paragraph("法定代表人身份证明")
-    source.add_paragraph("证明内容正文。")
-    source.add_paragraph("施工组织设计")
-    source.add_paragraph("施工部署与技术措施正文。")
-    source.add_paragraph("已标价工程量清单")
-    source.add_paragraph("清单明细正文。")
-    source.save(source_path)
-
-    tree = _tree(
-        ["投标函", "法定代表人身份证明"],
-        ["施工组织设计"],
-        ["已标价工程量清单"],
+    markdown = combine_delivery_volumes(
+        "测试项目",
+        {
+            "commercial": "# 商务文件\n\n资格响应合规说明。",
+            "technical": "# 技术文件\n\n## 施工组织设计\n\n施工部署与技术措施详尽正文。",
+        },
+    )
+    main_docx = tmp_path / "bid.docx"
+    generation_service._assemble_two_volumes(
+        str(format_path), tmp_path, 8, markdown, main_docx, "测试项目"
     )
 
-    generation_service._split_and_export_volumes(
-        source_path, tmp_path, 8, "", format_outline_tree=tree
+    commercial = Document(tmp_path / "project_8_commercial.docx")
+    commercial_text = "\n".join(p.text for p in commercial.paragraphs)
+    technical_text = "\n".join(p.text for p in Document(tmp_path / "project_8_technical.docx").paragraphs)
+
+    # 商务卷：照抄了格式章（表格保留）+ 合规正文
+    assert len(commercial.tables) == 1
+    assert "投标函" in commercial_text
+    assert "资格响应合规说明" in commercial_text
+    # 技术卷：是生成的施工组织设计正文，不含商务格式页
+    assert "施工部署与技术措施详尽正文" in technical_text
+    assert "投标函" not in technical_text
+    # 不产出报价卷
+    assert not (tmp_path / "project_8_pricing.docx").exists()
+    # 主 bid.docx = 技术卷
+    assert "施工部署与技术措施详尽正文" in "\n".join(
+        p.text for p in Document(main_docx).paragraphs
     )
 
-    commercial = "\n".join(p.text for p in Document(tmp_path / "project_8_commercial.docx").paragraphs)
-    technical = "\n".join(p.text for p in Document(tmp_path / "project_8_technical.docx").paragraphs)
-    pricing = "\n".join(p.text for p in Document(tmp_path / "project_8_pricing.docx").paragraphs)
 
-    assert "证明内容正文" in commercial
-    assert "施工部署与技术措施正文" in technical
-    assert "清单明细正文" in pricing
-    # Body sentence mentioning 报价文件 stays in commercial (its current section),
-    # not misrouted to pricing.
-    assert "我方愿以报价文件" in commercial
-    assert "清单明细正文" not in commercial
+def test_format_doc_has_page_markers_detection(tmp_path) -> None:
+    marked = tmp_path / "marked.docx"
+    d = Document()
+    d.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:0:投标文件（商务文件）")
+    d.save(marked)
+    plain = tmp_path / "plain.docx"
+    p = Document()
+    p.add_paragraph("一、投标函")
+    p.save(plain)
 
-
-def test_split_by_outline_tree_returns_none_when_tree_too_thin(tmp_path) -> None:
-    """A tree with forms in <2 volumes is unusable → fall back to keyword split."""
-    elements_doc = Document()
-    elements_doc.add_paragraph("投标函")
-    elements = list(elements_doc.element.body)
-    tree = _tree(["投标函"], [], [])
-
-    assert generation_service._split_sections_by_outline_tree(elements, tree) is None
-    assert generation_service._split_sections_by_outline_tree(elements, None) is None
+    assert generation_service._format_doc_has_page_markers(marked) is True
+    assert generation_service._format_doc_has_page_markers(plain) is False
