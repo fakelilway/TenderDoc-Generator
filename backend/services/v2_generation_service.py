@@ -287,6 +287,9 @@ def generate_v2_bid_package(
         commercial_md = _enrich_commercial_markdown(
             commercial_md, requirements, combined_profile
         )
+        # Remove commercial sections from technical markdown if the LLM
+        # over-generated them (资格响应, 投标保证金, 项目管理机构 etc.)
+        technical_md = _strip_commercial_sections(technical_md)
         notes_md = _build_audit_notes(requirements)
     else:
         notes_md = ""
@@ -683,3 +686,45 @@ def _build_audit_notes(requirements: TenderRequirements) -> str:
         parts.append(f"\n-针对 `{key}`：{desc}\n")
 
     return "\n".join(parts)
+
+
+_COMMERCIAL_SECTION_KEYWORDS = (
+    "资格响应",
+    "投标保证金",
+    "项目管理机构",
+    "资格审查",
+    "投标函",
+    "诚信投标",
+    "法定代表人",
+    "授权委托",
+)
+
+
+def _strip_commercial_sections(technical_md: str) -> str:
+    """Remove commercial compliance sections that the LLM may have
+    over-generated into the technical volume.
+
+    In original format mode, commercial content (资格响应, 投标保证金,
+    项目管理机构 etc.) belongs in the commercial volume, not the
+    technical one. The LLM sometimes "helpfully" generates these in
+    the construction plan output — strip them here.
+    """
+    lines = technical_md.splitlines()
+    kept: list[str] = []
+    skipping = False
+    for line in lines:
+        stripped = line.strip()
+        # Check if this line starts a ## heading that matches a commercial section
+        if stripped.startswith("## "):
+            heading = stripped[3:].strip()
+            if any(kw in heading for kw in _COMMERCIAL_SECTION_KEYWORDS):
+                skipping = True
+                continue
+            else:
+                skipping = False
+        elif stripped.startswith("# ") and not stripped.startswith("## "):
+            # H1 heading — stop skipping
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)

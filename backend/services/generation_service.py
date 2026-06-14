@@ -262,34 +262,25 @@ def _is_markdown_table_control_line(line: str) -> bool:
 
 
 def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
-    """Append prose content after format pages in a DOCX."""
-    from docx import Document
-    from docx.shared import Pt
+    """Append prose content after format pages in a DOCX.
 
+    Uses the full markdown_to_docx renderer which correctly handles
+    headings (H1–H3), markdown tables, tdg:pagebreak markers,
+    underlined blanks, and the zhengqi style profile (SimSun 14pt,
+    SimHei headings, 32pt line spacing).
+    """
     if not prose_markdown.strip():
         return
 
+    from utils.docx_exporter import _render_markdown_body, _configure_styles
+    from docx import Document
+
+    # Render prose markdown into a temporary DOCX, then copy its
+    # body elements into the format DOCX.
     doc = Document(str(docx_path))
+    _configure_styles(doc, "zhengqi")
     doc.add_page_break()
-
-    lines = prose_markdown.strip().split("\n")
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("# "):
-            p = doc.add_paragraph()
-            run = p.add_run(line[2:].strip())
-            run.bold = True
-            run.font.size = Pt(16)
-        elif line.startswith("## "):
-            p = doc.add_paragraph()
-            run = p.add_run(line[3:].strip())
-            run.bold = True
-            run.font.size = Pt(14)
-        else:
-            doc.add_paragraph(line)
-
+    _render_markdown_body(doc, prose_markdown, "zhengqi")
     doc.save(str(docx_path))
 
 
@@ -312,8 +303,9 @@ def _split_and_export_volumes(
     elements = list(body)
     volumes = split_delivery_markdown(markdown)
     technical_markdown = volumes.get("technical", "")
+    commercial_markdown = volumes.get("commercial", "")
 
-    if _split_pdf_page_blocks(elements, body, tmp_path, project_id, technical_markdown):
+    if _split_pdf_page_blocks(elements, body, tmp_path, project_id, technical_markdown, commercial_markdown):
         return
 
     # Volume boundary patterns (look for section headings that mark volume divisions)
@@ -344,6 +336,8 @@ def _split_and_export_volumes(
             shutil.copy2(format_path, vol_path)
             if vol == "technical":
                 _append_prose_to_docx(vol_path, technical_markdown)
+            elif vol == "commercial":
+                _append_prose_to_docx(vol_path, commercial_markdown)
         return
 
     # Build volume element lists
@@ -372,6 +366,8 @@ def _split_and_export_volumes(
         doc.save(str(vol_path))
         if vol == "technical":
             _append_prose_to_docx(vol_path, technical_markdown)
+        elif vol == "commercial":
+            _append_prose_to_docx(vol_path, commercial_markdown)
 
 
 def _split_pdf_page_blocks(
@@ -380,6 +376,7 @@ def _split_pdf_page_blocks(
     tmp_path: Path,
     project_id: int,
     technical_markdown: str,
+    commercial_markdown: str = "",
 ) -> bool:
     """Split our PDF-copy DOCX by whole page blocks instead of raw elements."""
     from docx import Document as _D
@@ -405,6 +402,8 @@ def _split_pdf_page_blocks(
         doc.save(str(vol_path))
         if vol == "technical":
             _append_prose_to_docx(vol_path, technical_markdown)
+        elif vol == "commercial" and commercial_markdown:
+            _append_prose_to_docx(vol_path, commercial_markdown)
     return True
 
 
