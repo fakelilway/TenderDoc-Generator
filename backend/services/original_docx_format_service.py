@@ -38,29 +38,35 @@ def build_original_format_docx(
 ) -> str:
     """Copy the tender DOCX format chapter as OOXML, then fill known fields.
 
-    This is intentionally not a markdown reconstruction path. The copied
-    paragraphs/tables keep the tender file's own Word XML: merged cells,
-    borders, underlines, paragraph alignment, and spacing.
+    This is intentionally not a markdown reconstruction path. Uses copy-then-prune
+    (copy the source file, remove body children outside the format chapter) so the
+    chapter keeps the tender's own Word XML AND its related parts — page
+    headers/footers, embedded images, numbering — which a deepcopy into a fresh
+    Document would drop. Merged cells, borders, underlines, alignment, spacing all
+    survive.
     """
     source = Document(BytesIO(tender_docx_bytes))
-    target = Document()
-    _clear_document_body(target)
-
     elements = list(source.element.body)
     start = _find_format_start(elements)
     if start is None:
         raise ValueError("未能在 DOCX 招标文件中定位“投标文件格式”章节，不能原样复制。")
     end = _find_format_end(elements, start)
+    keep = set(range(start, end))
 
-    for element in elements[start:end]:
-        if element.tag == qn("w:sectPr"):
-            continue
-        target.element.body.append(deepcopy(element))
-
-    _replace_known_fields(target, profile or {})
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    target.save(path)
+    path.write_bytes(tender_docx_bytes)  # preserves headers/footers/images/parts
+
+    target = Document(str(path))
+    body = target.element.body
+    for index, child in enumerate(list(body)):
+        if child.tag == qn("w:sectPr"):
+            continue  # keep the body section properties (and its header/footer refs)
+        if index not in keep:
+            body.remove(child)
+
+    _replace_known_fields(target, profile or {})
+    target.save(str(path))
     return str(path)
 
 
