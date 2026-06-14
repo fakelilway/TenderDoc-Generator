@@ -467,6 +467,7 @@ def build_original_format_docx_from_pdf_with_fields(
     import tempfile
 
     import fitz
+    from docx.enum.text import WD_LINE_SPACING
     from docx.shared import Pt
 
     profile = profile or {}
@@ -496,6 +497,10 @@ def build_original_format_docx_from_pdf_with_fields(
                 paragraph = docx.add_paragraph()
                 paragraph.paragraph_format.space_before = Pt(0)
                 paragraph.paragraph_format.space_after = Pt(0)
+                # Pin SINGLE line spacing as DIRECT formatting so it survives a
+                # later _configure_styles (zhengqi sets Normal to EXACTLY 32pt,
+                # which would clip the full-page image to 32pt → blank page).
+                paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
                 run = paragraph.add_run()
                 run.add_picture(BytesIO(pix.tobytes("png")), width=section.page_width)
 

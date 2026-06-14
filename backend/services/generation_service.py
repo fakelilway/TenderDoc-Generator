@@ -272,10 +272,26 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     from utils.docx_exporter import _render_markdown_body, _configure_styles
     from docx import Document
 
-    # Render prose markdown into a temporary DOCX, then copy its
-    # body elements into the format DOCX.
     doc = Document(str(docx_path))
+
+    # _configure_styles sets zhengqi margins on ALL sections; that would clobber
+    # the full-bleed (0-margin) geometry of any format-page image sections, making
+    # the page images overflow/clip → blank pages in LibreOffice/Pages. Snapshot
+    # existing sections and restore their geometry after styling.
+    geom = [
+        (
+            s.page_width, s.page_height,
+            s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
+            s.header_distance, s.footer_distance,
+        )
+        for s in doc.sections
+    ]
     _configure_styles(doc, "zhengqi")
+    for s, g in zip(doc.sections, geom):
+        (s.page_width, s.page_height,
+         s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
+         s.header_distance, s.footer_distance) = g
+
     doc.add_page_break()
     _render_markdown_body(doc, prose_markdown, "zhengqi")
     doc.save(str(docx_path))
