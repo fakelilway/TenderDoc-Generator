@@ -125,12 +125,13 @@ def test_build_original_format_docx_from_pdf_editable_produces_real_text(
     assert PDF_PAGE_MARKER_PREFIX not in doc.element.xml
 
 
-def test_build_pdf_with_fields_overlays_editable_boxes_on_underlines(
+def test_build_pdf_with_fields_bakes_values_no_vml_overlay(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    """Image base (pixel-perfect) + editable text boxes on detected fill-in
-    underlines, pre-filled from the profile where the label matches."""
+    """Each format page is a pixel-perfect inline image (no VML text-box overlay,
+    no page markers) — KB values are baked onto the page before rasterizing so it
+    renders in any viewer (Pages/LibreOffice/Word)."""
     import fitz
 
     source_path = tmp_path / "tender.pdf"
@@ -139,7 +140,6 @@ def test_build_pdf_with_fields_overlays_editable_boxes_on_underlines(
     page.insert_text((72, 72), "Chapter 8 Bid Format")
     page = pdf.new_page()
     page.insert_text((72, 100), "投标人：")
-    # a horizontal underline after the label (the fill-in blank)
     page.draw_line(fitz.Point(140, 104), fitz.Point(400, 104))
     pdf.save(source_path)
     pdf.close()
@@ -158,15 +158,12 @@ def test_build_pdf_with_fields_overlays_editable_boxes_on_underlines(
 
     doc = Document(output_path)
     xml = doc.element.xml
-    # Pixel-perfect base image present.
+    # Pixel-perfect base image present; no VML overlay, no page markers.
     assert len(doc.inline_shapes) == 1
-    # Editable overlay box placed on the detected underline.
-    assert "txbxContent" in xml
-    # Page marker kept (rides the page-block split as the commercial卷).
-    assert PDF_PAGE_MARKER_PREFIX in xml
-    # (Chinese pre-fill is verified by the unit tests below; fitz's default font
-    # cannot render CJK into a synthetic test PDF, so the label is unextractable
-    # here — the real-tender path fills it, as the prototype confirmed.)
+    assert "txbxContent" not in xml
+    assert PDF_PAGE_MARKER_PREFIX not in xml
+    # (Baking of CJK values is exercised by the real-tender path / unit tests;
+    # fitz's default font cannot render CJK labels into a synthetic test PDF.)
 
 
 def test_fill_value_for_label_maps_and_skips() -> None:

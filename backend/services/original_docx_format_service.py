@@ -396,27 +396,54 @@ def _fill_value_for_label(label: str | None, profile: dict[str, Any]) -> str:
     return ""
 
 
-def _add_pdf_fill_fields(
-    document: Document, page: Any, page_num: int, profile: dict[str, Any]
-) -> None:
-    """Overlay an editable text box on each detected fill-in underline, pre-filled
-    from the profile where the adjacent label maps to a known field."""
-    underlines = _detect_fill_underlines(page)
-    labels = _fill_labels(page)
-    for index, (x0, y_line, length) in enumerate(underlines):
-        label = _nearest_left_label(x0, y_line, labels)
-        value = _fill_value_for_label(label, profile)
-        span = {
-            "text": value,
-            "left_pt": x0 + 2,
-            "top_pt": y_line - 13,
-            "width_pt": max(length - 4, 10),
-            "height_pt": 13,
-            "font_size_pt": 10.5,
-        }
-        _append_body_element(
-            document, _editable_textbox_xml(span, page_num, 9000 + index)
-        )
+_CJK_FONT_CANDIDATES = (
+    "/System/Library/Fonts/Supplemental/Songti.ttc",  # macOS
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",  # Linux Noto
+    "/usr/share/fonts/truetype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",  # WenQuanYi
+    "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+)
+
+
+def _find_cjk_font() -> str | None:
+    import os
+
+    for path in _CJK_FONT_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _bake_fill_values_on_page(page: Any, profile: dict[str, Any]) -> None:
+    """Print known field values directly onto the PDF page at each fill-in
+    underline, *before* rasterizing. The page then renders as a plain image —
+    identical to the原件, viewer-independent (Pages/soffice/Word all show it) —
+    with company info filled in. Unknown blanks stay empty for manual/新点 entry.
+
+    VML text-box overlays were editable but suppressed page-image rendering in
+    multi-section docs under LibreOffice/Pages; baking avoids that entirely.
+    """
+    values = [
+        (x0, y_line, _fill_value_for_label(_nearest_left_label(x0, y_line, _fill_labels(page)), profile))
+        for x0, y_line, _length in _detect_fill_underlines(page)
+    ]
+    if not any(v for _, _, v in values):
+        return
+    font = _find_cjk_font()
+    for x0, y_line, value in values:
+        if not value:
+            continue
+        try:
+            kwargs = {"fontsize": 10.5}
+            if font:
+                kwargs["fontfile"] = font
+                kwargs["fontname"] = "cjk"
+            else:
+                kwargs["fontname"] = "china-s"  # PyMuPDF built-in CJK fallback
+            page.insert_text((x0 + 3, y_line - 2), value, **kwargs)
+        except Exception:
+            continue
 
 
 def build_original_format_docx_from_pdf_with_fields(
@@ -425,14 +452,16 @@ def build_original_format_docx_from_pdf_with_fields(
     *,
     profile: dict[str, Any] | None = None,
 ) -> str:
-    """Pixel-perfect format pages (full-page image) + fillable field overlay.
+    """Pixel-perfect format pages (full-page image) with knowledge-base values
+    baked onto the fill-in blanks.
 
-    Each PDF format page is rendered as a page-sized image (identical to the
-    tender原件, viewer-independent), and an editable text box is placed on every
-    detected fill-in underline — pre-filled from the company profile where the
-    adjacent label maps to a known field, otherwise blank-but-editable. This is
-    the primary PDF path: it solves pdf2docx's underline misalignment while
-    keeping blanks fillable (incl. knowledge-base values).
+    Each PDF format page has its known field values printed onto the page (投标人/
+    地址/法定代表人/电话…) at the detected fill-in underlines, then is rasterized and
+    embedded. The result is identical to the原件 and renders in any viewer
+    (Pages/LibreOffice/Word) with company info filled — unknown blanks stay empty
+    for 新点/手工填写. Primary PDF format path; solves pdf2docx's underline
+    misalignment without the VML overlay that broke multi-section image rendering
+    under LibreOffice/Pages.
     """
     import os
     import tempfile
@@ -458,8 +487,8 @@ def build_original_format_docx_from_pdf_with_fields(
                 page = pdf[page_num]
                 section = docx.sections[0] if index == 0 else docx.add_section()
                 _match_section_to_pdf_page(section, page)
-                _append_pdf_page_marker(docx, page_num, page.get_text())
 
+                _bake_fill_values_on_page(page, profile)
                 pix = page.get_pixmap(
                     matrix=fitz.Matrix(PDF_RENDER_DPI / 72, PDF_RENDER_DPI / 72),
                     alpha=False,
@@ -469,8 +498,6 @@ def build_original_format_docx_from_pdf_with_fields(
                 paragraph.paragraph_format.space_after = Pt(0)
                 run = paragraph.add_run()
                 run.add_picture(BytesIO(pix.tobytes("png")), width=section.page_width)
-
-                _add_pdf_fill_fields(docx, page, page_num, profile)
 
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
