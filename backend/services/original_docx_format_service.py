@@ -263,6 +263,62 @@ def build_original_format_docx_from_pdf(
             pass
 
 
+def build_original_format_docx_from_pdf_editable(
+    tender_pdf_bytes: bytes,
+    output_path: str | Path,
+    *,
+    profile: dict[str, Any] | None = None,
+) -> str:
+    """Convert PDF format pages into an *editable* DOCX via pdf2docx, then fill fields.
+
+    Unlike the image-based path, this reconstructs real Word paragraphs/tables so
+    商务/报价 卷 can be 照抄 verbatim AND have known fields filled — no LLM. The
+    reconstruction is layout-approximate (not pixel-perfect), so callers fall back
+    to ``build_original_format_docx_from_pdf`` (整页截图) when this raises.
+
+    The output has real text headings (投标文件（商务文件）…) and no PDF page
+    markers, so it routes through the keyword-based DOCX volume split automatically.
+    """
+    import os
+    import tempfile
+
+    from pdf2docx import Converter
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+        tmp_pdf.write(tender_pdf_bytes)
+        pdf_path = tmp_pdf.name
+
+    try:
+        page_range = _find_format_page_range_in_pdf(pdf_path)
+        if not page_range:
+            raise ValueError("未能在 PDF 中定位“投标文件格式”章节")
+
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        converter = Converter(pdf_path)
+        try:
+            # pdf2docx end is exclusive, matching our page_range convention.
+            converter.convert(str(path), start=page_range[0], end=page_range[1])
+        finally:
+            converter.close()
+
+        # Guard against an empty/failed reconstruction so the caller can fall back.
+        doc = Document(str(path))
+        has_text = any(p.text.strip() for p in doc.paragraphs)
+        if not has_text and not doc.tables:
+            raise ValueError("pdf2docx 转换结果为空，回退到整页截图路径。")
+
+        _replace_known_fields(doc, profile or {})
+        doc.save(str(path))
+        return str(path)
+    finally:
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
+
+
 def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
     """Find zero-based, end-exclusive format chapter page range."""
     import fitz

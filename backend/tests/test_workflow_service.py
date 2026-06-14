@@ -208,6 +208,8 @@ def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) 
         captured["top_k"] = top_k
         return [RetrievalResult(1, 1, "历史施工措施片段", {}, 0.1, 0.9)]
 
+    # top_k widened to 16 / 6-per-section so the evidence pack carries scored material.
+
     monkeypatch.setattr(workflow_service.retriever, "retrieve", fake_retrieve)
 
     chunks = workflow_service._retrieve_for_outline(
@@ -220,7 +222,7 @@ def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) 
         ],
     )
 
-    assert captured["top_k"] == 9
+    assert captured["top_k"] == 16
     assert "安徽正奇" not in captured["query"]
     assert "技术文件格式" not in captured["query"]
     assert "素材参考" in captured["query"]

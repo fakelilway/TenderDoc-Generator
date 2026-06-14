@@ -19,6 +19,7 @@ pypdf==4.0.1
 pdfplumber==0.10.3
 PyMuPDF==1.24.14
 python-docx==0.8.11
+pdf2docx==0.5.13
 
 redis==5.0.1
 

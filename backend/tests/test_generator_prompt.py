@@ -1,0 +1,74 @@
+from types import SimpleNamespace
+
+from prompts.generator_prompt import build_node_fill_prompt
+from services.v2_generation_service import _distribute_requirement_items
+
+
+def _user_content(messages) -> str:
+    return next(m["content"] for m in messages if m["role"] == "user")
+
+
+def test_prompt_injects_score_and_invalid_items() -> None:
+    messages = build_node_fill_prompt(
+        node_title="施工组织设计",
+        project_name="测试项目",
+        requirements={},
+        company_name="安徽正奇建设有限公司",
+        score_items=[
+            {"title": "质量保证措施", "description": "提供完整的质量管理体系和检验计划"},
+        ],
+        invalid_items=[
+            {"title": "未提供安全生产许可证", "description": "缺少有效安全生产许可证将被否决"},
+        ],
+    )
+    content = _user_content(messages)
+
+    assert "本节点须正面响应的评分点" in content
+    assert "质量保证措施" in content
+    assert "提供完整的质量管理体系" in content
+    assert "本节点须规避的废标项" in content
+    assert "安全生产许可证" in content
+    # response rule present
+    assert "逐条正面响应上述评分点" in content
+
+
+def test_prompt_falls_back_when_no_items() -> None:
+    messages = build_node_fill_prompt(
+        node_title="施工部署",
+        project_name="测试项目",
+        requirements={},
+        company_name="安徽正奇建设有限公司",
+    )
+    content = _user_content(messages)
+
+    assert "本节点无直接对应评分点" in content
+    assert "无直接对应废标项" in content
+
+
+def test_distribute_items_assigns_to_best_matching_node() -> None:
+    titles = ["质量保证措施", "安全文明施工", "施工组织设计"]
+    items = [
+        SimpleNamespace(title="质量目标与质量保证体系", description="质量检验计划"),
+        SimpleNamespace(title="安全文明施工管理", description="安全生产责任制"),
+    ]
+
+    mapping = _distribute_requirement_items(titles, items)
+
+    assert any("质量" in i["title"] for i in mapping["质量保证措施"])
+    assert any("安全" in i["title"] for i in mapping["安全文明施工"])
+
+
+def test_distribute_items_uses_catch_all_when_no_overlap() -> None:
+    titles = ["施工组织设计", "进度计划"]
+    items = [SimpleNamespace(title="环境保护专项", description="扬尘噪声控制")]
+
+    mapping = _distribute_requirement_items(titles, items)
+
+    # No keyword overlap with either title → lands in the catch-all 施工组织设计 node.
+    assert mapping["施工组织设计"]
+    assert not mapping["进度计划"]
+
+
+def test_distribute_items_empty_inputs() -> None:
+    assert _distribute_requirement_items([], []) == {}
+    assert _distribute_requirement_items(["施工组织设计"], []) == {"施工组织设计": []}

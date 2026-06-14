@@ -6,6 +6,7 @@ from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
     build_original_format_docx,
     build_original_format_docx_from_pdf,
+    build_original_format_docx_from_pdf_editable,
 )
 
 
@@ -86,3 +87,38 @@ def test_build_original_format_docx_from_pdf_embeds_format_pages_as_images(
     assert "w:txbxContent" in xml
     assert PDF_PAGE_MARKER_PREFIX in xml
     assert "Chapter 8 Bid Format" in xml
+
+
+def test_build_original_format_docx_from_pdf_editable_produces_real_text(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """pdf2docx path reconstructs editable text (not an image), with no page markers
+    so it routes through the keyword-based DOCX volume split."""
+    import fitz
+
+    source_path = tmp_path / "tender.pdf"
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Chapter 1 Notice")
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Chapter 8 Bid Format")
+    page.insert_text((72, 120), "Commercial Volume Bidder Table")
+    pdf.save(source_path)
+    pdf.close()
+
+    monkeypatch.setattr(
+        "services.original_docx_format_service._find_format_page_range_in_pdf",
+        lambda _path: (1, 2),
+    )
+
+    output_path = tmp_path / "editable_from_pdf.docx"
+    build_original_format_docx_from_pdf_editable(source_path.read_bytes(), output_path)
+
+    doc = Document(output_path)
+    all_text = "\n".join(p.text for p in doc.paragraphs)
+    # Real editable text, not an embedded page image.
+    assert "Bid Format" in all_text
+    assert len(doc.inline_shapes) == 0
+    # No PDF page markers — editable DOCX rides the keyword split, not page blocks.
+    assert PDF_PAGE_MARKER_PREFIX not in doc.element.xml

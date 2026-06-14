@@ -230,7 +230,7 @@ def test_v2_does_not_reconstruct_bidder_basic_info_table(monkeypatch) -> None:
     assert "投标人名称" in package.commercial_markdown
 
 
-def test_v2_raises_when_locked_table_cannot_be_copied_exactly(monkeypatch) -> None:
+def test_v2_blocks_when_locked_table_cannot_be_copied_exactly(monkeypatch) -> None:
     requirements = TenderRequirements(project_name="测试项目")
 
     monkeypatch.setattr(
@@ -264,13 +264,19 @@ def test_v2_raises_when_locked_table_cannot_be_copied_exactly(monkeypatch) -> No
         },
     )
 
-    with pytest.raises(ValueError, match="审查未通过"):
-        v2_generation_service.generate_v2_bid_package(
-            requirements,
-            {},
-            company_name="安徽正奇建设有限公司",
-            tender_text="第八章 投标文件格式\n一、投标人基本情况表",
-        )
+    package = v2_generation_service.generate_v2_bid_package(
+        requirements,
+        {},
+        company_name="安徽正奇建设有限公司",
+        tender_text="第八章 投标文件格式\n一、投标人基本情况表",
+    )
+
+    # 审查发现严重问题时不再抛错（见 901544f）：阻断下游审查/导出流水线，
+    # 但仍返回已生成内容供人工预览。
+    assert package.audit_blocked is True
+    assert package.audit_result is not None
+    assert package.audit_result.passed is False
+    assert any(issue.severity == "critical" for issue in package.audit_result.all_issues)
 
 
 def test_v2_skips_reconstructed_format_audit_when_original_export_available(
@@ -333,7 +339,9 @@ def test_v2_skips_reconstructed_format_audit_when_original_export_available(
 
     assert package.audit_result is not None
     assert package.audit_result.format_issues == []
-    assert package.commercial_markdown == "# 测试项目 商务文件\n"
+    # 原格式导出可用时跳过重建格式审查；商务卷以标题开头，
+    # 其余为 _enrich_commercial_markdown 追加的合规正文（见 cb373ac）。
+    assert package.commercial_markdown.startswith("# 测试项目 商务文件")
 
 
 def test_v2_original_format_fails_when_content_writer_fails(monkeypatch) -> None:
@@ -360,6 +368,11 @@ def test_v2_raises_when_pdf_original_format_copy_fails(monkeypatch) -> None:
     def fail_copy(*_args, **_kwargs):
         raise RuntimeError("boom")
 
+    # Both the pdf2docx editable path and the page-image fallback fail → hard error.
+    monkeypatch.setattr(
+        "services.original_docx_format_service.build_original_format_docx_from_pdf_editable",
+        fail_copy,
+    )
     monkeypatch.setattr(
         "services.original_docx_format_service.build_original_format_docx_from_pdf",
         fail_copy,

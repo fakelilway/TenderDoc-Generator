@@ -454,6 +454,7 @@ def confirm_project(
         delivery_markdown,
         generation_service.evaluate_generation_quality(delivery_markdown),
         original_format_path=getattr(state, 'v2_format_docx', None),
+        format_outline_tree=requirements.format_outline_tree,
     )
     state.final_checklist = _build_final_checklist(requirements, state)
     if exported:
@@ -663,17 +664,22 @@ def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
         ]
         return _distribute_selected_chunks(selected_results, outline)
 
+    # Bias retrieval toward what评委 actually scores and what causes废标, so the
+    # evidence pack carries material for scored criteria, not just section titles.
+    score_terms = " ".join(item.title for item in requirements.technical_score_items)
+    invalid_terms = " ".join(item.title for item in requirements.invalid_bid_items)
     query = (
         "历史投标文件 施工组织设计 技术措施 正式标书措辞 素材参考 "
         f"{requirements.project_name} "
         f"{' '.join(section.title for section in outline)} "
-        f"{' '.join(point for section in outline for point in section.focus_points)}"
+        f"{' '.join(point for section in outline for point in section.focus_points)} "
+        f"{score_terms} {invalid_terms}"
     )
     try:
-        shared_chunks = retriever.retrieve(query, top_k=9)
+        shared_chunks = retriever.retrieve(query, top_k=16)
     except Exception:
         shared_chunks = []
-    return {section.title: shared_chunks[:3] for section in outline}
+    return {section.title: shared_chunks[:6] for section in outline}
 
 
 _SECTION_KEYWORD_SPLIT_RE = re.compile(r"[\s、，。；：/（）()【】\[\]:;,.\-—]+")

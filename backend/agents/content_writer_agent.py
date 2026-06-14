@@ -43,12 +43,17 @@ def fill_technical_volume(
     company_name: str,
     knowledge_chunks: list[dict[str, Any]] | None = None,
     tender_text: str = "",
+    score_items: list[dict[str, Any]] | None = None,
+    invalid_items: list[dict[str, Any]] | None = None,
 ) -> VolumeFillResult:
     """Fill all prose nodes in the technical volume.
 
     Each node gets a focused LLM call. Nodes are processed sequentially
     to respect rate limits; they are independent so future versions can
     parallelize via ThreadPoolExecutor.
+
+    ``score_items`` / ``invalid_items`` are the relevant评分项/废标项 for these
+    nodes; they are forwarded to the prompt so prose responds to scored criteria.
     """
     results: list[NodeFillResult] = []
     previous_content: str = ""
@@ -62,6 +67,8 @@ def fill_technical_volume(
             knowledge_chunks=knowledge_chunks,
             previous_node_content=previous_content,
             tender_text=tender_text,
+            score_items=score_items,
+            invalid_items=invalid_items,
         )
         raw = _generate_messages_with_llm(
             messages,

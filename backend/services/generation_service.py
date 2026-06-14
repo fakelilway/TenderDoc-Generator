@@ -32,6 +32,7 @@ def export_markdown_for_project(
     quality_report: dict[str, float | int],
     *,
     original_format_path: str | None = None,
+    format_outline_tree=None,
 ) -> tuple[str, str]:
     markdown = strip_meta_notes(markdown)
     title = _extract_markdown_title(markdown) or "投标文件"
@@ -44,7 +45,8 @@ def export_markdown_for_project(
         if original_format_path and Path(original_format_path).exists():
             # Split format DOCX into three independent volume files at OOXML level
             _split_and_export_volumes(
-                original_format_path, tmp_path, project_id, markdown
+                original_format_path, tmp_path, project_id, markdown,
+                format_outline_tree=format_outline_tree,
             )
             # Main docx = technical (has prose)
             import shutil
@@ -289,9 +291,17 @@ def _split_and_export_volumes(
     tmp_path: Path,
     project_id: int,
     markdown: str,
+    format_outline_tree=None,
 ) -> None:
     """Split a merged format DOCX into three independent volume DOCX files
-    at OOXML element level, preserving tables, borders, and formatting."""
+    at OOXML element level, preserving tables, borders, and formatting.
+
+    Order of strategies (first that succeeds wins):
+    1. PDF page blocks (image path with hidden page markers).
+    2. format_outline_tree-driven: match each form heading to its volume from
+       the parser tree — robust to TOC/body keyword false-positives.
+    3. Keyword boundary heuristic (legacy fallback).
+    """
     import re, shutil
     from docx import Document as _D
     from docx.oxml.ns import qn
@@ -308,39 +318,55 @@ def _split_and_export_volumes(
     if _split_pdf_page_blocks(elements, body, tmp_path, project_id, technical_markdown, commercial_markdown):
         return
 
-    # Volume boundary patterns (look for section headings that mark volume divisions)
+    # Strategy 2: outline-tree-driven split (preferred when a tree is available).
+    tree_sections = _split_sections_by_outline_tree(elements, format_outline_tree)
+    if tree_sections is not None:
+        _write_volume_files(
+            tree_sections, body, tmp_path, project_id,
+            technical_markdown, commercial_markdown,
+        )
+        return
+
+    # Strategy 3: keyword boundary heuristic.
     VOL_BOUNDARIES = {
         "commercial": re.compile(r"商务文件|商务标|商务及技术"),
         "technical": re.compile(r"技术文件|施工组织|技术标"),
         "pricing": re.compile(r"报价文件|报价标|已标价工程量清单|第二信封"),
     }
-
-    # Initialize with all elements going to commercial by default
     sections: dict[str, list] = {"commercial": [], "technical": [], "pricing": []}
-
-    # Determine volume boundaries by finding first occurrence of each marker
     boundaries: list[tuple[int, str]] = []
     for i, el in enumerate(elements):
         text = "".join(node.text or "" for node in el.iter(qn("w:t")))
+        norm = re.sub(r"\s+", "", text)
+        # Only short, heading-like lines are real volume dividers. A keyword that
+        # appears inside the 目录 or a body sentence (e.g. "愿以报价文件投标函中的
+        # 报价…") must NOT be treated as a boundary — that mis-routed whole volumes.
+        if not (0 < len(norm) <= 16):
+            continue
         for vol, pat in VOL_BOUNDARIES.items():
-            if pat.search(text) and not any(b[1] == vol for b in boundaries):
+            if pat.search(norm) and not any(b[1] == vol for b in boundaries):
                 boundaries.append((i, vol))
                 break
     boundaries.sort()
 
-    # Assign elements to volumes based on boundaries
     if not boundaries:
-        # No boundaries found — copy everything to all volumes
-        for vol in ("commercial", "technical", "pricing"):
-            vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
-            shutil.copy2(format_path, vol_path)
-            if vol == "technical":
-                _append_prose_to_docx(vol_path, technical_markdown)
-            elif vol == "commercial":
-                _append_prose_to_docx(vol_path, commercial_markdown)
+        # No tree and no reliable dividers — the format chapter has no separable
+        # volumes (common: chapter is commercial-only; 技术 is self-authored,
+        # 报价 工程量清单 is a separate workbook). Put everything in commercial and
+        # leave the other volumes for their own pipelines, rather than duplicating
+        # or mis-routing. Flag for human review.
+        logger.warning(
+            "Volume split found no outline tree and no reliable dividers — "
+            "treating format chapter as commercial-only (project %s)",
+            project_id,
+        )
+        sections = {"commercial": list(elements), "technical": [], "pricing": []}
+        _write_volume_files(
+            sections, body, tmp_path, project_id,
+            technical_markdown, commercial_markdown,
+        )
         return
 
-    # Build volume element lists
     current_vol = "commercial"
     boundary_idx = 0
     for i, el in enumerate(elements):
@@ -351,7 +377,24 @@ def _split_and_export_volumes(
             boundary_idx += 1
         sections[current_vol].append(el)
 
-    # Create three DOCX files with deepcopy of elements
+    _write_volume_files(
+        sections, body, tmp_path, project_id,
+        technical_markdown, commercial_markdown,
+    )
+
+
+def _write_volume_files(
+    sections: dict[str, list],
+    src_body,
+    tmp_path: Path,
+    project_id: int,
+    technical_markdown: str,
+    commercial_markdown: str,
+) -> None:
+    """Write the three volume DOCX files from pre-assigned element lists."""
+    from docx import Document as _D
+    from docx.oxml.ns import qn
+
     for vol in ("commercial", "technical", "pricing"):
         doc = _D()
         _clear_body(doc)
@@ -359,7 +402,7 @@ def _split_and_export_volumes(
             doc.element.body.append(deepcopy(el))
         vol_path = tmp_path / f"project_{project_id}_{vol}.docx"
         # Copy section properties from source
-        for el in body:
+        for el in src_body:
             if el.tag == qn("w:sectPr"):
                 doc.element.body.append(deepcopy(el))
                 break
@@ -368,6 +411,130 @@ def _split_and_export_volumes(
             _append_prose_to_docx(vol_path, technical_markdown)
         elif vol == "commercial":
             _append_prose_to_docx(vol_path, commercial_markdown)
+
+
+_VOL_ORDER = {"commercial": 0, "technical": 1, "pricing": 2}
+_VOL_BY_INDEX = ("commercial", "technical", "pricing")
+
+# Leading enumeration prefixes that differ between tree titles and rendered
+# headings: 一、 / （一） / (1) / 1. / 1． / 1、 / 第一 etc.
+_LEADING_NUMBERING = re.compile(
+    r"^[\s第]*"
+    r"(?:[一二三四五六七八九十百]+|\d+)?"
+    r"[\s、\.．：:）\)）\.]*"
+    r"|^[（(][一二三四五六七八九十\d]+[）)]\s*"
+)
+
+# Unambiguous volume divider headings (specific enough to beat false-positives).
+_VOL_DIVIDERS = (
+    (re.compile(r"(投标文件)?[（(]?技术文件[）)]?|技术部分|技术标书?$"), "technical"),
+    (re.compile(r"(投标文件)?[（(]?报价文件[）)]?|报价部分|已标价工程量清单|工程量清单报价"), "pricing"),
+    (re.compile(r"(投标文件)?[（(]?商务文件[）)]?|商务部分"), "commercial"),
+)
+
+
+def _strip_numbering(text: str) -> str:
+    prev = None
+    out = text
+    # Apply repeatedly to peel nested prefixes like "（一）1."
+    while out != prev:
+        prev = out
+        out = _LEADING_NUMBERING.sub("", out, count=1)
+    return out
+
+
+def _outline_form_titles(format_outline_tree) -> list[tuple[str, str]]:
+    """Flatten format_outline_tree → [(numbering-stripped title, volume)], longest first."""
+    out: list[tuple[str, str]] = []
+    if not format_outline_tree:
+        return out
+
+    def _nodes(vol: str):
+        if isinstance(format_outline_tree, dict):
+            return format_outline_tree.get(vol, []) or []
+        return getattr(format_outline_tree, vol, []) or []
+
+    def _title(node) -> str:
+        if isinstance(node, dict):
+            return str(node.get("title", "") or "")
+        return str(getattr(node, "title", "") or "")
+
+    def _children(node):
+        if isinstance(node, dict):
+            return node.get("children", []) or []
+        return getattr(node, "children", []) or []
+
+    for vol in ("commercial", "technical", "pricing"):
+        for node in _nodes(vol):
+            for title in (_title(node), *(_title(c) for c in _children(node))):
+                norm = _strip_numbering(re.sub(r"\s+", "", title))
+                if len(norm) >= 3:
+                    out.append((norm, vol))
+    out.sort(key=lambda x: len(x[0]), reverse=True)
+    return out
+
+
+def _split_sections_by_outline_tree(elements, format_outline_tree):
+    """Assign each element to a volume by matching form headings from the tree.
+
+    Returns a ``{volume: [elements]}`` dict, or ``None`` if no usable tree is
+    available or the resulting split is degenerate (so the caller falls back).
+
+    Robustness on real tenders:
+    - Strip leading numbering from both tree titles and headings (一、/（一）/1.)
+      so "一、施工组织设计" matches a rendered "施工组织设计".
+    - Recognize unambiguous volume divider headings (投标文件（技术文件）…).
+    - Enforce monotonic volume progression (commercial→technical→pricing): once
+      we enter pricing, a later "投标函" (which also exists in commercial) cannot
+      jump the cursor back.
+    """
+    from docx.oxml.ns import qn
+
+    titles = _outline_form_titles(format_outline_tree)
+    if not titles:
+        return None
+    vols_with_forms = {vol for _, vol in titles}
+    if len(vols_with_forms) < 2:
+        return None  # tree too thin to split meaningfully
+
+    sections: dict[str, list] = {"commercial": [], "technical": [], "pricing": []}
+    current_idx = 0  # default commercial — cover/目录 pages land here
+
+    def _divider_volume(norm_text: str) -> str | None:
+        for pat, vol in _VOL_DIVIDERS:
+            if pat.search(norm_text):
+                return vol
+        return None
+
+    def _form_volume(stripped: str) -> str | None:
+        for title, vol in titles:  # longest first
+            if stripped == title or (
+                stripped.startswith(title) and len(stripped) <= len(title) + 6
+            ):
+                return vol
+        return None
+
+    for el in elements:
+        if el.tag == qn("w:sectPr"):
+            continue
+        text = "".join(node.text or "" for node in el.iter(qn("w:t")))
+        norm = re.sub(r"\s+", "", text)
+        if 0 < len(norm) <= 60:  # heading-like length guard
+            # Dividers are short standalone headings (投标文件（报价文件）); a long
+            # line merely *mentioning* 报价文件 is body text, not a divider.
+            divider = _divider_volume(norm) if len(norm) <= 16 else None
+            if divider is not None:
+                current_idx = max(current_idx, _VOL_ORDER[divider])
+            else:
+                matched = _form_volume(_strip_numbering(norm))
+                if matched is not None:
+                    current_idx = max(current_idx, _VOL_ORDER[matched])
+        sections[_VOL_BY_INDEX[current_idx]].append(el)
+
+    for vol in vols_with_forms:
+        if not sections[vol]:
+            return None
+    return sections
 
 
 def _split_pdf_page_blocks(

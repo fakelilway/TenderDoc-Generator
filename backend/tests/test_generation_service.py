@@ -223,3 +223,63 @@ def test_split_original_pdf_docx_keeps_page_blocks_and_technical_only(tmp_path) 
     assert "商务正文不应追加到技术卷" not in technical
     assert "报价正文不应追加到技术卷" not in technical
     assert "报价页图层" in pricing
+
+
+def _tree(commercial, technical, pricing):
+    return {
+        "commercial": [{"title": t, "children": []} for t in commercial],
+        "technical": [{"title": t, "children": []} for t in technical],
+        "pricing": [{"title": t, "children": []} for t in pricing],
+    }
+
+
+def test_split_by_outline_tree_assigns_forms_to_correct_volumes(tmp_path) -> None:
+    """Editable DOCX (no page markers) split by the parser's form tree, not
+    keyword substrings — rejecting the TOC line and body false-positives."""
+    source_path = tmp_path / "format.docx"
+    source = Document()
+    # TOC line concatenating titles + a body sentence mentioning 报价文件 — both
+    # must NOT flip the volume (they broke the old keyword split on real tenders).
+    source.add_paragraph("目录：一、投标函 二、法定代表人身份证明 三、已标价工程量清单")
+    source.add_paragraph("投标函")
+    source.add_paragraph("致：招标人，我方愿以报价文件投标函中的总报价实施本工程。")
+    source.add_paragraph("法定代表人身份证明")
+    source.add_paragraph("证明内容正文。")
+    source.add_paragraph("施工组织设计")
+    source.add_paragraph("施工部署与技术措施正文。")
+    source.add_paragraph("已标价工程量清单")
+    source.add_paragraph("清单明细正文。")
+    source.save(source_path)
+
+    tree = _tree(
+        ["投标函", "法定代表人身份证明"],
+        ["施工组织设计"],
+        ["已标价工程量清单"],
+    )
+
+    generation_service._split_and_export_volumes(
+        source_path, tmp_path, 8, "", format_outline_tree=tree
+    )
+
+    commercial = "\n".join(p.text for p in Document(tmp_path / "project_8_commercial.docx").paragraphs)
+    technical = "\n".join(p.text for p in Document(tmp_path / "project_8_technical.docx").paragraphs)
+    pricing = "\n".join(p.text for p in Document(tmp_path / "project_8_pricing.docx").paragraphs)
+
+    assert "证明内容正文" in commercial
+    assert "施工部署与技术措施正文" in technical
+    assert "清单明细正文" in pricing
+    # Body sentence mentioning 报价文件 stays in commercial (its current section),
+    # not misrouted to pricing.
+    assert "我方愿以报价文件" in commercial
+    assert "清单明细正文" not in commercial
+
+
+def test_split_by_outline_tree_returns_none_when_tree_too_thin(tmp_path) -> None:
+    """A tree with forms in <2 volumes is unusable → fall back to keyword split."""
+    elements_doc = Document()
+    elements_doc.add_paragraph("投标函")
+    elements = list(elements_doc.element.body)
+    tree = _tree(["投标函"], [], [])
+
+    assert generation_service._split_sections_by_outline_tree(elements, tree) is None
+    assert generation_service._split_sections_by_outline_tree(elements, None) is None

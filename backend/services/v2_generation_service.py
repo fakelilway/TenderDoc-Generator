@@ -40,6 +40,60 @@ from services.v2_audit_service import (
     AuditResult,
     AuditIssue,
 )
+_RE_CJK_RUN = re.compile(r"[一-鿿A-Za-z0-9]+")
+
+
+def _cjk_bigrams(text: str) -> set[str]:
+    """Character bigrams over CJK/alphanumeric runs.
+
+    Chinese has no word boundaries and the shared tokenizer returns whole runs,
+    so exact-token overlap rarely matches. Bigram overlap is a cheap, robust
+    similarity signal for matching requirement items to node titles.
+    """
+    grams: set[str] = set()
+    for run in _RE_CJK_RUN.findall(text or ""):
+        if len(run) == 1:
+            grams.add(run)
+            continue
+        for i in range(len(run) - 1):
+            grams.add(run[i : i + 2])
+    return grams
+
+
+def _distribute_requirement_items(
+    titles: list[str],
+    items: list[Any],
+) -> dict[str, list[dict[str, str]]]:
+    """Map each评分项/废标项 to the technical node it best matches by bigram overlap.
+
+    Every item is assigned to exactly one node (its best match, or a catch-all
+    node when there is no overlap) so the writer responds to all scored criteria
+    without duplicating every item into every section.
+    """
+    result: dict[str, list[dict[str, str]]] = {t: [] for t in titles}
+    if not titles or not items:
+        return result
+
+    title_grams = {t: _cjk_bigrams(t) for t in titles}
+    # Catch-all for items that match no node title.
+    catch_all = next(
+        (t for t in titles if ("施工组织" in t or "技术" in t or "组织设计" in t)),
+        titles[0],
+    )
+
+    for item in items:
+        item_title = str(getattr(item, "title", "") or "")
+        item_desc = str(getattr(item, "description", "") or "")
+        item_grams = _cjk_bigrams(f"{item_title} {item_desc}")
+        best_title, best_overlap = None, 0
+        for t in titles:
+            overlap = len(item_grams & title_grams[t])
+            if overlap > best_overlap:
+                best_overlap, best_title = overlap, t
+        target = best_title or catch_all
+        result[target].append({"title": item_title, "description": item_desc})
+
+    return result
 
 
 @dataclass
@@ -120,17 +174,31 @@ def generate_v2_bid_package(
         tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
         tmp_path = tmp.name
         tmp.close()
-        try:
-            from services.original_docx_format_service import (
-                build_original_format_docx_from_pdf,
-            )
+        from services.original_docx_format_service import (
+            build_original_format_docx_from_pdf,
+            build_original_format_docx_from_pdf_editable,
+        )
 
-            built_format_docx = build_original_format_docx_from_pdf(
+        # Primary: pdf2docx editable 照抄 (商务/报价 can be filled, no LLM).
+        # Fallback: 整页截图 path when reconstruction fails or is empty.
+        try:
+            built_format_docx = build_original_format_docx_from_pdf_editable(
                 tender_bytes, tmp_path, profile=combined_profile
             )
         except Exception:
-            logger.error("PDF format conversion failed", exc_info=True)
-            raise ValueError("PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。")
+            logger.warning(
+                "pdf2docx editable conversion failed — falling back to page-image path",
+                exc_info=True,
+            )
+            try:
+                built_format_docx = build_original_format_docx_from_pdf(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
+            except Exception:
+                logger.error("PDF format conversion failed (both paths)", exc_info=True)
+                raise ValueError(
+                    "PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。"
+                )
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
     if original_format_docx_available:
@@ -176,6 +244,14 @@ def generate_v2_bid_package(
         """Write prose content per-node for depth. Each node gets a dedicated LLM call
         for 2000+ character sections with engineering parameters and emergency plans."""
         chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+        # Distribute scored/废标 criteria across nodes once, so each node only
+        # carries the items it should respond to (avoids cross-section bloat).
+        score_by_title = _distribute_requirement_items(
+            titles, requirements.technical_score_items
+        )
+        invalid_by_title = _distribute_requirement_items(
+            titles, requirements.invalid_bid_items
+        )
         all_results: list[str] = []
         first_result = None
         for title in titles:
@@ -193,6 +269,8 @@ def generate_v2_bid_package(
                     for c in chunks[:MAX_KNOWLEDGE_CHUNKS]
                 ],
                 tender_text=tender_text,
+                score_items=score_by_title.get(title, []),
+                invalid_items=invalid_by_title.get(title, []),
             )
             if first_result is None:
                 first_result = result

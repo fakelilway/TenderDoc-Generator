@@ -25,6 +25,21 @@ def redact_pii(text: str) -> str:
     return text
 
 
+def _format_requirement_items(items: list[dict[str, Any]] | None, limit: int = 12) -> str:
+    """Render score/invalid-bid requirement items as a bullet list for the prompt."""
+    lines: list[str] = []
+    for item in (items or [])[:limit]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "") or "").strip()
+        desc = str(item.get("description", "") or "").strip()
+        if title and desc:
+            lines.append(f"- {title}：{desc}")
+        elif title or desc:
+            lines.append(f"- {title or desc}")
+    return "\n".join(lines)
+
+
 def build_node_fill_prompt(
     *,
     node_title: str,
@@ -34,8 +49,15 @@ def build_node_fill_prompt(
     knowledge_chunks: list[dict[str, Any]] | None = None,
     previous_node_content: str = "",
     tender_text: str = "",
+    score_items: list[dict[str, Any]] | None = None,
+    invalid_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
-    """Focused V2 prompt for filling one construction-plan prose node."""
+    """Focused V2 prompt for filling one construction-plan prose node.
+
+    ``score_items`` / ``invalid_items`` are the评分项/废标项 the parser extracted
+    that are relevant to THIS node; injecting them lets the writer respond to what
+    the评委 actually scores instead of producing generic prose.
+    """
     tenderer = str(requirements.get("tenderer_name", "") or "")
     duration = str(requirements.get("planned_duration", "") or "")
     scope = str(
@@ -45,16 +67,19 @@ def build_node_fill_prompt(
     )
 
     snippets: list[str] = []
-    for chunk in (knowledge_chunks or [])[:5]:
+    for chunk in (knowledge_chunks or [])[:8]:
         if not isinstance(chunk, dict):
             continue
         content = str(chunk.get("content", "") or chunk.get("snippet", "")).strip()
         if content:
-            snippets.append(redact_pii(content)[:300])
+            snippets.append(redact_pii(content)[:700])
 
     prev = ""
     if previous_node_content:
         prev = f"\n前一节内容（连贯性参考，不可重复）：\n{previous_node_content}"
+
+    score_block = _format_requirement_items(score_items)
+    invalid_block = _format_requirement_items(invalid_items)
 
     user_prompt = f"""## 任务
 撰写施工组织设计节点"{node_title}"的正文内容。
@@ -69,6 +94,12 @@ def build_node_fill_prompt(
 ## 知识库参考
 {chr(10).join(snippets) if snippets else '（未匹配到相关知识片段）'}
 
+## 本节点须正面响应的评分点
+{score_block or '（本节点无直接对应评分点，按通用施工组织设计深度撰写）'}
+
+## 本节点须规避的废标项
+{invalid_block or '（无直接对应废标项）'}
+
 {prev}
 
 ## 写作规则
@@ -77,6 +108,8 @@ def build_node_fill_prompt(
 3. 列表型内容可用 Markdown 表格，表格应有实际字段和值；无依据的值留"________"。
 4. 不写"人工确认点""待补充""TODO""AI生成"等元话语。
 5. 不编造金额、人名、证号、日期；知识库只作素材，不得改变招标文件结构。
+6. 逐条正面响应上述评分点，给出对应的、可量化的工程措施与验收标准，不要泛泛而谈。
+7. 确保不触发上述废标项；涉及承诺事项用确定性表述明确承诺。
 
 ## 输出
 直接输出本节点正文。"""
