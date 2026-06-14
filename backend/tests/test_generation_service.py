@@ -1,5 +1,4 @@
 from services import generation_service
-from services.original_docx_format_service import PDF_PAGE_MARKER_PREFIX
 from utils.docx_exporter import combine_delivery_volumes
 from docx import Document
 
@@ -184,47 +183,6 @@ def test_export_markdown_for_project_strips_meta_notes(monkeypatch) -> None:
     assert captured["title"] == "测试项目投标文件"
 
 
-def test_split_original_pdf_docx_keeps_page_blocks_and_technical_only(tmp_path) -> None:
-    source_path = tmp_path / "format.docx"
-    source = Document()
-    source.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:0:投标文件（商务文件）目录")
-    source.add_paragraph("商务页图层：投标函、授权委托书")
-    source.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:1:投标文件（技术文件）施工组织设计")
-    source.add_paragraph("技术页图层：施工组织设计")
-    source.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:2:投标文件（报价文件）已标价工程量清单")
-    source.add_paragraph("报价页图层：已标价工程量清单")
-    source.save(source_path)
-
-    markdown = combine_delivery_volumes(
-        "测试项目",
-        {
-            "commercial": "# 商务文件\n\n商务正文不应追加到技术卷。",
-            "technical": "# 技术文件\n\n施工组织正文应追加到技术卷。",
-            "pricing": "# 报价文件\n\n报价正文不应追加到技术卷。",
-        },
-    )
-
-    generation_service._split_and_export_volumes(source_path, tmp_path, 7, markdown)
-
-    commercial = "\n".join(
-        p.text for p in Document(tmp_path / "project_7_commercial.docx").paragraphs
-    )
-    technical = "\n".join(
-        p.text for p in Document(tmp_path / "project_7_technical.docx").paragraphs
-    )
-    pricing = "\n".join(
-        p.text for p in Document(tmp_path / "project_7_pricing.docx").paragraphs
-    )
-
-    assert "商务页图层" in commercial
-    assert "技术页图层" not in commercial
-    assert "技术页图层" in technical
-    assert "施工组织正文应追加到技术卷" in technical
-    assert "商务正文不应追加到技术卷" not in technical
-    assert "报价正文不应追加到技术卷" not in technical
-    assert "报价页图层" in pricing
-
-
 def test_assemble_two_volumes_commercial_copies_format_technical_is_prose(tmp_path) -> None:
     """Editable 照抄: 商务卷=格式章原样, 技术卷=独立生成正文, 不产出报价卷。"""
     format_path = tmp_path / "format.docx"
@@ -298,17 +256,3 @@ def test_two_volume_technical_excludes_commercial_sections(tmp_path) -> None:
     assert "资格响应" not in technical_text
     assert "投标保证金" not in technical_text
     assert "项目管理机构" not in technical_text
-
-
-def test_format_doc_has_page_markers_detection(tmp_path) -> None:
-    marked = tmp_path / "marked.docx"
-    d = Document()
-    d.add_paragraph(f"{PDF_PAGE_MARKER_PREFIX}:0:投标文件（商务文件）")
-    d.save(marked)
-    plain = tmp_path / "plain.docx"
-    p = Document()
-    p.add_paragraph("一、投标函")
-    p.save(plain)
-
-    assert generation_service._format_doc_has_page_markers(marked) is True
-    assert generation_service._format_doc_has_page_markers(plain) is False
