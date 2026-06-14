@@ -7,6 +7,8 @@ table generation, no form templates — just construction plan prose.
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,6 +17,19 @@ from openai import OpenAI
 from core.config import get_settings
 from prompts.generator_prompt import build_node_fill_prompt
 
+logger = logging.getLogger(__name__)
+
+# Minimum compact (whitespace-stripped) character budget per technical node.
+# A施工组织设计 section that falls below this is too thin to be competitive, so
+# we rewrite it once with a deepen instruction before accepting it.
+MIN_NODE_CONTENT_CHARS = 1200
+
+_WS = re.compile(r"\s+")
+
+
+def _compact_len(text: str) -> int:
+    return len(_WS.sub("", text or ""))
+
 
 @dataclass
 class NodeFillResult:
@@ -22,6 +37,7 @@ class NodeFillResult:
     content: str
     token_count: int = 0
     model_name: str = ""
+    short: bool = False  # True if still below the length budget after one rewrite
 
 
 @dataclass
@@ -75,9 +91,20 @@ def fill_technical_volume(
             agent_name=f"content-writer-{title[:20]}",
             continuation_instruction="继续输出本节正文，从上次中断处继续。",
         )
-
         cleaned = _clean_node_content(raw, title)
-        results.append(NodeFillResult(title=title, content=cleaned))
+
+        # Phase 1.3 — one rewrite when the node is below the length/depth budget.
+        if _compact_len(cleaned) < MIN_NODE_CONTENT_CHARS:
+            cleaned = _rewrite_node_deeper(messages, cleaned, title)
+
+        short = _compact_len(cleaned) < MIN_NODE_CONTENT_CHARS
+        if short:
+            logger.warning(
+                "Technical node '%s' still below budget after rewrite "
+                "(%d < %d chars) — flagged for review, not silently accepted.",
+                title, _compact_len(cleaned), MIN_NODE_CONTENT_CHARS,
+            )
+        results.append(NodeFillResult(title=title, content=cleaned, short=short))
         previous_content = cleaned[:300]  # brief context for next node
 
     # Combine into one markdown per volume
@@ -90,6 +117,40 @@ def fill_technical_volume(
         nodes=results,
         combined="\n".join(combined_parts),
     )
+
+
+def _rewrite_node_deeper(
+    base_messages: list[dict[str, str]], first_draft: str, title: str
+) -> str:
+    """Rewrite a too-thin node once, deeper. Returns the longer of the two drafts.
+
+    Sends the first draft back with a deepen instruction asking for a full
+    rewrite (not a continuation) so the result is self-contained. Falls back to
+    the first draft if the rewrite call fails or comes back shorter.
+    """
+    deepen_messages = base_messages + [
+        {"role": "assistant", "content": first_draft},
+        {
+            "role": "user",
+            "content": (
+                f"上文篇幅不足、工程深度不够。请重写本节“{title}”的完整正文，"
+                f"在保留原有要点的前提下大幅扩充：补充具体工程参数与数据、"
+                f"分步施工工艺、质量验收标准、安全与环保及应急措施、"
+                f"人材机资源投入安排，并逐条正面响应评分点。"
+                f"只输出本节正文，不少于 {MIN_NODE_CONTENT_CHARS} 字，"
+                f"不得输出标题或元话语。"
+            ),
+        },
+    ]
+    try:
+        raw = _generate_messages_with_llm(
+            deepen_messages, agent_name=f"content-writer-deepen-{title[:16]}"
+        )
+    except Exception:
+        logger.warning("Deepen rewrite failed for node '%s'; keeping first draft.", title, exc_info=True)
+        return first_draft
+    rewritten = _clean_node_content(raw, title)
+    return rewritten if _compact_len(rewritten) > _compact_len(first_draft) else first_draft
 
 
 def _clean_node_content(raw: str, title: str) -> str:
