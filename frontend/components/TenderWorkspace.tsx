@@ -1172,7 +1172,7 @@ export function TenderWorkspace({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-end gap-3">
                   <div
-                    className="inline-block origin-bottom-left -rotate-2 -skew-x-6 bg-[linear-gradient(105deg,#082a55_0%,#082a55_46%,#b88a45_48%,#c99d5b_100%)] bg-clip-text text-[25px] font-black leading-none tracking-[0.16em] text-transparent"
+                    className="bg-[linear-gradient(105deg,#082a55_0%,#082a55_50%,#b88a45_52%,#c99d5b_100%)] bg-clip-text text-[25px] font-black leading-none tracking-[0.2em] text-transparent"
                     style={{
                       fontFamily:
                         '"Songti SC", "STSong", "SimSun", "PingFang SC", serif'
@@ -1180,6 +1180,9 @@ export function TenderWorkspace({
                   >
                     正奇建设
                   </div>
+                  <span className="mb-0.5 hidden text-[10px] font-semibold tracking-[0.28em] text-[#4b5563] sm:inline">
+                    ZHENGQI CONSTRUCTION
+                  </span>
                   <span className="mb-0.5 truncate text-[13px] font-semibold text-[#3a3a3c]">
                     标书生成工作台
                   </span>
