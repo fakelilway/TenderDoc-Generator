@@ -289,7 +289,8 @@ export type ProjectDownloadResponse = {
   filename?: string;
 };
 
-export type DeliveryVolumeKey = "commercial" | "technical" | "pricing";
+// 报价卷由外部造价软件单独制作，本系统只交付商务、技术两卷。
+export type DeliveryVolumeKey = "commercial" | "technical";
 
 export type DeliveryVolumePreview = {
   key: DeliveryVolumeKey;

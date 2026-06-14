@@ -212,8 +212,8 @@ const deliveryVolumes: Array<{
   label: string;
 }> = [
   { key: "commercial", label: "商务文件" },
-  { key: "technical", label: "技术文件" },
-  { key: "pricing", label: "报价文件" }
+  { key: "technical", label: "技术文件" }
+  // 报价文件由外部造价软件单独制作，本系统不生成、不交付。
 ];
 
 function deliveryArtifact(
@@ -1635,7 +1635,7 @@ function DeliveryVolumePanel({
       </div>
 
       <div className="border-b border-black/[0.06] p-3">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {deliveryVolumes.map((volume) => {
             const item = volumes?.[volume.key] ?? null;
             return (
