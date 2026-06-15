@@ -100,12 +100,14 @@ flowchart TD
 ## 常用验证
 
 ```bash
-.venv/bin/python -m pytest backend/tests -q
+.venv/bin/python -m pytest backend/tests -q -m "not live_llm"
 pnpm --dir frontend typecheck
 pnpm --dir frontend build
 ```
 
 不要并行执行 `pnpm --dir frontend typecheck` 和 `pnpm --dir frontend build`，Next.js build 会重建 `.next/types`。
+
+已加 GitHub Actions CI（`.github/workflows/ci.yml`）：后端 job 跑 `pytest -m "not live_llm"`，前端 job 跑 typecheck/lint/test/build 四连。
 
 ## 主要 API
 
@@ -126,13 +128,15 @@ pnpm --dir frontend build
 
 ```text
 TenderDoc-Generator/
+├── .github/                 # CI 工作流（GitHub Actions）
 ├── backend/
 │   ├── agents/              # parser、content writer、reviewer、pricing、scoring、response matrix
-│   ├── api/                 # FastAPI 路由
+│   ├── api/                 # FastAPI 应用装配（main.py）+ routers/ 按域分路由 + deps.py 共享依赖
+│   ├── core/                # config + llm_client（统一 LLM 客户端/重试退避）
 │   ├── rag/                 # embedding、pgvector 检索和过滤
 │   ├── scripts/             # 质量评估、知识库 manifest、风格案例导入
 │   ├── schemas/             # Pydantic schema
-│   ├── services/            # workflow、generation、project、knowledge、template、company profile
+│   ├── services/            # workflow、generation、knowledge、template、company profile；project 为子包（services/project/）；docx_health_check（标书体检打分）、delivery_quality（出标自动打分）
 │   ├── templates/           # 公司风格案例和离线评估样本
 │   ├── utils/               # file parser、DOCX exporter、MinIO
 │   └── tests/

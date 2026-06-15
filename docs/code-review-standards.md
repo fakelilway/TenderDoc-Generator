@@ -9,6 +9,9 @@
 - `backend/services/v2_generation_service.py`
 - `backend/services/v2_audit_service.py`
 - `backend/services/workflow_service.py`
+- `backend/core/llm_client.py`
+- `backend/services/docx_health_check.py`
+- `backend/services/delivery_quality.py`
 - `backend/agents/parser_agent.py`
 - `backend/agents/content_writer_agent.py`
 - `backend/agents/reviewer_agent.py`
@@ -19,10 +22,12 @@
 
 ## 合并前检查
 
-- 后端测试：`.venv/bin/python -m pytest backend/tests -q`
+- 后端测试：`.venv/bin/python -m pytest backend/tests -q -m "not live_llm"`
 - 前端类型检查：`pnpm --dir frontend typecheck`
+- 前端测试：`pnpm --dir frontend test`（vitest）
 - 前端构建：`pnpm --dir frontend build`
 - 空白检查：`git diff --check`
+- 以上检查已由 CI（`.github/workflows/ci.yml`）强制。
 - 涉及 DOCX 导出时，至少打开一次导出文件，确认无空白页、错卷、裁切、表格拍扁和下划线丢失。
 
 ## 格式链路审查规则

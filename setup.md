@@ -46,7 +46,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro
 BID_LLM_PROVIDER=deepseek
 PARSER_LLM_TIMEOUT_SECONDS=180
 BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
-BID_LONG_CONTEXT_MAX_TOKENS=100000
+BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
 
 使用 OpenRouter 时：
@@ -58,7 +58,7 @@ OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 BID_LLM_PROVIDER=openrouter
 PARSER_LLM_TIMEOUT_SECONDS=180
 BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
-BID_LONG_CONTEXT_MAX_TOKENS=100000
+BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
 
 `BID_LLM_PROVIDER=auto` 会优先使用 OpenRouter key，没有 OpenRouter key 时使用 DeepSeek key。为了避免看错计费后台，测试某个供应商时请显式设置 `deepseek` 或 `openrouter`。
@@ -122,17 +122,20 @@ BACKEND_PORT=8010 FRONTEND_PORT=3010 ./scripts/dev_local.sh
 后端：
 
 ```bash
-.venv/bin/python -m pytest backend/tests -q
+.venv/bin/python -m pytest backend/tests -q -m "not live_llm"
 ```
 
 前端：
 
 ```bash
 pnpm --dir frontend typecheck
+pnpm --dir frontend test
 pnpm --dir frontend build
 ```
 
 不要并行跑 `typecheck` 和 `build`，Next.js build 会重建 `.next/types`。
+
+这些检查已由 `.github/workflows/ci.yml` 在 push/PR 时自动跑。
 
 基础服务：
 
@@ -306,4 +309,4 @@ docker compose down -v
 | `backend/scripts/run_quality_eval.py` | 运行质量评估集 |
 | `backend/scripts/run_bid_gap_eval.py` | 评估生成稿与真实样本差距 |
 
-**最后更新：** 2026-06-14
+**最后更新：** 2026-06-16
