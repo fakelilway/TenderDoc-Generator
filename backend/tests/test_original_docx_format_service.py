@@ -4,11 +4,67 @@ from docx import Document
 
 from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
+    _fill_known_table_cells,
+    _table_label_value,
     build_original_format_docx,
     build_original_format_docx_from_pdf,
     build_original_format_docx_from_pdf_editable,
     build_original_format_docx_from_pdf_with_fields,
 )
+
+
+def test_table_label_value_maps_known_and_skips_others() -> None:
+    profile = {
+        "company_name": "安徽正奇建设有限公司",
+        "credit_code": "91340100578516708N",
+        "legal_representative": "许明英",
+        "registered_capital": "10060万元人民币",
+    }
+    assert _table_label_value("投标人名称", profile) == "安徽正奇建设有限公司"
+    assert _table_label_value("统一社会信用代码", profile) == "91340100578516708N"
+    assert _table_label_value("注册资本", profile) == "10060万元人民币"
+    # 另一个人 / 日期 / 无对应字段 → 不填
+    assert _table_label_value("技术负责人", profile) == ""
+    assert _table_label_value("成立时间", profile) == ""
+    assert _table_label_value("员工总人数：", profile) == ""
+    assert _table_label_value("随便什么标题", profile) == ""
+
+
+def test_fill_known_table_cells_fills_adjacent_empty_only() -> None:
+    doc = Document()
+    table = doc.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = "投标人名称"  # (0,1) 空 → 应填
+    table.cell(1, 0).text = "统一社会信用代码"
+    table.cell(1, 1).text = "已有值"  # 已填 → 不覆盖
+    table.cell(2, 0).text = "技术负责人"  # 另一个人 → 跳过,(2,1) 保持空
+
+    profile = {"company_name": "安徽正奇建设有限公司", "credit_code": "91X"}
+    filled = _fill_known_table_cells(doc, profile)
+
+    assert table.cell(0, 1).text == "安徽正奇建设有限公司"
+    assert table.cell(1, 1).text == "已有值"  # 未被覆盖
+    assert table.cell(2, 1).text.strip() == ""  # 技术负责人行未填
+    assert filled == 1
+
+
+def test_fill_known_table_cells_does_not_overfill_through_sublabel() -> None:
+    # 法定代表人 | 姓名 | [空] —— 保守:遇到非空子标签即止,不越过去乱填
+    doc = Document()
+    table = doc.add_table(rows=1, cols=3)
+    table.cell(0, 0).text = "法定代表人"
+    table.cell(0, 1).text = "姓名"
+
+    _fill_known_table_cells(doc, {"legal_representative": "许明英"})
+
+    assert table.cell(0, 2).text.strip() == ""
+
+
+def test_fill_known_table_cells_noop_when_profile_empty() -> None:
+    doc = Document()
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "投标人名称"
+    assert _fill_known_table_cells(doc, {}) == 0
+    assert table.cell(0, 1).text.strip() == ""
 
 
 def test_build_original_format_docx_copies_format_tables_verbatim(

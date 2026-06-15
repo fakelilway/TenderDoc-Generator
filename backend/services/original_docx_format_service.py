@@ -329,6 +329,7 @@ def build_original_format_docx_from_pdf_editable(
             raise ValueError("pdf2docx 转换结果为空，回退到整页截图路径。")
 
         _replace_known_fields(doc, profile or {})
+        _fill_known_table_cells(doc, profile or {})
         doc.save(str(path))
         return str(path)
     finally:
@@ -352,6 +353,92 @@ _FILL_FIELD_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 # Labels whose blank is segmented or date-like → never auto-fill.
 _FILL_SKIP_KEYWORDS = ("成立", "日期", "经营期限", "别", "龄", "务", "年", "月", "日")
+
+
+# ── 可编辑路径(pdf2docx)的表格自动填 ──────────────────────────────────
+# 整页截图烧录只认下划线;可编辑路径产出真实 Word 表格(如投标人基本情况表),
+# 这里按"标签单元格 → 同行右侧第一个空值格"填入公司档案。用**精确整标签**匹配
+# (不用 _FILL_FIELD_ALIASES 的单字短键),避免技术负责人行的"姓名"被误填成法定
+# 代表人。只写空格、不覆盖、不改表结构 → 保真。
+_TABLE_FILL_LABELS: tuple[tuple[str, str], ...] = (
+    ("投标人名称", "company_name"),
+    ("投标人", "company_name"),
+    ("注册地址", "registered_address"),
+    ("单位性质", "company_type"),
+    ("统一社会信用代码", "credit_code"),
+    ("信用代码", "credit_code"),
+    ("注册资本", "registered_capital"),
+    ("企业资质等级", "qualification_grade"),
+    ("资质等级", "qualification_grade"),
+    ("法定代表人", "legal_representative"),
+    ("项目经理", "project_manager_name"),
+    ("注册建造师", "project_manager_name"),
+    ("安全生产许可证", "safety_license_no"),
+    ("开户银行", "bank_name"),
+    ("银行账号", "bank_account"),
+    ("联系人", "contact_person"),
+    ("经营范围", "business_scope"),
+)
+# 这些是"另一个人/日期/分段/无对应档案字段"的标签,绝不当作待填项。
+_TABLE_FILL_SKIP = (
+    "技术负责人", "项目总工", "技术职称", "成立时间", "员工总人数",
+    "邮政编码", "电子邮件", "传真",
+)
+_TABLE_BLANK_RE = re.compile(r"^[\s_＿]*$")
+
+
+def _table_label_value(label: str, profile: dict[str, Any]) -> str:
+    norm = (
+        label.replace(" ", "").replace("　", "").replace("：", "").replace(":", "").strip()
+    )
+    if not norm or any(skip in norm for skip in _TABLE_FILL_SKIP):
+        return ""
+    for key, profile_key in _TABLE_FILL_LABELS:
+        if key in norm:
+            return str(profile.get(profile_key, "") or "").strip()
+    return ""
+
+
+def _set_cell_value(cell: Any, value: str) -> None:
+    """Write a value into a table cell, preserving the cell's existing font/runs."""
+    paragraph = cell.paragraphs[0]
+    runs = paragraph.runs
+    if runs:
+        runs[0].text = value
+        for extra in runs[1:]:
+            extra.text = ""
+    else:
+        paragraph.add_run(value)
+
+
+def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
+    """基本情况表式网格自动填:标签格 → 同行右侧第一个空值格。
+
+    只写空格、绝不覆盖、不改表结构(保真);未知标签和第二个人的子标签保持空白。
+    返回填入的格数。
+    """
+    if not any(profile.get(key) for _, key in _TABLE_FILL_LABELS):
+        return 0
+    filled = 0
+    for table in document.tables:
+        for row in table.rows:
+            cells = row.cells
+            for i, cell in enumerate(cells):
+                value = _table_label_value(cell.text.strip(), profile)
+                if not value:
+                    continue
+                for j in range(i + 1, len(cells)):
+                    target = cells[j]
+                    if target._tc is cell._tc:
+                        continue  # 同一个合并单元格
+                    text = target.text.strip()
+                    if text and _table_label_value(text, profile):
+                        continue  # 右邻又是个已知标签,跳过它继续找值格
+                    if _TABLE_BLANK_RE.match(text):
+                        _set_cell_value(target, value)
+                        filled += 1
+                    break
+    return filled
 
 
 def _detect_fill_underlines(page: Any) -> list[tuple[float, float, float]]:

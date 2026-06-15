@@ -176,30 +176,43 @@ def generate_v2_bid_package(
         tmp.close()
         from services.original_docx_format_service import (
             build_original_format_docx_from_pdf,
+            build_original_format_docx_from_pdf_editable,
             build_original_format_docx_from_pdf_with_fields,
         )
 
-        # Primary: 整页截图(像素级保真) + 填空字段叠层(可编辑、知识库预填)。
-        # 解决 pdf2docx 下划线错位，同时保住填空可编辑。
-        # Fallback: 纯整页截图(无填空字段)。两者都失败才硬报错。
+        # Primary: 定位格式章页范围 → pdf2docx 转**可编辑 Word**(真实段落/表格) +
+        # 自动填公司档案(含基本情况表表格)。满足标书员三点:保真(WPS级)、可编辑、已填。
+        # Fallback 1: 整页截图 + 下划线烧录(像素级保真但不可编辑)——转换失败/退化时。
+        # Fallback 2: 纯整页截图。全部失败才硬报错。
         try:
-            built_format_docx = build_original_format_docx_from_pdf_with_fields(
+            built_format_docx = build_original_format_docx_from_pdf_editable(
                 tender_bytes, tmp_path, profile=combined_profile
             )
         except Exception:
             logger.warning(
-                "Image+fields format build failed — falling back to plain page-image",
+                "Editable (pdf2docx) format build failed — falling back to page-image+fields",
                 exc_info=True,
             )
             try:
-                built_format_docx = build_original_format_docx_from_pdf(
+                built_format_docx = build_original_format_docx_from_pdf_with_fields(
                     tender_bytes, tmp_path, profile=combined_profile
                 )
             except Exception:
-                logger.error("PDF format conversion failed (both paths)", exc_info=True)
-                raise ValueError(
-                    "PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。"
+                logger.warning(
+                    "Image+fields format build failed — falling back to plain page-image",
+                    exc_info=True,
                 )
+                try:
+                    built_format_docx = build_original_format_docx_from_pdf(
+                        tender_bytes, tmp_path, profile=combined_profile
+                    )
+                except Exception:
+                    logger.error(
+                        "PDF format conversion failed (all paths)", exc_info=True
+                    )
+                    raise ValueError(
+                        "PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。"
+                    )
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
     if original_format_docx_available:
@@ -672,7 +685,12 @@ def _enrich_commercial_markdown(
     # Qualification compliance section
     if requirements.qualification_list:
         parts.append("\n<!-- tdg:pagebreak -->\n")
-        parts.append("\n## 资格响应\n")
+        parts.append(
+            "\n## 附录：商务响应补充说明（系统自动生成，供编制参考；非招标文件格式原文）\n"
+        )
+        parts.append(
+            "\n> 正式商务表格以上方原格式页为准；以下仅为依据招标文件解析自动生成的资格响应要点。\n"
+        )
         for item in requirements.qualification_list:
             parts.append(f"\n### {item.title}\n")
             parts.append(f"\n{item.description}\n")
