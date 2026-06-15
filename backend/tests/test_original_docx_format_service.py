@@ -94,11 +94,23 @@ def test_fill_known_table_cells_fills_adjacent_empty_only() -> None:
     assert filled == 1
 
 
-def test_fill_known_table_cells_does_not_overfill_through_sublabel() -> None:
-    # 法定代表人 | 姓名 | [空] —— 保守:遇到非空子标签即止,不越过去乱填
+def test_fill_known_table_cells_fills_through_sublabel() -> None:
+    # 法定代表人 | 姓名 | [空] —— 跨过"姓名"子标签,把值填进真正的值格
     doc = Document()
     table = doc.add_table(rows=1, cols=3)
     table.cell(0, 0).text = "法定代表人"
+    table.cell(0, 1).text = "姓名"
+
+    _fill_known_table_cells(doc, {"legal_representative": "许明英"})
+
+    assert table.cell(0, 2).text.strip() == "许明英"
+
+
+def test_fill_known_table_cells_skips_second_person_sublabel_row() -> None:
+    # 技术负责人 是另一个人(在 skip 列),其"姓名"值格不应被填法定代表人
+    doc = Document()
+    table = doc.add_table(rows=1, cols=3)
+    table.cell(0, 0).text = "技术负责人"
     table.cell(0, 1).text = "姓名"
 
     _fill_known_table_cells(doc, {"legal_representative": "许明英"})
