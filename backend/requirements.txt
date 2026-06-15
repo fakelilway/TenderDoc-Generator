@@ -2,14 +2,14 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
-psycopg2-binary==2.9.12
+psycopg2-binary==2.9.9
 
 langchain==0.1.10
 langchain-community==0.0.25
 langchain-openai==0.0.8
 
 openai==1.10.0
-requests==2.31.0
+requests==2.34.2
 
 sentence-transformers==5.5.1
 scikit-learn==1.3.2
@@ -17,8 +17,8 @@ numpy==1.24.3
 
 pypdf==4.0.1
 pdfplumber==0.10.3
-PyMuPDF==1.24.14
-python-docx==0.8.11
+PyMuPDF==1.27.2.3
+python-docx==1.2.0
 pdf2docx==0.5.13
 openpyxl==3.1.5  # 解析业绩台账 xlsx（历年中标项目统计表）→ 结构化业绩记录
 # 证件扫描件 OCR（无系统二进制依赖、可移植 Linux 内网）。注意 numpy 须保持 <2
@@ -27,8 +27,8 @@ rapidocr-onnxruntime==1.4.4
 
 redis==5.0.1
 
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
 
 python-dotenv==1.0.0
 structlog==24.1.0
