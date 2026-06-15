@@ -540,3 +540,41 @@ def test_kb_qualification_tables_empty_when_no_data(monkeypatch) -> None:
         "services.knowledge_service.list_key_personnel", lambda limit=40: []
     )
     assert v2_generation_service._kb_qualification_tables_markdown() == ""
+
+
+# 用 CompanyProfile 真实字段名核对 profile 匹配:旧代码取 schema 里不存在的键名
+# (project_manager/pm_certificate/qualification_level/safety_license/business_license),
+# 这些字段恒空。下面两条测试在旧键名下会失败,修复后通过。
+_PROFILE_FIELDS = {
+    "company_name": "安徽正奇建设有限公司",
+    "qualification_grade": "建筑工程施工总承包一级",
+    "safety_license_no": "(皖)JZ安许证字[2021]007",
+    "credit_code": "91340000MA2ABCDE3K",
+    "project_manager_name": "李明",
+    "project_manager_cert": "皖一级建造师A123456",
+}
+
+
+def test_match_profile_field_uses_real_schema_keys() -> None:
+    assert (
+        v2_generation_service._match_profile_field("资质要求响应", _PROFILE_FIELDS)
+        == "建筑工程施工总承包一级"
+    )
+    assert (
+        v2_generation_service._match_profile_field("安全生产许可证", _PROFILE_FIELDS)
+        == "(皖)JZ安许证字[2021]007"
+    )
+    assert (
+        v2_generation_service._match_profile_field("营业执照", _PROFILE_FIELDS)
+        == "91340000MA2ABCDE3K"
+    )
+
+
+def test_enrich_commercial_fills_project_manager_from_profile() -> None:
+    requirements = TenderRequirements(project_name="测试项目")
+    # header-only 触发 enrich 路径
+    enriched = v2_generation_service._enrich_commercial_markdown(
+        "## 商务文件\n", requirements, _PROFILE_FIELDS
+    )
+    assert "李明" in enriched  # project_manager_name 被正确取出
+    assert "皖一级建造师A123456" in enriched  # project_manager_cert

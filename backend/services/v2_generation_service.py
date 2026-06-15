@@ -718,10 +718,15 @@ def _enrich_commercial_markdown(
     parts.append("\n<!-- tdg:pagebreak -->\n")
     parts.append("\n## 项目管理机构\n")
     pm_fields = []
-    if profile.get("project_manager"):
-        pm_fields.append(f"项目经理：{profile['project_manager']}")
-    if profile.get("pm_certificate"):
-        pm_fields.append(f"注册建造师证书：{profile['pm_certificate']}")
+    # CompanyProfile 的字段名是 project_manager_name / project_manager_cert
+    # (旧代码取 project_manager / pm_certificate,schema 里不存在 → 恒空)。
+    # 保留旧键名作 fallback,避免对可能传入旧键的调用方回归。
+    pm_name = profile.get("project_manager_name") or profile.get("project_manager")
+    if pm_name:
+        pm_fields.append(f"项目经理：{pm_name}")
+    pm_cert = profile.get("project_manager_cert") or profile.get("pm_certificate")
+    if pm_cert:
+        pm_fields.append(f"注册建造师证书：{pm_cert}")
     if profile.get("pm_specialty"):
         pm_fields.append(f"专业：{profile['pm_specialty']}")
     if pm_fields:
@@ -878,10 +883,12 @@ def _qualification_evidence_markdown(limit: int = 6) -> str:
 def _match_profile_field(title: str, profile: dict[str, str]) -> str:
     """Try to find a matching profile value for a requirement title."""
     title_lower = title.lower()
+    # CompanyProfile 真实字段名放首位(qualification_grade / safety_license_no /
+    # credit_code),旧的不存在键名保留作 fallback,避免改动破坏其它传入路径。
     mapping = {
-        "资质": ["qualification_level", "qualification", "资质等级"],
-        "营业执照": ["business_license", "license", "营业执照号"],
-        "安全生产": ["safety_license", "safety_production_license", "安全生产许可证"],
+        "资质": ["qualification_grade", "qualification_level", "qualification", "资质等级"],
+        "营业执照": ["credit_code", "business_license", "license", "营业执照号"],
+        "安全生产": ["safety_license_no", "safety_license", "safety_production_license", "安全生产许可证"],
         "财务": ["financial", "财务状况"],
         "业绩": ["performance", "业绩"],
         "信誉": ["credit", "信誉"],
