@@ -124,3 +124,21 @@ def test_prompt_includes_section_guidance_and_length() -> None:
     assert "本节必须覆盖的工程要点" in content
     assert "三检制" in content
     assert "不少于 2400 字" in content
+
+
+def test_strip_commercial_sections_keeps_technical_org_section() -> None:
+    from services.v2_generation_service import _strip_commercial_sections
+
+    md = (
+        "## 项目管理机构与岗位职责\n\n项目经理及岗位职责正文。\n\n"
+        "## 资格响应\n\n营业执照有效。\n\n"
+        "## 质量管理体系与质量保证措施\n\n质量目标正文。"
+    )
+    out = _strip_commercial_sections(md)
+    # canonical technical section must survive the 项目管理机构 commercial keyword
+    assert "项目管理机构与岗位职责" in out
+    assert "项目经理及岗位职责正文" in out
+    # genuine commercial leakage still stripped
+    assert "资格响应" not in out
+    assert "营业执照有效" not in out
+    assert "质量管理体系与质量保证措施" in out

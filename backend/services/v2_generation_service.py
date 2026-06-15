@@ -816,6 +816,12 @@ _COMMERCIAL_SECTION_KEYWORDS = (
 )
 
 
+def _canonical_tech_titles() -> set[str]:
+    from prompts.construction_plan_outline import CONSTRUCTION_PLAN_OUTLINE
+
+    return {re.sub(r"\s+", "", str(s["title"])) for s in CONSTRUCTION_PLAN_OUTLINE}
+
+
 def _strip_commercial_sections(technical_md: str) -> str:
     """Remove commercial compliance sections that the LLM may have
     over-generated into the technical volume.
@@ -824,7 +830,12 @@ def _strip_commercial_sections(technical_md: str) -> str:
     项目管理机构 etc.) belongs in the commercial volume, not the
     technical one. The LLM sometimes "helpfully" generates these in
     the construction plan output — strip them here.
+
+    A canonical technical section title is never stripped, so e.g.
+    "项目管理机构与岗位职责" (a legit 施工组织设计 section) is not removed by
+    the "项目管理机构" commercial keyword.
     """
+    tech_titles = _canonical_tech_titles()
     lines = technical_md.splitlines()
     kept: list[str] = []
     skipping = False
@@ -833,7 +844,10 @@ def _strip_commercial_sections(technical_md: str) -> str:
         # Check if this line starts a ## heading that matches a commercial section
         if stripped.startswith("## "):
             heading = stripped[3:].strip()
-            if any(kw in heading for kw in _COMMERCIAL_SECTION_KEYWORDS):
+            is_canonical_tech = re.sub(r"\s+", "", heading) in tech_titles
+            if not is_canonical_tech and any(
+                kw in heading for kw in _COMMERCIAL_SECTION_KEYWORDS
+            ):
                 skipping = True
                 continue
             else:
