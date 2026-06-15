@@ -20,6 +20,7 @@ pdfplumber==0.10.3
 PyMuPDF==1.24.14
 python-docx==0.8.11
 pdf2docx==0.5.13
+openpyxl==3.1.5  # 解析业绩台账 xlsx（历年中标项目统计表）→ 结构化业绩记录
 # 证件扫描件 OCR（无系统二进制依赖、可移植 Linux 内网）。注意 numpy 须保持 <2
 # (见上 numpy==1.24.3)，否则与 scikit-learn 二进制不兼容。
 rapidocr-onnxruntime==1.4.4
