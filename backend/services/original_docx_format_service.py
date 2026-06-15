@@ -328,6 +328,7 @@ def build_original_format_docx_from_pdf_editable(
         if not has_text and not doc.tables:
             raise ValueError("pdf2docx 转换结果为空，回退到整页截图路径。")
 
+        _drop_spurious_stream_tables(doc)  # 删 pdf2docx 把填空行误判出的假表
         _replace_known_fields(doc, profile or {})
         _fill_known_table_cells(doc, profile or {})
         doc.save(str(path))
@@ -439,6 +440,66 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
                         filled += 1
                     break
     return filled
+
+
+def _table_has_real_borders(table: Any) -> bool:
+    """True if any cell declares a real (non-nil) border.
+
+    pdf2docx gives真实表格(基本情况表等)逐格 w:tcBorders=single;而把填空行误判出的
+    "假表"边框为空。据此区分真表 vs 流式误判表。
+    """
+    sides = ("w:top", "w:bottom", "w:start", "w:end", "w:left", "w:right")
+    for row in table.rows:
+        for cell in row.cells:
+            tc_pr = cell._tc.tcPr
+            if tc_pr is None:
+                continue
+            borders = tc_pr.find(qn("w:tcBorders"))
+            if borders is None:
+                continue
+            for side in sides:
+                element = borders.find(qn(side))
+                if element is not None and (
+                    element.get(qn("w:val")) or ""
+                ).lower() not in ("", "nil", "none"):
+                    return True
+    return False
+
+
+def _drop_spurious_stream_tables(document: Any) -> int:
+    """Flatten pdf2docx 的"假表"回普通段落。
+
+    pdf2docx 偶尔把"标签+一段宽下划线空白"的填空行误判成 2 格无线表。这类
+    (逻辑格数≤2 且 无真边框)还原成段落;真网格表(有边框,如基本情况表/图说明)保留。
+    返回还原的表数。
+    """
+    from docx.oxml import OxmlElement
+
+    dropped = 0
+    for table in list(document.tables):
+        if len(table.rows) * len(table.columns) > 2:
+            continue
+        if _table_has_real_borders(table):
+            continue
+        text = " ".join(
+            cell.text.strip()
+            for row in table.rows
+            for cell in row.cells
+            if cell.text.strip()
+        )
+        tbl = table._tbl
+        paragraph = OxmlElement("w:p")
+        if text:
+            run = OxmlElement("w:r")
+            node = OxmlElement("w:t")
+            node.set(qn("xml:space"), "preserve")
+            node.text = text
+            run.append(node)
+            paragraph.append(run)
+        tbl.addprevious(paragraph)
+        tbl.getparent().remove(tbl)
+        dropped += 1
+    return dropped
 
 
 def _detect_fill_underlines(page: Any) -> list[tuple[float, float, float]]:

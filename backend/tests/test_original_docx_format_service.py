@@ -2,8 +2,12 @@ from pathlib import Path
 
 from docx import Document
 
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
 from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
+    _drop_spurious_stream_tables,
     _fill_known_table_cells,
     _table_label_value,
     build_original_format_docx,
@@ -11,6 +15,49 @@ from services.original_docx_format_service import (
     build_original_format_docx_from_pdf_editable,
     build_original_format_docx_from_pdf_with_fields,
 )
+
+
+def _add_cell_borders(cell) -> None:
+    """Give a cell real single borders (mimics pdf2docx's true-table cells)."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = OxmlElement("w:tcBorders")
+    for side in ("top", "bottom", "start", "end"):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), "4")
+        borders.append(el)
+    tc_pr.append(borders)
+
+
+def test_drop_spurious_stream_tables_flattens_borderless_small_tables() -> None:
+    doc = Document()
+    spurious = doc.add_table(rows=1, cols=2)  # 填空行被误判:2格、无边框
+    spurious.cell(0, 0).text = "1.我方已仔细研究"
+    spurious.cell(0, 1).text = "标段招标文件的全部内容。"
+    big = doc.add_table(rows=15, cols=10)  # 真表(基本情况表式):>2格 → 保留
+    big.cell(0, 0).text = "投标人名称"
+
+    dropped = _drop_spurious_stream_tables(doc)
+
+    assert dropped == 1
+    assert len(doc.tables) == 1  # 大表保留
+    assert any(
+        "我方已仔细研究" in p.text and "招标文件的全部内容" in p.text
+        for p in doc.paragraphs
+    )  # 假表内容已还原成连续段落
+
+
+def test_drop_spurious_stream_tables_keeps_small_bordered_table() -> None:
+    doc = Document()
+    bordered = doc.add_table(rows=2, cols=1)  # 2格但有真边框(如项目管理机构图说明)
+    _add_cell_borders(bordered.cell(0, 0))
+    bordered.cell(0, 0).text = "拟为承包本标段以框图方式表示。"
+    bordered.cell(1, 0).text = "说明"
+
+    dropped = _drop_spurious_stream_tables(doc)
+
+    assert dropped == 0
+    assert len(doc.tables) == 1  # 有边框的真表不动
 
 
 def test_table_label_value_maps_known_and_skips_others() -> None:
