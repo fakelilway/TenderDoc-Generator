@@ -332,6 +332,63 @@ def list_knowledge_image_references(
     )[:limit]
 
 
+def list_performance_records(limit: int = 15) -> list[dict[str, str]]:
+    """业绩台账记录(供资格响应附录列近年类似业绩)。解析入库的结构化业绩文本。"""
+    import re as _re
+
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT content, metadata->>'project_year', metadata->>'project_type'
+                FROM knowledge_chunks
+                WHERE metadata->>'document_category' = '业绩'
+                  AND content LIKE %s
+                ORDER BY (metadata->>'project_year') DESC NULLS LAST, id DESC
+                LIMIT %s
+                """,
+                ["业绩项目：%", max(1, limit)],
+            )
+            rows = cursor.fetchall()
+    records: list[dict[str, str]] = []
+    for content, year, project_type in rows:
+        name = _re.search(r"业绩项目：([^\n]+)", content or "")
+        amount = _re.search(r"中标金额：([^\n]+)", content or "")
+        records.append(
+            {
+                "name": (name.group(1).strip() if name else ""),
+                "amount": (amount.group(1).strip() if amount else ""),
+                "year": str(year or ""),
+                "type": str(project_type or ""),
+            }
+        )
+    return records
+
+
+def list_key_personnel(limit: int = 40) -> list[dict[str, str]]:
+    """主要注册人员(建造师/职称等),按姓名去重(供资格响应附录列主要人员)。"""
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT metadata->>'owner_name' AS owner,
+                       string_agg(DISTINCT metadata->>'certificate_type', '、') AS certs
+                FROM knowledge_chunks
+                WHERE metadata->>'document_category' = '人员证件'
+                  AND metadata->>'certificate_type' IN
+                      ('一级建造师证', '二级建造师证', '注册安全工程师证',
+                       '造价工程师证', '职称证书')
+                  AND coalesce(metadata->>'owner_name', '') <> ''
+                GROUP BY metadata->>'owner_name'
+                ORDER BY owner
+                LIMIT %s
+                """,
+                [max(1, limit)],
+            )
+            rows = cursor.fetchall()
+    return [{"name": str(r[0]), "certs": str(r[1] or "")} for r in rows]
+
+
 def _fetch_knowledge_document_row(document_id: int) -> dict[str, object]:
     with _connect() as conn:
         with conn.cursor() as cursor:

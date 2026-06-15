@@ -503,3 +503,40 @@ def test_v2_format_audit_rejects_missing_required_figures() -> None:
 
     assert not report.passed
     assert any("图表/图片要求未落实" in issue.problem for issue in report.issues)
+
+
+def test_kb_qualification_tables_filters_noise_and_builds_tables(monkeypatch) -> None:
+    """C1:业绩/人员汇总表——构表正确、脏人名被过滤掉。"""
+    monkeypatch.setattr(
+        "services.knowledge_service.list_performance_records",
+        lambda limit=15: [
+            {"name": "某二级公路改建工程", "amount": "1500万元", "year": "2024", "type": "公路工程"},
+        ],
+    )
+    monkeypatch.setattr(
+        "services.knowledge_service.list_key_personnel",
+        lambda limit=40: [
+            {"name": "江舟", "certs": "一级建造师证"},
+            {"name": "微信图片", "certs": "职称证书"},  # 噪声,应被过滤
+            {"name": "施工员吴", "certs": "职称证书"},  # 噪声,应被过滤
+        ],
+    )
+
+    md = v2_generation_service._kb_qualification_tables_markdown()
+
+    assert "| 项目名称 | 中标金额 | 年份 | 类型 |" in md
+    assert "某二级公路改建工程" in md and "1500万元" in md
+    assert "| 姓名 | 持有证书 |" in md
+    assert "江舟" in md
+    assert "微信图片" not in md  # 噪声人名被过滤
+    assert "施工员吴" not in md
+
+
+def test_kb_qualification_tables_empty_when_no_data(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.knowledge_service.list_performance_records", lambda limit=15: []
+    )
+    monkeypatch.setattr(
+        "services.knowledge_service.list_key_personnel", lambda limit=40: []
+    )
+    assert v2_generation_service._kb_qualification_tables_markdown() == ""

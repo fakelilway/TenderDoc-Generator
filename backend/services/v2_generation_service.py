@@ -737,7 +737,86 @@ def _enrich_commercial_markdown(
     if evidence_md:
         parts.append(evidence_md)
 
+    # 类似业绩 + 主要人员:从知识库台账/人员证书自动汇总成表(C1,附加参考,不动原表)
+    kb_tables_md = _kb_qualification_tables_markdown()
+    if kb_tables_md:
+        parts.append(kb_tables_md)
+
     return "\n".join(parts)
+
+
+_NAME_NOISE_TOKENS = (
+    "证书", "工程", "公路", "养护", "专管", "劳资", "微信", "图片", "年度",
+    "施工员", "材料员", "质量员", "资料员", "机械员", "照片", "人员",
+)
+
+
+def _kb_qualification_tables_markdown() -> str:
+    """C1:把知识库的业绩台账/主要人员汇总成 markdown 表,作为资格响应附录的参考。
+
+    纯附加内容(不填招标原表),无数据则返回空。
+    """
+    try:
+        from services.knowledge_service import (
+            list_key_personnel,
+            list_performance_records,
+        )
+    except Exception:
+        return ""
+
+    parts: list[str] = []
+
+    try:
+        records = list_performance_records(limit=15)
+    except Exception:
+        records = []
+    if records:
+        lines = [
+            "",
+            "### 近年承建业绩（系统自知识库汇总，请按招标类似业绩要求筛选）",
+            "",
+            "| 项目名称 | 中标金额 | 年份 | 类型 |",
+            "| --- | --- | --- | --- |",
+        ]
+        for record in records:
+            name = (record["name"] or "—").replace("|", "/")[:40]
+            lines.append(
+                f"| {name} | {record['amount'] or '—'} | "
+                f"{record['year'] or '—'} | {record['type'] or '—'} |"
+            )
+        parts.append("\n".join(lines))
+
+    try:
+        personnel = list_key_personnel(limit=40)
+    except Exception:
+        personnel = []
+    personnel = [
+        person
+        for person in personnel
+        if person["name"]
+        and 2 <= len(person["name"]) <= 4
+        and not any(token in person["name"] for token in _NAME_NOISE_TOKENS)
+    ]
+    if personnel:
+        lines = [
+            "",
+            "### 主要注册人员（系统自知识库汇总，供编制参考）",
+            "",
+            "| 姓名 | 持有证书 |",
+            "| --- | --- |",
+        ]
+        for person in personnel[:30]:
+            lines.append(f"| {person['name']} | {person['certs'].replace('|', '/')} |")
+        parts.append("\n".join(lines))
+
+    if not parts:
+        return ""
+    return (
+        "\n<!-- tdg:pagebreak -->\n"
+        "\n## 附录：类似业绩与主要人员（系统按知识库自动汇总，供编制参考）\n"
+        + "\n".join(parts)
+        + "\n"
+    )
 
 
 def _qualification_evidence_markdown(limit: int = 6) -> str:
