@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
+import hashlib
 import json
 import mimetypes
 import re
@@ -46,6 +48,8 @@ class KnowledgeManifestRow:
     confidence: float = 0.5
     review_required: bool = True
     notes: str = ""
+    is_duplicate: bool = False
+    duplicate_of: str = ""
 
 
 def build_manifest(
@@ -57,6 +61,7 @@ def build_manifest(
         suggested_dir = prepared_root or source_dir
         row.suggested_path = str(suggested_dir / row.suggested_filename)
         rows.append(row)
+    _mark_duplicates(rows)
     return rows
 
 
@@ -73,7 +78,9 @@ def classify_file(path: Path, source_dir: Path) -> KnowledgeManifestRow:
         tags=[],
     )
 
-    if _contains(text, "营业执照"):
+    if _classify_by_structure(row, path, source_dir, stem, suffix, text, raw_text):
+        pass
+    elif _contains(text, "营业执照"):
         _set_company_certificate(row, "营业执照")
         row.valid_to = "长期有效"
         row.confidence = 0.92
@@ -172,6 +179,7 @@ def read_csv_manifest(manifest_path: Path) -> list[KnowledgeManifestRow]:
             data = dict(raw)
             data["image_insertable"] = _parse_bool(data.get("image_insertable"))
             data["review_required"] = _parse_bool(data.get("review_required"))
+            data["is_duplicate"] = _parse_bool(data.get("is_duplicate"))
             data["confidence"] = _parse_float(data.get("confidence"), default=0.0)
             data["tags"] = _split_tags(str(data.get("tags") or ""))
             rows.append(KnowledgeManifestRow(**data))
@@ -187,6 +195,16 @@ def import_rows_to_knowledge_base(
 
     results: list[dict[str, object]] = []
     for row in rows:
+        if row.is_duplicate:
+            results.append(
+                {
+                    "original_path": row.original_path,
+                    "suggested_filename": row.suggested_filename,
+                    "status": "skipped_duplicate",
+                    "message": f"duplicate of {row.duplicate_of}",
+                }
+            )
+            continue
         if row.review_required and not include_review_required:
             results.append(
                 {
@@ -321,6 +339,200 @@ def _set_person_certificate(row: KnowledgeManifestRow, certificate_type: str) ->
     row.image_insertable = True
 
 
+# ── Folder-structure aware classification ──────────────────────────────
+# An organized 证件库 encodes the real signal in its hierarchy, not the
+# filenames (which are often "001.jpg" or "基本信息.txt"):
+#   正奇证件库/4.正奇安许证/旧/正奇安许.pdf          → 公司证件·安全生产许可证
+#   正奇证件库/1.人员证书/1.建造师/一级建造师注册证/1、江舟/江舟身份证.jpg
+#                                                   → 人员证件·身份证·owner=江舟
+# Filename rules stay as the fallback when the hierarchy is flat/uninformative.
+
+_NON_PERSON_FOLDERS = {
+    "解聘", "转出", "离职", "退休", "注销", "作废", "过期",
+    "旧", "新", "其他", "人员信息", "基本信息", "备份",
+}
+
+# Tokens that mean a captured string is a category/label, not a person's name.
+_NAME_NOISE = (
+    "证书", "名单", "名册", "花名", "列表", "汇总", "统计", "合同", "公告",
+    "截图", "下载", "工程", "公路", "养护", "专管", "劳资", "造价", "检测",
+    "试验", "人员", "社保", "身份", "复印", "扫描", "信息", "备案", "附件", "文件",
+)
+
+
+def _is_person_name(name: str) -> bool:
+    """Reject category/label fragments that filename heuristics mistake for names."""
+    if not name or not (2 <= len(name) <= 5):
+        return False
+    if name in _NON_PERSON_FOLDERS:
+        return False
+    return not any(token in name for token in _NAME_NOISE)
+
+_COMPANY_CERT_KEYWORDS = (
+    ("营业执照", "营业执照"),
+    ("安全生产许可证", "安全生产许可证"),
+    ("安许", "安全生产许可证"),
+    ("开户许可证", "开户许可证"),
+    ("开户", "开户许可证"),
+    ("劳务资质", "施工劳务资质证书"),
+    ("资质", "资质证书"),
+    ("三大体系", "体系证书"),
+    ("体系", "体系证书"),
+    ("信用", "信用证书"),
+    ("aaa", "信用证书"),
+    ("专利", "专利证书"),
+    ("工法", "工法证书"),
+    ("表彰", "荣誉证书"),
+    ("荣誉", "荣誉证书"),
+)
+
+
+def _strip_folder_index(name: str) -> str:
+    """Drop a leading '1.' / '2、' / '03-' ordering prefix from a folder name."""
+    return re.sub(r"^\s*\d+\s*[、.．\-_]\s*", "", name).strip()
+
+
+def _company_cert_from_text(text: str) -> str:
+    lowered = text.lower()
+    for keyword, cert_type in _COMPANY_CERT_KEYWORDS:
+        if keyword and keyword.lower() in lowered:
+            return cert_type
+    return ""
+
+
+def _person_name_from_folders(raw_parts: list[str], clean_parts: list[str]) -> str:
+    """Pull a person's name from a '序号、姓名' (or 人员信息/姓名) folder.
+
+    Takes the deepest match so '1.建造师/.../3、罗国华/...' yields 罗国华.
+    """
+    name = ""
+    for index, part in enumerate(raw_parts):
+        # Person folders use the Chinese enumeration comma (序号、姓名 → "1、江舟"),
+        # while category folders use a dot ("1.建造师"). Matching only "、" keeps
+        # category folders from being misread as people.
+        match = re.match(r"^\s*\d+\s*[、，]\s*([一-鿿·]{2,5})\s*$", part)
+        candidate = match.group(1) if match else ""
+        if not candidate and index > 0 and clean_parts[index - 1] == "人员信息":
+            if re.match(r"^[一-鿿·]{2,4}$", clean_parts[index]):
+                candidate = clean_parts[index]
+        if not candidate:
+            trailing = re.search(r"[\-—_]\s*([一-鿿]{2,4})$", clean_parts[index])
+            if trailing:
+                candidate = trailing.group(1)
+        if _is_person_name(candidate):
+            name = candidate
+    return name
+
+
+def _classify_by_structure(
+    row: KnowledgeManifestRow,
+    path: Path,
+    source_dir: Path,
+    stem: str,
+    suffix: str,
+    text: str,
+    raw_text: str,
+) -> bool:
+    """Classify from the folder hierarchy. Returns False (→ filename rules) when
+    the directory layout is flat or gives no confident answer."""
+    raw_parts = list(path.relative_to(source_dir).parts[:-1])
+    if not raw_parts:
+        return False
+    clean_parts = [_strip_folder_index(part) for part in raw_parts]
+    top = clean_parts[0]
+    in_person_tree = any("人员" in part for part in clean_parts)
+
+    # 1) 正奇's own company-cert folders (营业执照/安许/资质/体系/信用/专利/工法/开户…)
+    folder_company_cert = _company_cert_from_text(top)
+    if folder_company_cert and not in_person_tree:
+        _set_company_certificate(row, folder_company_cert)
+        if folder_company_cert == "资质证书":
+            row.project_type = "公路工程"
+            row.specialty = _specialty_from_text(text)
+        row.valid_to = _extract_date(raw_text)
+        row.confidence = 0.9
+        return True
+
+    if in_person_tree:
+        # 2) A company cert misfiled under the person tree (e.g. an exec's 营业执照).
+        filename_company_cert = _company_cert_from_text(_normalize_text(stem))
+        if filename_company_cert:
+            _set_company_certificate(row, filename_company_cert)
+            is_zhengqi = "正奇" in raw_text
+            row.owner_name = "安徽正奇建设有限公司" if is_zhengqi else ""
+            row.valid_to = _extract_date(raw_text)
+            row.confidence = 0.82 if is_zhengqi else 0.45
+            if not is_zhengqi:
+                row.notes = "公司证件但单位名疑非正奇，需人工核对所属单位。"
+            return True
+
+        # 3) Person certificate: type from folder/filename, owner from folder.
+        cert_type = _certificate_type_from_person_text(text)
+        owner = _person_name_from_folders(raw_parts, clean_parts)
+        if not owner:
+            candidate = _person_name_from_text(stem)
+            owner = candidate if _is_person_name(candidate) else ""
+        _set_person_certificate(row, cert_type)
+        row.owner_name = owner
+        row.valid_to = _extract_date(raw_text)
+        row.project_type = "公路工程" if _contains(text, "交安", "公路") else "通用"
+        row.specialty = "道路" if _contains(text, "一建", "建造师", "注册证") else "通用"
+        if owner and cert_type != "人员证件":
+            row.confidence = 0.85
+        elif owner:
+            row.confidence = 0.72
+        else:
+            row.confidence = 0.5
+            row.notes = "未能从文件夹识别人员姓名，需人工补全。"
+        return True
+
+    return False
+
+
+def _file_hash(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha1()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 16), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _mark_duplicates(rows: list[KnowledgeManifestRow]) -> None:
+    """Flag byte-identical files (the same scan copied into many folders).
+
+    Only hashes files that share a byte size, so unique-size files are never
+    read. The first occurrence is kept; later copies get is_duplicate=True and
+    are skipped on import.
+    """
+    by_size: dict[int, list[KnowledgeManifestRow]] = collections.defaultdict(list)
+    for row in rows:
+        try:
+            size = Path(row.original_path).stat().st_size
+        except OSError:
+            continue
+        by_size[size].append(row)
+
+    seen: dict[str, str] = {}
+    for group in by_size.values():
+        if len(group) < 2:
+            continue
+        for row in group:
+            digest = _file_hash(Path(row.original_path))
+            if not digest:
+                continue
+            keeper = seen.get(digest)
+            if keeper:
+                row.is_duplicate = True
+                row.duplicate_of = keeper
+                note = f"与已收录 {keeper} 内容完全相同（重复扫描件）"
+                row.notes = f"{row.notes}；{note}" if row.notes else note
+            else:
+                seen[digest] = row.suggested_filename or Path(row.original_path).name
+
+
 def _suggested_filename(row: KnowledgeManifestRow, suffix: str) -> str:
     parts = [
         row.document_category or "待分类资料",
@@ -386,18 +598,36 @@ def _certificate_type_from_person_text(text: str) -> str:
         return "身份证"
     if _contains(text, "社保"):
         return "社保"
-    if _contains(text, "毕业证"):
+    if _contains(text, "毕业证", "学历", "学位"):
         return "毕业证"
+    if _contains(text, "注册安全工程师", "安全工程师"):
+        return "注册安全工程师证"
+    if _contains(text, "试验检测"):
+        return "试验检测工程师证"
+    if _contains(text, "造价"):
+        return "造价工程师证"
+    if _contains(
+        text, "八大员", "施工员", "质量员", "材料员", "资料员", "安全员", "标准员", "机械员", "劳务员"
+    ):
+        return "八大员证书"
+    if _contains(text, "特种"):
+        return "特种作业证"
+    if _contains(text, "养护工"):
+        return "养护工证书"
+    if _contains(text, "劳资专管员", "劳资员"):
+        return "劳资专管员证"
     if _contains(text, "交安"):
         return "交安证"
     if _contains(text, "建安"):
         return "建安证"
-    if _contains(text, "职称"):
-        return "职称证书"
-    if _contains(text, "一建", "一级建造师", "建造师", "注册证"):
-        return "一级建造师证"
-    if _contains(text, "二建", "二级建造师"):
+    # 二级 must be checked before the generic 建造师/注册证 fallback, otherwise a
+    # "二级建造师注册证" folder would be mislabelled as 一级建造师证.
+    if _contains(text, "二级建造师", "二建"):
         return "二级建造师证"
+    if _contains(text, "一级建造师", "一建", "建造师", "注册证"):
+        return "一级建造师证"
+    if _contains(text, "职称", "工程师"):
+        return "职称证书"
     return "人员证件"
 
 
