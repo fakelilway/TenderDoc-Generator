@@ -379,11 +379,17 @@ _TABLE_FILL_LABELS: tuple[tuple[str, str], ...] = (
     ("银行账号", "bank_account"),
     ("联系人", "contact_person"),
     ("经营范围", "business_scope"),
+    ("成立时间", "establish_date"),
+    ("成立日期", "establish_date"),
 )
-# 这些是"另一个人/日期/分段/无对应档案字段"的标签,绝不当作待填项。
+# 这些是"另一个人/无对应档案字段"的标签,绝不当作待填项。
 _TABLE_FILL_SKIP = (
-    "技术负责人", "项目总工", "技术职称", "成立时间", "员工总人数",
+    "技术负责人", "项目总工", "技术职称", "员工总人数",
     "邮政编码", "电子邮件", "传真",
+)
+# 子标签:行标签与值格之间的小标题(如 法定代表人 | 姓名 | [值]),右扫时跳过去找值格。
+_TABLE_SUBLABELS = frozenset(
+    {"姓名", "职称", "级别", "证号", "证书名称", "专业", "养老保险", "电话"}
 )
 _TABLE_BLANK_RE = re.compile(r"^[\s_＿]*$")
 
@@ -435,6 +441,8 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
                     text = target.text.strip()
                     if text and _table_label_value(text, profile):
                         continue  # 右邻又是个已知标签,跳过它继续找值格
+                    if text in _TABLE_SUBLABELS:
+                        continue  # 子标签(姓名/职称等),跳过去找它后面的值格
                     if _TABLE_BLANK_RE.match(text):
                         _set_cell_value(target, value)
                         filled += 1
