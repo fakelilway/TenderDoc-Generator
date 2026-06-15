@@ -12,7 +12,15 @@ import pytest
 docx = pytest.importorskip("docx")
 from docx import Document  # noqa: E402
 
-from services.docx_health_check import score_docx  # noqa: E402
+from services.docx_health_check import score_delivery, score_docx  # noqa: E402
+
+_PROFILE = {
+    "company_name": "安徽正奇建设有限公司",
+    "legal_representative": "王建国",
+    "credit_code": "91340000MA2ABCDE3K",
+    "safety_license_no": "(皖)JZ安许证字[2021]007",
+    "project_manager_name": "李明",
+}
 
 
 def _add_kv_table(document, rows: list[tuple[str, str]]) -> None:
@@ -133,6 +141,69 @@ def test_genuine_ai_self_reference_still_hard_blocks(tmp_path: Path) -> None:
     result = score_docx(path)
     assert result["hard_block"] is True
     assert result["items"]["residue"]["score"] == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# score_delivery 按卷打分:修正"拿技术卷量商务字段"的分母错位(项目114实测 bug)
+# --------------------------------------------------------------------------- #
+
+
+def test_score_delivery_reads_required_fields_from_commercial(tmp_path: Path) -> None:
+    """必填字段在商务卷;按卷打分应从商务卷读到,而非对技术卷判零(114 实测回归)。"""
+    commercial = tmp_path / "commercial.docx"
+    _build_doc(
+        commercial,
+        headings=2,
+        body_chars=500,
+        table_rows=[
+            ("投标人", _PROFILE["company_name"]),
+            ("法定代表人", _PROFILE["legal_representative"]),
+            ("统一社会信用代码", _PROFILE["credit_code"]),
+            ("安全生产许可证", _PROFILE["safety_license_no"]),
+            ("项目经理", _PROFILE["project_manager_name"]),
+        ],
+    )
+    technical = tmp_path / "technical.docx"
+    _build_doc(
+        technical,
+        headings=10,
+        body_chars=20000,
+        table_rows=[],
+        extra_paras=["本工程施工组织设计正文,每个井段作为一个流水段组织施工。"],
+    )
+
+    delivered = score_delivery(
+        technical_path=technical, commercial_path=commercial, profile=_PROFILE
+    )
+    assert delivered["items"]["required_fields"]["score"] == 1.0  # 商务卷 5/5
+    assert delivered["hard_block"] is False
+    assert delivered["quality_score"] > 90
+
+    # 对照:单卷量技术卷 → 分母错位,required_fields 归零(这正是被修的 bug)。
+    tech_only = score_docx(technical, profile=_PROFILE)
+    assert tech_only["items"]["required_fields"]["score"] == 0.0
+
+
+def test_score_delivery_residue_strict_across_volumes(tmp_path: Path) -> None:
+    """残留两卷取严:商务卷残留 {{}}、技术卷干净 → 仍硬否决。"""
+    commercial = tmp_path / "comm_bad.docx"
+    _build_doc(
+        commercial,
+        headings=2,
+        body_chars=300,
+        table_rows=[("投标人", "某公司")],
+        extra_paras=["未替换标记 {{bidder_name}} 残留。"],
+    )
+    technical = tmp_path / "tech_ok.docx"
+    _build_doc(technical, headings=10, body_chars=18000, table_rows=[])
+    delivered = score_delivery(technical_path=technical, commercial_path=commercial)
+    assert delivered["hard_block"] is True
+    assert delivered["items"]["residue"]["score"] == 0.0
+
+
+def test_score_delivery_requires_a_path() -> None:
+    with pytest.raises(ValueError):
+        score_delivery()
 
 
 # --------------------------------------------------------------------------- #

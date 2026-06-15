@@ -523,6 +523,134 @@ def score_docx(
     }
 
 
+def score_delivery(
+    *,
+    technical_path: str | Path | None = None,
+    commercial_path: str | Path | None = None,
+    requirements: Any | None = None,
+    profile: Any | None = None,
+    baseline_chars: int | None = None,
+) -> dict[str, Any]:
+    """按卷打分整套投标交付件(技术卷 + 商务卷),修正单卷打分的分母错位。
+
+    分卷交付下(见 generation_service._assemble_two_volumes):投标人基本情况表里
+    的必填字段在【商务卷】,施工组织设计正文在【技术卷】,而对外的 bid.docx 是技术卷
+    副本。拿技术卷去量商务字段必然假阴性(required_fields 恒低)。本函数按卷取物料:
+      - required_fields → 商务卷(缺商务卷则退回技术卷)
+      - table_fill      → 两卷表格合并统计
+      - section_coverage / length → 技术卷
+      - residue         → 两卷取严(任一卷硬否决即硬否决)
+      - font_consistency→ 仅技术卷(商务卷为原招标格式照抄,字体非本系统排版,不计)
+    至少需提供 technical_path 或 commercial_path 其一。返回结构同 score_docx。
+    """
+    from docx import Document
+
+    if technical_path is None and commercial_path is None:
+        raise ValueError("score_delivery 需要 technical_path 或 commercial_path 至少其一")
+
+    tech_doc = Document(str(technical_path)) if technical_path else None
+    comm_doc = Document(str(commercial_path)) if commercial_path else None
+    tech_collected = _collect(tech_doc) if tech_doc is not None else None
+    comm_collected = _collect(comm_doc) if comm_doc is not None else None
+    tech_structure = (
+        extract_docx_structure(technical_path) if technical_path else {"sections": []}
+    )
+    comm_structure = (
+        extract_docx_structure(commercial_path) if commercial_path else {"sections": []}
+    )
+
+    notes: list[str] = []
+    items: dict[str, dict[str, Any]] = {}
+
+    # required_fields → 商务卷优先(基本情况表在商务卷)
+    rf_collected = comm_collected or tech_collected
+    rf_vol = "商务卷" if comm_collected is not None else "技术卷(退化)"
+    rf_score, rf_detail, rf_notes = _score_required_fields(rf_collected, profile)
+    notes.extend(rf_notes)
+    items["required_fields"] = {
+        "score": round(rf_score, 4),
+        "weight": _WEIGHTS["required_fields"],
+        "detail": f"[{rf_vol}] {rf_detail}",
+    }
+
+    # table_fill → 两卷表格合并统计
+    merged = {
+        "total_cells": (tech_collected["total_cells"] if tech_collected else 0)
+        + (comm_collected["total_cells"] if comm_collected else 0),
+        "blank_cells": (tech_collected["blank_cells"] if tech_collected else 0)
+        + (comm_collected["blank_cells"] if comm_collected else 0),
+    }
+    tf_score, tf_detail, tf_notes = _score_table_fill(merged)
+    notes.extend(tf_notes)
+    items["table_fill"] = {
+        "score": round(tf_score, 4),
+        "weight": _WEIGHTS["table_fill"],
+        "detail": f"[两卷合并] {tf_detail}",
+    }
+
+    # section_coverage / length → 技术卷(正文所在)
+    sc_score, sc_detail, sc_notes = _score_section_coverage(tech_structure, requirements)
+    notes.extend(sc_notes)
+    items["section_coverage"] = {
+        "score": round(sc_score, 4),
+        "weight": _WEIGHTS["section_coverage"],
+        "detail": f"[技术卷] {sc_detail}",
+    }
+
+    ln_collected = tech_collected or comm_collected
+    ln_score, ln_detail, ln_notes = _score_length(ln_collected, baseline_chars)
+    notes.extend(ln_notes)
+    items["length"] = {
+        "score": round(ln_score, 4),
+        "weight": _WEIGHTS["length"],
+        "detail": f"[技术卷] {ln_detail}",
+    }
+
+    # residue → 两卷取严
+    residue_parts: list[tuple[str, tuple[float, str, bool, list[str]]]] = []
+    if tech_collected is not None:
+        residue_parts.append(("技术卷", _score_residue(tech_collected, tech_structure)))
+    if comm_collected is not None:
+        residue_parts.append(("商务卷", _score_residue(comm_collected, comm_structure)))
+    rs_hard = any(part[1][2] for part in residue_parts)
+    rs_score = min(part[1][0] for part in residue_parts)
+    rs_detail = "；".join(f"[{name}] {part[1]}" for name, part in residue_parts)
+    for _, part in residue_parts:
+        notes.extend(part[3])
+    items["residue"] = {
+        "score": round(rs_score, 4),
+        "weight": _WEIGHTS["residue"],
+        "detail": rs_detail,
+    }
+
+    # font_consistency → 仅技术卷(商务卷照抄原格式,不以本系统字体规范衡量)
+    fc_doc = tech_doc if tech_doc is not None else comm_doc
+    fc_vol = "技术卷" if tech_doc is not None else "商务卷(退化)"
+    fc_score, fc_detail, fc_notes = _score_font_consistency(fc_doc)
+    notes.extend(fc_notes)
+    items["font_consistency"] = {
+        "score": round(fc_score, 4),
+        "weight": _WEIGHTS["font_consistency"],
+        "detail": f"[{fc_vol}] {fc_detail}",
+    }
+
+    weighted = sum(it["score"] * it["weight"] for it in items.values())
+    quality_score = round(weighted, 2)
+
+    hard_block = bool(rs_hard)
+    if hard_block:
+        if quality_score > _HARD_BLOCK_CAP:
+            quality_score = _HARD_BLOCK_CAP
+        notes.append(f"硬否决触发:{rs_detail}(quality_score 封顶 {_HARD_BLOCK_CAP})")
+
+    return {
+        "quality_score": quality_score,
+        "items": items,
+        "hard_block": hard_block,
+        "notes": notes,
+    }
+
+
 def _main(argv: list[str]) -> int:
     if not argv:
         print("用法: python -m services.docx_health_check <docx路径>", file=sys.stderr)
