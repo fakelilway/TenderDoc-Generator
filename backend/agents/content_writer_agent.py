@@ -15,7 +15,7 @@ from typing import Any
 from openai import OpenAI
 
 from core.config import get_settings
-from core.llm_client import resolve_llm_config
+from core.llm_client import chat_completion, resolve_llm_config
 from prompts.generator_prompt import build_node_fill_prompt
 
 logger = logging.getLogger(__name__)
@@ -213,7 +213,8 @@ def _generate_messages_with_llm(
     settings = get_settings()
     api_key, base_url, model = _get_llm_client_config()
     client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
+    response = chat_completion(
+        client,
         model=model,
         messages=messages,
         temperature=0.2,

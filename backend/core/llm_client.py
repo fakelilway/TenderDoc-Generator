@@ -18,9 +18,91 @@ consolidated here.
 
 from __future__ import annotations
 
+import time
+from typing import Any, Callable
+
+import openai
 from openai import OpenAI
 
 from core.config import get_settings
+
+
+# Transient failures worth retrying: the request may succeed if simply re-sent.
+# - APITimeoutError / APIConnectionError: network blip or slow upstream.
+# - RateLimitError: provider asked us to back off (429); a short wait clears it.
+# - InternalServerError: provider-side 5xx.
+# Generic ``APIStatusError`` is handled separately below so we can retry *any*
+# 5xx (e.g. 502/503/504 from a proxy) while still letting 4xx fall through.
+_RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    openai.APITimeoutError,
+    openai.RateLimitError,
+    openai.APIConnectionError,
+    openai.InternalServerError,
+)
+
+
+def _is_transient(error: Exception) -> bool:
+    """Return True only for errors a retry could plausibly fix.
+
+    4xx errors (``BadRequestError``, ``AuthenticationError``,
+    ``PermissionDeniedError``, ``NotFoundError``, ...) are deterministic client
+    mistakes: re-sending the identical request will fail identically, so they
+    are *not* transient and must propagate immediately. We treat a generic
+    ``APIStatusError`` as transient only when its ``status_code`` is >= 500.
+    """
+    if isinstance(error, _RETRYABLE_EXCEPTIONS):
+        return True
+    if isinstance(error, openai.APIStatusError):
+        status_code = getattr(error, "status_code", None)
+        return status_code is not None and status_code >= 500
+    return False
+
+
+def chat_completion(
+    client: OpenAI,
+    *,
+    max_attempts: int = 3,
+    base_delay: float = 1.0,
+    sleep: Callable[[float], Any] = time.sleep,
+    **kwargs: Any,
+) -> Any:
+    """Call ``client.chat.completions.create`` with transient-error retries.
+
+    Wraps a single chat-completion request in a retry loop that uses
+    exponential backoff. Only *transient* failures are retried (see
+    :func:`_is_transient`): timeouts, rate limits, connection drops and 5xx
+    responses, because those can clear on a re-send. Deterministic 4xx errors
+    (bad request, auth, permission, not-found) are re-raised on the first
+    occurrence — retrying them would only waste time and quota and never
+    succeed.
+
+    Backoff: after the n-th failed attempt (1-indexed) we ``sleep(base_delay *
+    2 ** (n - 1))`` before the next attempt — i.e. 1s, 2s, 4s, ... for the
+    default ``base_delay=1.0``. Once ``max_attempts`` is exhausted the last
+    transient exception is re-raised *unwrapped* so callers see the original
+    OpenAI error type (some agents branch on it / log it verbatim).
+
+    ``sleep`` is injectable purely so tests can pass ``lambda *_: None`` and
+    avoid real wall-clock delays; production code uses the default
+    ``time.sleep``. All other keyword arguments (``model``, ``messages``,
+    ``temperature``, ``max_tokens``, ``response_format``, ``timeout``, ...) are
+    forwarded verbatim to ``create``.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as error:  # noqa: BLE001 - re-raised below
+            if not _is_transient(error):
+                raise
+            last_error = error
+            if attempt >= max_attempts:
+                raise
+            sleep(base_delay * 2 ** (attempt - 1))
+    # Defensive: the loop always returns or raises above. Re-raise to satisfy
+    # type-checkers and guard against an unexpected fall-through.
+    assert last_error is not None  # pragma: no cover
+    raise last_error  # pragma: no cover
 
 
 def has_real_key(value: str) -> bool:

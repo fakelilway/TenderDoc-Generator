@@ -8,6 +8,7 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from core.config import get_settings
+from core.llm_client import chat_completion
 from core.llm_client import has_real_key as _has_real_key
 from core.llm_client import resolve_llm_config
 from prompts.parser_prompt import build_parser_json_repair_prompt, build_parser_prompt
@@ -935,7 +936,8 @@ def _chat_json(
     timeout_seconds: float,
     max_tokens: int,
 ) -> str:
-    response = client.chat.completions.create(
+    response = chat_completion(
+        client,
         model=model,
         messages=messages,
         temperature=0,
