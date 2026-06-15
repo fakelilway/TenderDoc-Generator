@@ -60,9 +60,9 @@ const fieldGroups: Array<{
     ]
   },
   {
-    title: "拟派项目班子",
+    title: "潜在项目班子",
     fields: [
-      { key: "project_manager_name", label: "拟派项目经理" },
+      { key: "project_manager_name", label: "潜在项目经理人选" },
       { key: "project_manager_cert", label: "项目经理建造师证号" }
     ]
   }

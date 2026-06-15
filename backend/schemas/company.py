@@ -42,7 +42,7 @@ COMPANY_PROFILE_FIELD_LABELS: dict[str, str] = {
     "contact_phone": "联系电话",
     "bank_name": "开户银行",
     "bank_account": "银行账号",
-    "project_manager_name": "拟派项目经理",
+    "project_manager_name": "潜在项目经理人选",
     "project_manager_cert": "项目经理建造师证号",
 }
 
