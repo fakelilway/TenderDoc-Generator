@@ -179,14 +179,38 @@ def index_uploaded_knowledge(
     }
 
 
-def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
+def list_knowledge_documents(
+    limit: int = 50,
+    category: str | None = None,
+    search: str | None = None,
+) -> list[dict[str, object]]:
+    """List knowledge-base documents, optionally filtered by category/search.
+
+    Filtering is essential now the KB holds thousands of docs: an unfiltered
+    "most-recent N" can't surface 公司证件/人员证件 once 业绩 was imported last.
+    """
     if limit <= 0:
         raise ValueError("limit must be positive")
+
+    filters = ["documents.project_id IS NULL"]
+    params: list[object] = []
+    if category:
+        filters.append("documents.metadata_json->>'document_category' = %s")
+        params.append(category)
+    if search:
+        filters.append(
+            "(documents.file_name ILIKE %s"
+            " OR documents.metadata_json->>'owner_name' ILIKE %s"
+            " OR documents.metadata_json->>'certificate_type' ILIKE %s)"
+        )
+        like = f"%{search}%"
+        params.extend([like, like, like])
+    where_clause = " AND ".join(filters)
 
     with _connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     documents.id AS document_id,
                     documents.file_name,
@@ -198,7 +222,7 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
                 FROM documents
                 LEFT JOIN knowledge_chunks
                     ON knowledge_chunks.document_id = documents.id
-                WHERE documents.project_id IS NULL
+                WHERE {where_clause}
                 GROUP BY
                     documents.id,
                     documents.file_name,
@@ -209,7 +233,7 @@ def list_knowledge_documents(limit: int = 50) -> list[dict[str, object]]:
                 ORDER BY documents.created_at DESC, documents.id DESC
                 LIMIT %s
                 """,
-                (limit,),
+                [*params, limit],
             )
             rows = cursor.fetchall()
 

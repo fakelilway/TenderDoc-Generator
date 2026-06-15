@@ -52,11 +52,11 @@ function formatDate(value: string) {
 }
 
 const projectTypeOptions = ["公路工程", "市政道路", "桥梁涵洞", "交通安全设施", "养护维修", "改建扩建", "排水管网"];
-const documentCategoryOptions = ["企业证件", "人员证件", "业绩证明", "历史投标文件", "施工方案", "报价清单", "规范标准", "图片附件"];
+const documentCategoryOptions = ["公司证件", "人员证件", "业绩", "标书", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
 const volumeOptions = ["商务文件", "资格文件", "技术文件", "报价文件", "附图附表"];
 const specialtyOptions = ["路基", "路面", "桥涵", "交安", "排水", "照明", "绿化", "质量", "安全", "进度", "环保"];
 const ownerTypeOptions = ["公司", "人员", "项目"];
-const certificateTypeOptions = ["营业执照", "资质证书", "安全生产许可证", "一级建造师证", "二级建造师证", "身份证", "建安证", "交安证", "职称证", "社保", "业绩"];
+const certificateTypeOptions = ["营业执照", "资质证书", "安全生产许可证", "开户许可证", "体系证书", "信用证书", "专利证书", "工法证书", "荣誉证书", "施工劳务资质证书", "一级建造师证", "二级建造师证", "注册安全工程师证", "造价工程师证", "八大员证书", "特种作业证", "养护工证书", "职称证书", "建安证", "交安证", "毕业证", "身份证", "社保"];
 const sensitivityOptions = ["普通", "内部", "敏感", "高敏感"];
 const usageScopeOptions = ["可用于RAG正文", "仅作证明附件", "可插图", "禁止进入大模型"];
 const verifiedStatusOptions = ["未核验", "已核验", "已过期", "需更新"];
@@ -257,6 +257,10 @@ export function KnowledgePanel() {
   const [editingMeta, setEditingMeta] = useState<KnowledgeMetaDraft>(emptyMetaDraft);
   const [preview, setPreview] = useState<KnowledgeDocumentPreview | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<number | null>(null);
+  // 文档列表筛选(知识库已上千份,必须能按类别筛 + 搜索)
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [docSearch, setDocSearch] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
 
@@ -266,14 +270,17 @@ export function KnowledgePanel() {
     }
     setLoadingDocuments(true);
     try {
-      const response = await listKnowledgeDocuments();
+      const response = await listKnowledgeDocuments({
+        category: categoryFilter || undefined,
+        search: submittedSearch || undefined
+      });
       setDocuments(response.documents);
     } catch (listError) {
       setError(listError instanceof Error ? listError.message : "知识库加载失败");
     } finally {
       setLoadingDocuments(false);
     }
-  }, [canView]);
+  }, [canView, categoryFilter, submittedSearch]);
 
   useEffect(() => {
     void refreshDocuments();
@@ -684,18 +691,55 @@ export function KnowledgePanel() {
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-muted">入库文档</p>
+            <p className="text-xs font-semibold text-muted">
+              入库文档 · {documents.length}
+              {documents.length >= 200 ? "+" : ""}
+            </p>
             {loadingDocuments ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted" />
             ) : null}
           </div>
-          <div className="max-h-48 space-y-2 overflow-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+              className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink"
+            >
+              <option value="">全部类别</option>
+              {documentCategoryOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <form
+              className="flex min-w-0 flex-1 items-center gap-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setSubmittedSearch(docSearch.trim());
+              }}
+            >
+              <input
+                value={docSearch}
+                onChange={(event) => setDocSearch(event.target.value)}
+                placeholder="搜文件名 / 人名 / 证件类型"
+                className="h-8 min-w-0 flex-1 rounded-md border border-line bg-field px-2 text-xs text-ink"
+              />
+              <button
+                type="submit"
+                className="h-8 shrink-0 rounded-md border border-line bg-white px-2 text-xs text-muted hover:text-ink"
+              >
+                搜索
+              </button>
+            </form>
+          </div>
+          <div className="max-h-72 space-y-2 overflow-auto">
             {documents.length === 0 ? (
               <div className="rounded-md border border-dashed border-line bg-field px-3 py-4 text-center text-xs text-muted">
                 暂无知识库文档
               </div>
             ) : (
-              documents.slice(0, 8).map((document) => (
+              documents.map((document) => (
                 <div
                   key={document.document_id}
                   className="rounded-md border border-line bg-white px-3 py-2"

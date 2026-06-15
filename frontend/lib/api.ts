@@ -498,9 +498,19 @@ export function deleteKnowledgeDocument(documentId: number) {
   );
 }
 
-export function listKnowledgeDocuments(limit = 50) {
+export function listKnowledgeDocuments(
+  opts: { limit?: number; category?: string; search?: string } = {}
+) {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit ?? 200));
+  if (opts.category) {
+    params.set("category", opts.category);
+  }
+  if (opts.search) {
+    params.set("search", opts.search);
+  }
   return requestJson<KnowledgeDocumentListResponse>(
-    `/api/knowledge/documents?limit=${limit}`
+    `/api/knowledge/documents?${params.toString()}`
   );
 }
 

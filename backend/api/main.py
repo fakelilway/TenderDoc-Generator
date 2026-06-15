@@ -334,11 +334,15 @@ async def upload_knowledge(
 
 @app.get("/api/knowledge/documents", response_model=KnowledgeDocumentListResponse)
 def list_knowledge_documents(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(200, ge=1, le=1000),
+    category: str | None = Query(None),
+    search: str | None = Query(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
 ) -> KnowledgeDocumentListResponse:
     try:
-        documents = knowledge_service.list_knowledge_documents(limit=limit)
+        documents = knowledge_service.list_knowledge_documents(
+            limit=limit, category=category, search=search
+        )
     except Exception as error:
         _raise_http_error(error)
 
