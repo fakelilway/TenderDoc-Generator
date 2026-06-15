@@ -356,3 +356,17 @@ def test_markdown_to_docx_can_apply_zhengqi_bid_style_profile(
 
     table_run = document.tables[0].cell(1, 1).paragraphs[0].runs[0]
     assert table_run.font.size.pt == 14
+
+
+def test_knowledge_image_marker_degrades_softly_on_bad_image(tmp_path: Path) -> None:
+    """一张认不出格式的扫描件不能把整卷渲染搞崩 —— 降级成文字提示。"""
+    md = (
+        "## 资格证明材料\n\n"
+        '{{knowledge_image:document_id=1 caption="营业执照" width_cm=14}}\n'
+    )
+    out = tmp_path / "bad_image.docx"
+    # resolver 返回非法图片字节(模拟 CMYK/损坏扫描件)
+    markdown_to_docx(md, str(out), image_resolver=lambda _id: b"not-a-real-image")
+
+    doc = Document(str(out))
+    assert any("未能插入" in p.text and "营业执照" in p.text for p in doc.paragraphs)

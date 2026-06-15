@@ -732,7 +732,68 @@ def _enrich_commercial_markdown(
             "安全生产许可证有效且覆盖本项目施工活动。\n"
         )
 
+    # 资格证明材料:从知识库自动插入营业执照/资质/安许/业绩等图片(B)
+    evidence_md = _qualification_evidence_markdown()
+    if evidence_md:
+        parts.append(evidence_md)
+
     return "\n".join(parts)
+
+
+def _qualification_evidence_markdown(limit: int = 6) -> str:
+    """生成资格证明材料的图片标记。
+
+    从知识库挑出营业执照/资质/安许/业绩等可插入图片,产出 {{knowledge_image:...}}
+    标记;渲染时 image_resolver 从 MinIO 取图插入。无匹配则返回空,不留死占位。
+    """
+    try:
+        from services.knowledge_service import list_knowledge_image_references
+    except Exception:
+        return ""
+
+    # 按"公司证件 + 确切证件类型"精确选图(不靠模糊评分),否则会把人员建安证
+    # 误当成公司安全生产许可证、把资质证误当成营业执照。
+    try:
+        refs = list_knowledge_image_references("", limit=5000)
+    except Exception:
+        return ""
+    by_type: dict[str, dict] = {}
+    for ref in refs:
+        if str(ref.get("document_category")) != "公司证件":
+            continue
+        cert_type = str(ref.get("certificate_type") or "")
+        by_type.setdefault(cert_type, ref)  # refs 已按 created_at DESC,取最新一张
+
+    wanted = (
+        ("营业执照", "营业执照（副本）"),
+        ("资质证书", "企业资质证书"),
+        ("安全生产许可证", "安全生产许可证"),
+        ("开户许可证", "开户许可证"),
+    )
+    blocks: list[str] = []
+    seen: set[int] = set()
+    for cert_type, caption in wanted:
+        ref = by_type.get(cert_type)
+        if not ref:
+            continue
+        doc_id = int(ref.get("document_id", 0) or 0)
+        if doc_id <= 0 or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        blocks.append(f"\n### {caption}\n")
+        blocks.append(
+            f'\n{{{{knowledge_image:document_id={doc_id} '
+            f'caption="{caption}" width_cm=14}}}}\n'
+        )
+        if len(seen) >= limit:
+            break
+    if not blocks:
+        return ""
+    return (
+        "\n<!-- tdg:pagebreak -->\n"
+        "\n## 附录：资格证明材料（系统按知识库自动插入图片，请人工核验）\n"
+        + "".join(blocks)
+    )
 
 
 def _match_profile_field(title: str, profile: dict[str, str]) -> str:

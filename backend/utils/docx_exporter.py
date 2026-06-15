@@ -480,7 +480,13 @@ def _add_knowledge_image(
     # 盖住前文；图片段落必须用单倍行距，并把高度限制在版心内。
     paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
     run = paragraph.add_run()
-    picture = run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+    try:
+        picture = run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+    except Exception:
+        # 个别扫描件(CMYK/异常 JPEG 等)python-docx 认不出 → 降级为文字提示,
+        # 绝不让一张坏图把整卷渲染搞崩。
+        run.add_text(f"（图片资料未能插入，请人工补充：{caption}）")
+        return
     max_height = Cm(20)
     if picture.height > max_height:
         scale = max_height / picture.height

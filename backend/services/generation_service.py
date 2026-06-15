@@ -293,7 +293,8 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
          s.header_distance, s.footer_distance) = g
 
     doc.add_page_break()
-    _render_markdown_body(doc, prose_markdown, "zhengqi")
+    # 传 image_resolver,让附录里的 {{knowledge_image:...}} 标记从 MinIO 取图插入(B)
+    _render_markdown_body(doc, prose_markdown, "zhengqi", _resolve_knowledge_image)
     doc.save(str(docx_path))
 
 

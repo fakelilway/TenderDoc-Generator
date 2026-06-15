@@ -285,13 +285,19 @@ def list_knowledge_image_references(
         raise ValueError("limit must be positive")
     with _connect() as conn:
         with conn.cursor() as cursor:
+            # Filter to insertable image docs IN SQL across the whole KB. The old
+            # "LIMIT 200 most-recent then filter in Python" silently hid older
+            # image evidence once the KB grew (e.g. 公司证件 imported before
+            # thousands of 人员证件/业绩 docs fell outside the 200-row window).
             cursor.execute(
                 """
                 SELECT id, file_name, file_path, file_type, metadata_json
                 FROM documents
                 WHERE project_id IS NULL
+                  AND lower(file_type) IN ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp')
+                  AND coalesce(metadata_json->>'image_insertable', '') <> 'false'
                 ORDER BY created_at DESC, id DESC
-                LIMIT 200
+                LIMIT 5000
                 """
             )
             rows = cursor.fetchall()
