@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-日期：2026-06-15
+日期：2026-06-16
 当前生成内核：V2 原格式复制（两卷交付）
 当前目标：知识库真实资料入库、新点软件交付实测、公司内网落地。格式保真和技术正文深度大纲已落地。
 
@@ -29,18 +29,30 @@
 - `backend/prompts/generator_prompt.py` / `backend/agents/content_writer_agent.py`：逐节写作（评分/废标/必覆盖要点/字数预算注入 + 不达标重写）。
 - `backend/services/v2_audit_service.py`：格式、内容、证据审查。
 - `backend/agents/parser_agent.py`：解析 + `format_outline_tree`。
+- `backend/core/llm_client.py`：统一 provider 解析（`resolve_llm_config`，`error_cls` 可注入）+ `has_real_key` + `chat_completion`（LLM 调用瞬态错误重试 + 指数退避，stdlib 实现）。parser/content_writer 复用，reviewer 保留自有策略。
+- `backend/services/docx_health_check.py`：对落盘 `.docx` 做确定性体检，0-100 质量分（6 项加权：必填字段/表格填充/章节齐全/残留物/字体一致/篇幅响应）。`score_docx`（单卷）+ `score_delivery`（按卷拆分母：必填/表格量商务卷、章节/篇幅量技术卷、残留两卷取严、字体仅技术卷）。
+- `backend/services/delivery_quality.py`：`score_delivery_files` / `score_project_delivery`；出标后挂非阻断钩子，自动按卷打分并落 `backend/eval_results/project_{id}.json`（已 gitignore），打分失败绝不影响出标。
+- `backend/api/main.py`：已瘦身为 ~75 行装配层（app 构造 + lifespan + `/health` + `include_router`）；按域拆出 `backend/api/routers/{auth,admin,company,knowledge,project,templates}.py`（各 APIRouter），共享依赖 `authorized_project`/`_raise_http_error` 在 `backend/api/deps.py`，main.py re-export 这些名字保向后兼容。
+- `backend/services/project_service.py`：已瘦身为 ~122 行**门面**，真实逻辑拆进 `backend/services/project/` 子包（`errors/crud/parsing/outline/strategy/delivery/_helpers/_runtime` 共 8 模块），门面 re-export 全部公共名与异常类。
 - `frontend/components/TenderWorkspace.tsx`：工作台主组件（三栏 Tab、**两卷下载、无报价**）。
 - `backend/scripts/benchmark_vs_baseline.py` / `visual_regression.py`：质量/视觉度量。
 
-## 最近修复点（本轮）
+## 最近修复点（本轮 2026-06-16）
 
-- 交付从三卷重构为**两卷**（商务+技术，报价外部）；删除旧三卷拆分整链。
-- PDF 商务格式：VML 文本层 → pdf2docx → 最终**整页截图 + 值烧录进图**（解决多软件渲染丢图/错位）。
-- 修复三连"商务卷空白"bug：拆卷前误删卷标记（商务内容串进技术卷）→ deepcopy 丢图片关系 → `_configure_styles` 固定行距把整页图裁成空白。
-- DOCX 格式定位误命中目录（招标#4）→ 跳 TOC 取末次匹配。
-- DOCX 格式复制改 copy-then-prune，保留页眉页脚/图片。
-- 技术正文：薄大纲扩展为 25 节标准施工组织设计深度大纲（多智能体设计+对抗式审查，对标 4 份真实中标标书）。
-- 前端：去掉报价卷下载和报价策略面板。
+本轮是结构重构 + 质量度量基建，不动生成语义：
+
+- **抽 `backend/core/llm_client.py`**：收敛 3 个 agent 重复的 provider 解析逻辑（`resolve_llm_config` + `has_real_key`），parser/content_writer 复用，reviewer 保留自有策略。
+- **拆 `backend/api/main.py`**：1004 → ~75 行，按域拆为 6 个 router（`auth/admin/company/knowledge/project/templates`）+ 共享依赖 `backend/api/deps.py`，main.py re-export 保向后兼容。
+- **拆 `backend/services/project_service.py`**：1396 → ~122 行门面，真实逻辑进 `backend/services/project/` 子包（8 模块），门面 re-export 全部公共名与异常类。
+- **LLM 调用补瞬态重试 + 指数退避**（`llm_client.chat_completion`，stdlib 零新依赖）。
+- **新增 `backend/services/docx_health_check.py`**：0-100 按卷质量分（`score_docx` 单卷 + `score_delivery` 按卷拆分母，修了原先「单一分母」错位）；并修体检器「作为一个」类残留物正则的假阳性。
+- 修 `v2_generation_service` 商务卷 profile 键名 bug。
+- **新增 `backend/services/delivery_quality.py`**：出标后非阻断自动按卷打分，落 `backend/eval_results/project_{id}.json`（已 gitignore），打分失败不影响出标。
+- **新增 CI**（`.github/workflows/ci.yml`）：后端 pytest（`-m "not live_llm"`）+ 前端 typecheck/lint/test/build；并修 `backend/requirements.txt` 钉版对齐让 CI 转绿。已实跑通过。
+- **前端引入 vitest**（`frontend/package.json` `"test": "vitest run"`），已覆盖 `lib/api.ts`。
+- 后端测试 287 → 311 passed（`-m "not live_llm"`）。
+
+历史背景：上一轮把交付从三卷重构为两卷（商务+技术，报价由外部造价软件做），并把 PDF 商务格式定为整页截图 + 值烧录进图、DOCX 改 copy-then-prune、技术正文扩展为 25 节标准施工组织设计深度大纲——这些仍是现状基线。
 
 ## 下个接手者优先看
 
@@ -51,8 +63,10 @@
 
 ## 验证命令
 
-- 后端测试：`PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q`
+- 后端测试：`PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q -m "not live_llm"`（基线 311 passed）
 - 前端类型：`cd frontend && npx tsc --noEmit`
+- 前端单测（vitest）：`pnpm --dir frontend test`
 - 质量对标：`backend/scripts/benchmark_vs_baseline.py compare --generated <稿> --baseline <中标标书>`
 - 视觉回归：`backend/scripts/visual_regression.py <导出DOCX>`
+- CI（`.github/workflows/ci.yml`）会自动跑后端 pytest（`-m "not live_llm"`）+ 前端 typecheck/lint/test/build。
 - 后端 `--reload` 热重载：纯 `.py` 改动不用重启；装新依赖或改 `.env` 才需重启。

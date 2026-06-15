@@ -46,6 +46,7 @@ flowchart LR
 | M11 | ✅ | 真实中标标书基线 | `benchmark_vs_baseline.py` + `docs/quality_scorecard.md`，4 份脱敏中标标书 + 4 份招标文件 |
 | M15 | ✅ | 视觉回归 | `backend/scripts/visual_regression.py`（soffice 渲染断言）+ `docs/visual_review_checklist.md` |
 | - | ✅ | 两卷重构 | 删除旧三卷拆分整链；`_assemble_two_volumes` 为唯一原格式导出路径 |
+| - | ✅ | 结构重构 + 工程化 | `api/main.py` 拆 router（1004→~75 行）、`project_service` 拆 `services/project/` 包（1396→~122 行门面）、抽 `core/llm_client`（统一 provider + LLM 重试退避）；新增 CI（`.github/workflows/ci.yml`,后端 pytest + 前端 typecheck/lint/test/build,已实跑通过)、前端 vitest 地基（覆盖 `lib/api.ts`）；后端测试 287→311 passed |
 
 ## 当前进行中
 
@@ -71,8 +72,8 @@ flowchart LR
 | M14 | P1 | 真实格式回归集 | 把 4 份招标文件的格式生成接入自动回归（现为手测） |
 | M17 | P1 | 内网部署包 | Docker Compose 单机版、Nginx、HTTPS、环境变量模板 |
 | M18 | P1 | 备份恢复和审计 | PostgreSQL/MinIO 备份、恢复演练、上传下载删除审计日志 |
-| M19 | P1 | 长任务队列 | 解析/生成/导出从 BackgroundTasks 迁移到可重试队列（生成现需 25 节 LLM、耗时长） |
-| - | P2 | benchmark 按卷拆分响应率 | 技术评分项 vs 技术正文、商务/报价废标 vs 商务卷+reviewer，分母分开 |
+| M19 | P1 | 长任务队列 | 解析/生成/导出从守护线程（threading.Thread daemon）迁移到可重试队列（生成现需 25 节 LLM、耗时长） |
+| - | P2 | benchmark 按卷拆分响应率 | 技术评分项 vs 技术正文、商务/报价废标 vs 商务卷+reviewer，分母分开。**按卷打分已实现于 `docx_health_check.score_delivery`；benchmark 响应率拆分仍可补。** |
 | - | P2 | PDF 健壮性 | 页旋转检测、超大/超小页缩放、密集表格文本 |
 | M21 | P2 | 风格案例质量化 | 公司风格案例只影响技术正文深度和语气，不影响格式结构 |
 
@@ -100,6 +101,8 @@ flowchart LR
 - `backend/scripts/visual_regression.py`：soffice 渲染断言（页数/连续空白页/关键 token）。
 - `docs/quality_scorecard.md`：满意阈值定义。
 - `docs/visual_review_checklist.md`：人工终审目视清单。
+- `backend/services/docx_health_check.py`：对落盘 `.docx` 的确定性体检，0-100 按卷质量分（`score_docx` 单卷 / `score_delivery` 按卷拆分母）。
+- `backend/services/delivery_quality.py`：出标后自动按卷打分，结果落 `backend/eval_results/`（非阻断钩子，打分失败不影响出标）。
 
 ## 用户使用过程
 

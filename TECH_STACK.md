@@ -8,6 +8,7 @@
 - Tailwind CSS
 - pnpm
 - 原生 `fetch` 封装：`frontend/lib/api.ts`
+- vitest 测试（已覆盖 `lib/api.ts`）
 
 ## Backend
 
@@ -17,7 +18,10 @@
 - Pydantic v2
 - psycopg2 显式 SQL 和连接池
 - JWT 登录态
-- FastAPI BackgroundTasks 执行本地长任务
+- threading.Thread(daemon) 执行本地长生成任务
+- `backend/core/llm_client.py`：统一 LLM 客户端（provider 解析 + has_real_key + chat_completion，对 LLM 调用做瞬态错误重试 + 指数退避，stdlib 实现）
+- 标书质量自动按卷打分：`docx_health_check.py`（0-100 质量分）+ `delivery_quality.py`（出标自动按卷打分 → eval_results）
+- GitHub Actions CI：后端 `pytest -m "not live_llm"` + 前端 typecheck/lint/test/build
 
 ## Storage
 
@@ -76,7 +80,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-pro
 PARSER_LLM_TIMEOUT_SECONDS=180
 BID_LONG_CONTEXT_TIMEOUT_SECONDS=300
-BID_LONG_CONTEXT_MAX_TOKENS=100000
+BID_LONG_CONTEXT_MAX_TOKENS=12000
 ```
 
 Storage：
@@ -92,8 +96,9 @@ MINIO_BUCKET=tender-files
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest backend/tests -q
+.venv/bin/python -m pytest backend/tests -q -m "not live_llm"
 pnpm --dir frontend typecheck
+pnpm --dir frontend test
 pnpm --dir frontend build
 git diff --check
 ```
