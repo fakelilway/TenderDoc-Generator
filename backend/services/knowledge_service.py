@@ -117,16 +117,22 @@ def index_uploaded_knowledge(
     )
     text = ""
     extraction_message = ""
-    if mode == "rag_text":
+    # Image evidence (公司/人员证件 等) is OCR'd even in evidence/structured modes
+    # so the cert text (信用代码/资质等级/有效期/法定代表人 等) becomes searchable,
+    # while the file stays image-insertable as a 证件扫描件.
+    is_image = Path(safe_name).suffix.lower() in IMAGE_EXTENSIONS
+    if mode == "rag_text" or is_image:
         try:
             text = extract_text(
                 file_bytes, filename=safe_name, content_type=content_type
             )
         except ValueError as error:
-            mode = "evidence_only"
+            if mode == "rag_text":
+                mode = "evidence_only"
             extraction_message = str(error)
-    raw_chunks = split_text(text)
-    indexing_status = "indexed" if raw_chunks else "evidence_only"
+    ocr_chunks = split_text(text)
+    has_ocr = bool(ocr_chunks)
+    indexing_status = "indexed" if ocr_chunks else "evidence_only"
     if mode == "structured_evidence":
         indexing_status = "structured_evidence"
     metadata = {
@@ -135,9 +141,14 @@ def index_uploaded_knowledge(
         "indexing_status": indexing_status,
         "extraction_message": extraction_message,
     }
-    if not raw_chunks and indexing_status in {"structured_evidence", "evidence_only"}:
+    # Always keep the structured tag-summary chunk for filtering/search; for image
+    # evidence we additionally index the OCR text so cert content is searchable.
+    raw_chunks = list(ocr_chunks)
+    if is_image or indexing_status in {"structured_evidence", "evidence_only"}:
         summary_text = _evidence_summary_text(safe_name, metadata)
-        raw_chunks = [summary_text] if summary_text else []
+        if summary_text:
+            raw_chunks = [summary_text, *ocr_chunks]
+    metadata = {**metadata, "ocr_extracted": has_ocr}
 
     chunks = [
         KnowledgeChunk(

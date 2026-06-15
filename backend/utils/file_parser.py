@@ -78,29 +78,78 @@ def extract_text_from_txt(file_path: str | Path | bytes | bytearray | BinaryIO) 
     return bytes(data).decode("utf-8")
 
 
+_RAPIDOCR_ENGINE = None
+_RAPIDOCR_FAILED = False
+
+
+def _get_rapidocr():
+    """Cached RapidOCR engine (model load is ~1-2s; reuse across images)."""
+    global _RAPIDOCR_ENGINE, _RAPIDOCR_FAILED
+    if _RAPIDOCR_ENGINE is not None or _RAPIDOCR_FAILED:
+        return _RAPIDOCR_ENGINE
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _RAPIDOCR_ENGINE = RapidOCR()
+    except Exception:
+        _RAPIDOCR_FAILED = True
+    return _RAPIDOCR_ENGINE
+
+
+def _image_bytes(
+    file_path: str | Path | bytes | bytearray | BinaryIO,
+) -> bytes:
+    if isinstance(file_path, (bytes, bytearray)):
+        return bytes(file_path)
+    if isinstance(file_path, (str, Path)):
+        return Path(file_path).read_bytes()
+    return file_path.read()
+
+
 def extract_text_from_image(
     file_path: str | Path | bytes | bytearray | BinaryIO,
 ) -> str:
-    """Extract text from an image when optional OCR tooling is available."""
+    """OCR a scanned image (公司/人员证件等) into searchable text.
+
+    Primary engine is RapidOCR (onnxruntime, no system binary, good Chinese on
+    photos); falls back to Tesseract (pytesseract + tesseract binary) if RapidOCR
+    is unavailable. Raises only when no OCR engine is usable.
+    """
+    data = _image_bytes(file_path)
+
+    # Primary: RapidOCR
+    engine = _get_rapidocr()
+    if engine is not None:
+        try:
+            import io
+
+            import numpy as np
+            from PIL import Image
+
+            arr = np.array(Image.open(io.BytesIO(data)).convert("RGB"))
+            result, _ = engine(arr)
+            text = "\n".join(line[1] for line in (result or [])).strip()
+            if text:
+                return text
+        except Exception:
+            pass  # fall through to Tesseract
+
+    # Fallback: Tesseract
     try:
+        import io
+
         import pytesseract
         from PIL import Image
+
+        return pytesseract.image_to_string(
+            Image.open(io.BytesIO(data)), lang="chi_sim+eng"
+        ).strip()
     except Exception as error:
         raise ValueError(
             "Image OCR is not configured. Store this file as evidence-only or "
-            "install OCR tooling before indexing image text."
+            "install OCR tooling (rapidocr-onnxruntime 或 tesseract) before "
+            "indexing image text."
         ) from error
-
-    image_input = (
-        _as_bytes_io(file_path)
-        if not isinstance(file_path, (str, Path))
-        else str(file_path)
-    )
-    try:
-        image = Image.open(image_input)
-        return pytesseract.image_to_string(image, lang="chi_sim+eng").strip()
-    except Exception as error:
-        raise ValueError(f"Image OCR failed: {error}") from error
 
 
 def extract_text_from_legacy_doc(

@@ -18,18 +18,20 @@ class FakeMinio:
         return f"https://minio.local/{object_name}?expiry={expiry}{suffix}"
 
 
-def test_image_upload_defaults_to_structured_evidence_without_ocr(monkeypatch) -> None:
+def test_image_upload_ocrs_and_keeps_structured_evidence(monkeypatch) -> None:
     stored = {}
+    ocr_calls = []
     monkeypatch.setattr(knowledge_service, "minio_client", FakeMinio())
-    monkeypatch.setattr(
-        knowledge_service,
-        "extract_text",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR skipped")),
-    )
+
+    def fake_ocr(*args, **kwargs):
+        ocr_calls.append(True)
+        return "营业执照 统一社会信用代码91340 法定代表人许明英 路基路面养护甲级资质"
+
+    monkeypatch.setattr(knowledge_service, "extract_text", fake_ocr)
     monkeypatch.setattr(
         knowledge_service,
         "store_knowledge_chunks",
-        lambda **kwargs: stored.update(kwargs) or {"document_id": 7, "chunk_ids": [71]},
+        lambda **kwargs: stored.update(kwargs) or {"document_id": 7, "chunk_ids": [71, 72]},
     )
 
     result = knowledge_service.index_uploaded_knowledge(
@@ -49,19 +51,21 @@ def test_image_upload_defaults_to_structured_evidence_without_ocr(monkeypatch) -
         verified_status="已核验",
     )
 
+    # Image evidence is now OCR'd (M16) while staying structured_evidence + insertable.
+    assert ocr_calls, "image evidence should be OCR'd"
     assert result["document_id"] == 7
-    assert result["chunk_ids"] == [71]
     assert result["indexing_status"] == "structured_evidence"
-    assert len(stored["chunks"]) == 1
-    assert "资料名称：人员_张三_身份证" in stored["chunks"][0].content
-    assert "证件/证明：身份证" in stored["chunks"][0].content
-    assert "图片用途：允许作为标书插图候选" in stored["chunks"][0].content
+    contents = "\n".join(c.content for c in stored["chunks"])
+    # tag-summary chunk kept for filtering...
+    assert "资料名称：人员_张三_身份证" in contents
+    assert "证件/证明：身份证" in contents
+    # ...and OCR text indexed for content search
+    assert "统一社会信用代码91340" in contents
+    assert "路基路面养护甲级资质" in contents
     assert stored["metadata"]["ingestion_mode"] == "structured_evidence"
-    assert stored["metadata"]["project_type"] == "公路工程"
+    assert stored["metadata"]["ocr_extracted"] is True
     assert stored["metadata"]["document_category"] == "人员证件"
-    assert stored["metadata"]["volume"] == "资格文件"
     assert stored["metadata"]["owner_name"] == "张三"
-    assert stored["metadata"]["certificate_type"] == "身份证"
     assert stored["metadata"]["image_insertable"] is True
 
 
