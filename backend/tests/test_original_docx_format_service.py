@@ -307,3 +307,38 @@ def test_nearest_left_label_matches_same_row() -> None:
     assert _nearest_left_label(174.0, 153.0, labels) == "投标人："
     # underline far above any label → no match
     assert _nearest_left_label(174.0, 50.0, labels) is None
+
+
+def test_fill_personnel_table_fills_project_manager_row() -> None:
+    from services.original_docx_format_service import _fill_personnel_table
+
+    doc = Document()
+    table = doc.add_table(rows=4, cols=6)
+    # 表头第1行
+    table.cell(0, 0).text = "职务"
+    table.cell(0, 1).text = "姓名"
+    table.cell(0, 2).text = "职称"
+    table.cell(0, 3).text = "执业或职业资格证明"
+    # 表头第2行(子列)
+    table.cell(1, 3).text = "证书名称"
+    table.cell(1, 4).text = "级别"
+    table.cell(1, 5).text = "证号"
+    # 第3、4行为空数据行
+
+    profile = {"project_manager_name": "江舟", "project_manager_cert": "皖1342006200803161"}
+    assert _fill_personnel_table(doc, profile) is True
+    assert table.cell(2, 0).text == "项目经理"
+    assert table.cell(2, 1).text == "江舟"
+    assert table.cell(2, 5).text == "皖1342006200803161"
+
+
+def test_fill_personnel_table_noop_without_pm() -> None:
+    from services.original_docx_format_service import _fill_personnel_table
+
+    doc = Document()
+    table = doc.add_table(rows=3, cols=6)
+    table.cell(0, 0).text = "职务"
+    table.cell(0, 1).text = "姓名"
+    table.cell(1, 5).text = "证号"
+    assert _fill_personnel_table(doc, {}) is False
+    assert table.cell(2, 1).text.strip() == ""

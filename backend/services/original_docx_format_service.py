@@ -331,6 +331,7 @@ def build_original_format_docx_from_pdf_editable(
         _drop_spurious_stream_tables(doc)  # 删 pdf2docx 把填空行误判出的假表
         _replace_known_fields(doc, profile or {})
         _fill_known_table_cells(doc, profile or {})
+        _fill_personnel_table(doc, profile or {})  # 项目管理机构人员表填项目经理行
         doc.save(str(path))
         return str(path)
     finally:
@@ -407,15 +408,37 @@ def _table_label_value(label: str, profile: dict[str, Any]) -> str:
 
 
 def _set_cell_value(cell: Any, value: str) -> None:
-    """Write a value into a table cell, preserving the cell's existing font/runs."""
+    """Write a value into a table cell with a form-fitting font (宋体五号).
+
+    新建空格默认会继承偏大的字号,在窄列(职务/证号 等)里被裁成"项目经""皖";
+    显式设宋体 10.5pt 让 4 字职务/长证号能容下(过长则自动换行)。
+    """
+    from docx.shared import Pt
+
     paragraph = cell.paragraphs[0]
     runs = paragraph.runs
     if runs:
-        runs[0].text = value
+        run = runs[0]
+        run.text = value
         for extra in runs[1:]:
             extra.text = ""
     else:
-        paragraph.add_run(value)
+        run = paragraph.add_run(value)
+    run.font.name = "Times New Roman"
+    run.font.size = Pt(10.5)
+    rpr = run._element.get_or_add_rPr()
+    rfonts = rpr.get_or_add_rFonts()
+    for attr in ("w:ascii", "w:hAnsi", "w:cs"):
+        rfonts.set(qn(attr), "Times New Roman")
+    rfonts.set(qn("w:eastAsia"), "SimSun")
+    # 允许长串(如 17 位证号)在窄列里折行,而不是溢出被裁成"皖"
+    from docx.oxml import OxmlElement
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    if p_pr.find(qn("w:wordWrap")) is None:
+        word_wrap = OxmlElement("w:wordWrap")
+        word_wrap.set(qn("w:val"), "0")
+        p_pr.append(word_wrap)
 
 
 def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
@@ -448,6 +471,67 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
                         filled += 1
                     break
     return filled
+
+
+def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
+    """填"项目管理机构人员组成表"的项目经理行(职务/姓名/证号),从公司档案取。
+
+    这是列表头驱动的多列表(职务|姓名|职称|证书名称|级别|证号|专业|养老保险|备注),
+    与"标签格→右邻"不同。只填项目经理这一行、只填空格、不改表结构;其余人员留给人工
+    或后续按知识库补。返回是否填了。
+    """
+    pm_name = str(profile.get("project_manager_name") or "").strip()
+    if not pm_name:
+        return False
+    pm_cert = str(profile.get("project_manager_cert") or "").strip()
+
+    for table in document.tables:
+        try:
+            rows = table.rows
+            n_cols = len(table.columns)
+            if len(rows) < 2 or n_cols < 3:
+                continue
+
+            def header(col: int, _rows=rows, _table=table) -> str:
+                return " ".join(
+                    _table.cell(r, col).text.strip() for r in range(min(2, len(_rows)))
+                )
+
+            headers = [header(c) for c in range(n_cols)]
+            col_role = next((c for c, h in enumerate(headers) if "职务" in h), None)
+            col_name = next((c for c, h in enumerate(headers) if "姓名" in h), None)
+            col_cert = next(
+                (c for c, h in enumerate(headers) if "证号" in h or "证书号" in h), None
+            )
+            if col_role is None or col_name is None:
+                continue
+            # 必须是"人员组成"表(含证书/资格证明列),别误填别的两列表
+            if not any(("证书" in h or "资格证明" in h or "证号" in h) for h in headers):
+                continue
+            # 执业资格证明跨行、子列在第2行 → 表头占2行,数据从第3行起
+            two_row_header = any(
+                ("证书名称" in headers[c] or "级别" in headers[c] or "证号" in headers[c])
+                for c in range(n_cols)
+            )
+            data_r = 2 if two_row_header else 1
+            if data_r >= len(rows):
+                continue
+
+            name_cell = table.cell(data_r, col_name)
+            if not _TABLE_BLANK_RE.match(name_cell.text.strip()):
+                continue  # 第一行已有人,留给人工
+            _set_cell_value(name_cell, pm_name)
+            role_cell = table.cell(data_r, col_role)
+            if _TABLE_BLANK_RE.match(role_cell.text.strip()):
+                _set_cell_value(role_cell, "项目经理")
+            if col_cert is not None and pm_cert:
+                cert_cell = table.cell(data_r, col_cert)
+                if _TABLE_BLANK_RE.match(cert_cell.text.strip()):
+                    _set_cell_value(cert_cell, pm_cert)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def _table_has_real_borders(table: Any) -> bool:
