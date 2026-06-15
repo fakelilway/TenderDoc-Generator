@@ -91,6 +91,50 @@ def test_meta_phrase_hard_blocks(tmp_path: Path) -> None:
     assert result["items"]["residue"]["score"] == 0.0
 
 
+def test_construction_zuowei_not_false_positive(tmp_path: Path) -> None:
+    """正常工程文本里的"作为一个/作为一名"不得触发 AI 元话语硬否决。
+
+    回归:旧版裸子串"作为一个"把 7 万字真实标书(每个井段作为一个流水段……)
+    误判为 AI 生成并砍到 40 分,排序完全反转。
+    """
+    path = tmp_path / "ok_zuowei.docx"
+    _build_doc(
+        path,
+        headings=10,
+        body_chars=20000,
+        table_rows=[
+            ("投标人", "某某建设工程有限公司"),
+            ("法定代表人", "张三"),
+            ("统一社会信用代码", "91320000MA1ABCDE7K"),
+            ("安全生产许可证", "(苏)JZ安许证字[2020]001"),
+            ("项目经理", "李四"),
+        ],
+        extra_paras=[
+            "每个井段作为一个流水段组织施工；作为一名项目经理需对各作为一个"
+            "独立施工段的工序质量负责，每200m路段作为一个检验批。"
+        ],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is False
+    assert result["items"]["residue"]["score"] == 1.0
+    assert result["quality_score"] > 80
+
+
+def test_genuine_ai_self_reference_still_hard_blocks(tmp_path: Path) -> None:
+    """真 AI 自指(作为…AI/助手/语言模型)仍须硬否决。"""
+    path = tmp_path / "bad_ai_self_ref.docx"
+    _build_doc(
+        path,
+        headings=8,
+        body_chars=16000,
+        table_rows=[("投标人", "某公司")],
+        extra_paras=["作为一个AI助手，我无法独立完成现场踏勘。"],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is True
+    assert result["items"]["residue"]["score"] == 0.0
+
+
 # --------------------------------------------------------------------------- #
 # (b) 空表格 cell 多 -> 表格填充率低
 # --------------------------------------------------------------------------- #

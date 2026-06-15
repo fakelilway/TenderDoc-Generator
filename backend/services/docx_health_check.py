@@ -60,15 +60,17 @@ _META_PHRASES = (
     "ai生成",
     "由AI",
     "由ai",
-    "作为一个",
-    "作为一名",
-    "作为AI",
-    "作为ai",
-    "作为您的",
     "根据您的要求",
     "我们建议",
     "以下是",
     "希望以上",
+)
+
+# AI 自指措辞需精确匹配:必须是"作为…"后紧跟 AI/助手/语言模型 这类词,
+# 否则会误伤正常工程文本(如"每个井段作为一个流水段""作为一名项目经理")。
+# 旧版用裸子串"作为一个/作为一名"把 7 万字的真实标书误判成 AI 生成并硬否决。
+_AI_SELF_REF_RE = re.compile(
+    r"作为(?:一个|一名|您的)?\s*(?:AI|ai|人工智能|智能助手|语言模型|大模型)"
 )
 
 # 身份证号：18 位（前 17 位数字 + 末位数字或 X）。出现在正文即疑似编造。
@@ -330,6 +332,8 @@ def _score_residue(
         hits.append(f"Markdown 残留 {md_hits} 行（行首 # 或管道表格）")
 
     meta_found = [p for p in _META_PHRASES if p in full_text]
+    if _AI_SELF_REF_RE.search(full_text):
+        meta_found.append("作为…AI/助手(自指)")
     if meta_found:
         hard = True
         hits.append(f"AI 元话语/占位词 {meta_found[:5]}")
