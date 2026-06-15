@@ -13,6 +13,7 @@ from agents.pricing_agent import (
     markdown_preserves_pricing_manual_points,
 )
 from core.config import get_settings
+from core.llm_client import chat_completion
 from schemas.review import InvalidBidRule, ReviewFinding, ReviewLocation, ReviewReport
 from utils.keywords import extract_keywords
 from schemas.tender import TenderRequirements
@@ -195,7 +196,8 @@ def _review_with_llm(
 
     prompt = _build_llm_review_prompt(parsed_requirements, generated_markdown)
     try:
-        response = OpenAI(api_key=api_key, base_url=base_url).chat.completions.create(
+        response = chat_completion(
+            OpenAI(api_key=api_key, base_url=base_url),
             model=model,
             messages=[
                 {"role": "system", "content": REVIEWER_SYSTEM_PROMPT},

@@ -1,0 +1,314 @@
+"""docx_health_check.score_docx 的确定性体检测试。
+
+现场用 python-docx 构造若干小 .docx 到 tmp_path，验证各打分项与硬否决。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+docx = pytest.importorskip("docx")
+from docx import Document  # noqa: E402
+
+from services.docx_health_check import score_delivery, score_docx  # noqa: E402
+
+_PROFILE = {
+    "company_name": "安徽正奇建设有限公司",
+    "legal_representative": "王建国",
+    "credit_code": "91340000MA2ABCDE3K",
+    "safety_license_no": "(皖)JZ安许证字[2021]007",
+    "project_manager_name": "李明",
+}
+
+
+def _add_kv_table(document, rows: list[tuple[str, str]]) -> None:
+    table = document.add_table(rows=len(rows), cols=2)
+    for i, (label, value) in enumerate(rows):
+        table.rows[i].cells[0].text = label
+        table.rows[i].cells[1].text = value
+
+
+def _build_doc(path: Path, *, headings: int, body_chars: int, table_rows, extra_paras=()):
+    document = Document()
+    for i in range(headings):
+        document.add_heading(f"第{i + 1}章 章节标题{i + 1}", level=1)
+        # 给每章塞点正文以撑字数
+        document.add_paragraph("正" * max(1, body_chars // max(1, headings)))
+    for para in extra_paras:
+        document.add_paragraph(para)
+    if table_rows:
+        _add_kv_table(document, table_rows)
+    document.save(str(path))
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# (a) 含 {{foo}} 残留 -> hard_block True 且分 <= 40
+# --------------------------------------------------------------------------- #
+
+
+def test_curly_residue_triggers_hard_block(tmp_path: Path) -> None:
+    path = tmp_path / "bad_curly.docx"
+    _build_doc(
+        path,
+        headings=10,  # 章节满分
+        body_chars=20000,  # 篇幅满分
+        table_rows=[
+            ("投标人", "某某建设工程有限公司"),
+            ("法定代表人", "张三"),
+            ("统一社会信用代码", "91320000MA1ABCDE7K"),
+            ("安全生产许可证", "(苏)JZ安许证字[2020]001"),
+            ("项目经理", "李四"),
+        ],
+        extra_paras=["本段落含残留模板标记 {{foo}} 未被替换。"],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is True
+    assert result["quality_score"] <= 40
+    assert result["items"]["residue"]["score"] == 0.0
+
+
+def test_knowledge_image_placeholder_hard_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "bad_image.docx"
+    _build_doc(
+        path,
+        headings=8,
+        body_chars=16000,
+        table_rows=[("投标人", "某公司")],
+        extra_paras=["{{knowledge_image:document_id=12 caption=营业执照}}"],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is True
+    assert result["quality_score"] <= 40
+
+
+def test_meta_phrase_hard_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "bad_meta.docx"
+    _build_doc(
+        path,
+        headings=8,
+        body_chars=16000,
+        table_rows=[("投标人", "某公司")],
+        extra_paras=["作为您的投标助手，根据您的要求，以下是施工方案。"],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is True
+    assert result["quality_score"] <= 40
+    assert result["items"]["residue"]["score"] == 0.0
+
+
+def test_construction_zuowei_not_false_positive(tmp_path: Path) -> None:
+    """正常工程文本里的"作为一个/作为一名"不得触发 AI 元话语硬否决。
+
+    回归:旧版裸子串"作为一个"把 7 万字真实标书(每个井段作为一个流水段……)
+    误判为 AI 生成并砍到 40 分,排序完全反转。
+    """
+    path = tmp_path / "ok_zuowei.docx"
+    _build_doc(
+        path,
+        headings=10,
+        body_chars=20000,
+        table_rows=[
+            ("投标人", "某某建设工程有限公司"),
+            ("法定代表人", "张三"),
+            ("统一社会信用代码", "91320000MA1ABCDE7K"),
+            ("安全生产许可证", "(苏)JZ安许证字[2020]001"),
+            ("项目经理", "李四"),
+        ],
+        extra_paras=[
+            "每个井段作为一个流水段组织施工；作为一名项目经理需对各作为一个"
+            "独立施工段的工序质量负责，每200m路段作为一个检验批。"
+        ],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is False
+    assert result["items"]["residue"]["score"] == 1.0
+    assert result["quality_score"] > 80
+
+
+def test_genuine_ai_self_reference_still_hard_blocks(tmp_path: Path) -> None:
+    """真 AI 自指(作为…AI/助手/语言模型)仍须硬否决。"""
+    path = tmp_path / "bad_ai_self_ref.docx"
+    _build_doc(
+        path,
+        headings=8,
+        body_chars=16000,
+        table_rows=[("投标人", "某公司")],
+        extra_paras=["作为一个AI助手，我无法独立完成现场踏勘。"],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is True
+    assert result["items"]["residue"]["score"] == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# score_delivery 按卷打分:修正"拿技术卷量商务字段"的分母错位(项目114实测 bug)
+# --------------------------------------------------------------------------- #
+
+
+def test_score_delivery_reads_required_fields_from_commercial(tmp_path: Path) -> None:
+    """必填字段在商务卷;按卷打分应从商务卷读到,而非对技术卷判零(114 实测回归)。"""
+    commercial = tmp_path / "commercial.docx"
+    _build_doc(
+        commercial,
+        headings=2,
+        body_chars=500,
+        table_rows=[
+            ("投标人", _PROFILE["company_name"]),
+            ("法定代表人", _PROFILE["legal_representative"]),
+            ("统一社会信用代码", _PROFILE["credit_code"]),
+            ("安全生产许可证", _PROFILE["safety_license_no"]),
+            ("项目经理", _PROFILE["project_manager_name"]),
+        ],
+    )
+    technical = tmp_path / "technical.docx"
+    _build_doc(
+        technical,
+        headings=10,
+        body_chars=20000,
+        table_rows=[],
+        extra_paras=["本工程施工组织设计正文,每个井段作为一个流水段组织施工。"],
+    )
+
+    delivered = score_delivery(
+        technical_path=technical, commercial_path=commercial, profile=_PROFILE
+    )
+    assert delivered["items"]["required_fields"]["score"] == 1.0  # 商务卷 5/5
+    assert delivered["hard_block"] is False
+    assert delivered["quality_score"] > 90
+
+    # 对照:单卷量技术卷 → 分母错位,required_fields 归零(这正是被修的 bug)。
+    tech_only = score_docx(technical, profile=_PROFILE)
+    assert tech_only["items"]["required_fields"]["score"] == 0.0
+
+
+def test_score_delivery_residue_strict_across_volumes(tmp_path: Path) -> None:
+    """残留两卷取严:商务卷残留 {{}}、技术卷干净 → 仍硬否决。"""
+    commercial = tmp_path / "comm_bad.docx"
+    _build_doc(
+        commercial,
+        headings=2,
+        body_chars=300,
+        table_rows=[("投标人", "某公司")],
+        extra_paras=["未替换标记 {{bidder_name}} 残留。"],
+    )
+    technical = tmp_path / "tech_ok.docx"
+    _build_doc(technical, headings=10, body_chars=18000, table_rows=[])
+    delivered = score_delivery(technical_path=technical, commercial_path=commercial)
+    assert delivered["hard_block"] is True
+    assert delivered["items"]["residue"]["score"] == 0.0
+
+
+def test_score_delivery_requires_a_path() -> None:
+    with pytest.raises(ValueError):
+        score_delivery()
+
+
+# --------------------------------------------------------------------------- #
+# (b) 空表格 cell 多 -> 表格填充率低
+# --------------------------------------------------------------------------- #
+
+
+def test_empty_cells_lower_table_fill(tmp_path: Path) -> None:
+    path = tmp_path / "empty_cells.docx"
+    _build_doc(
+        path,
+        headings=6,
+        body_chars=3000,
+        table_rows=[
+            ("投标人", "________"),
+            ("法定代表人", "________"),
+            ("统一社会信用代码", "________"),
+            ("安全生产许可证", "________"),
+            ("项目经理", "________"),
+        ],
+    )
+    result = score_docx(path)
+    fill = result["items"]["table_fill"]
+    # 5 行 2 列共 10 个 cell，值列 5 个都是下划线占位 -> 填充率约 0.5
+    assert fill["score"] < 0.6
+    # 无 profile 时，必填字段全是下划线空位 -> 完整度低
+    assert result["items"]["required_fields"]["score"] < 0.5
+    assert result["hard_block"] is False
+
+
+# --------------------------------------------------------------------------- #
+# (c) 正常填充的小文档 -> 各项分合理
+# --------------------------------------------------------------------------- #
+
+
+def test_well_filled_doc_scores_reasonably(tmp_path: Path) -> None:
+    path = tmp_path / "good.docx"
+    _build_doc(
+        path,
+        headings=10,
+        body_chars=20000,
+        table_rows=[
+            ("投标人", "某某建设工程有限公司"),
+            ("法定代表人", "张三"),
+            ("统一社会信用代码", "91320000MA1ABCDE7K"),
+            ("安全生产许可证", "(苏)JZ安许证字[2020]001"),
+            ("项目经理", "李四"),
+        ],
+    )
+    result = score_docx(path)
+    assert result["hard_block"] is False
+    assert result["quality_score"] >= 80
+    items = result["items"]
+    assert items["required_fields"]["score"] == 1.0
+    assert items["table_fill"]["score"] == 1.0
+    assert items["section_coverage"]["score"] == 1.0
+    assert items["residue"]["score"] == 1.0
+    assert items["length"]["score"] == 1.0
+    # 权重之和 = 100
+    assert sum(it["weight"] for it in items.values()) == 100
+
+
+def test_score_is_deterministic(tmp_path: Path) -> None:
+    path = tmp_path / "det.docx"
+    _build_doc(
+        path,
+        headings=8,
+        body_chars=16000,
+        table_rows=[("投标人", "某公司"), ("法定代表人", "王五")],
+    )
+    first = score_docx(path)
+    second = score_docx(path)
+    assert first["quality_score"] == second["quality_score"]
+
+
+def test_profile_checks_field_values(tmp_path: Path) -> None:
+    path = tmp_path / "profile.docx"
+    _build_doc(
+        path,
+        headings=8,
+        body_chars=16000,
+        table_rows=[
+            ("投标人", "实达建设有限公司"),
+            ("法定代表人", "赵六"),
+        ],
+    )
+    # profile 给了 5 个字段，但文档只体现了 2 个 -> required_fields < 1.0
+    profile = {
+        "company_name": "实达建设有限公司",
+        "legal_representative": "赵六",
+        "credit_code": "91320000MA1ZZZZ9X",
+        "safety_license_no": "(苏)JZ安许证字[2021]099",
+        "project_manager_name": "孙七",
+    }
+    result = score_docx(path, profile=profile)
+    rf = result["items"]["required_fields"]["score"]
+    assert 0.3 < rf < 0.6  # 2/5 命中
+
+
+def test_length_baseline_saturates(tmp_path: Path) -> None:
+    path = tmp_path / "len.docx"
+    _build_doc(path, headings=4, body_chars=7000, table_rows=[("投标人", "某公司")])
+    # baseline 给 10000，目标 70%=7000，正好满分（饱和封顶 1.0）
+    result = score_docx(path, baseline_chars=10000)
+    assert result["items"]["length"]["score"] == 1.0
+    # baseline 调高到 100000 -> 同样字数远不够 -> 篇幅项明显 < 1.0
+    result2 = score_docx(path, baseline_chars=100000)
+    assert result2["items"]["length"]["score"] < 0.2

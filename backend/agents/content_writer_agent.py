@@ -15,6 +15,7 @@ from typing import Any
 from openai import OpenAI
 
 from core.config import get_settings
+from core.llm_client import chat_completion, resolve_llm_config
 from prompts.generator_prompt import build_node_fill_prompt
 
 logger = logging.getLogger(__name__)
@@ -212,7 +213,8 @@ def _generate_messages_with_llm(
     settings = get_settings()
     api_key, base_url, model = _get_llm_client_config()
     client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
+    response = chat_completion(
+        client,
         model=model,
         messages=messages,
         temperature=0.2,
@@ -227,43 +229,5 @@ def _generate_messages_with_llm(
     return content
 
 
-def _has_real_key(value: str) -> bool:
-    return bool(value and value.strip() and "xxxx" not in value.lower())
-
-
 def _get_llm_client_config() -> tuple[str, str, str]:
-    settings = get_settings()
-    provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
-    if provider == "deepseek":
-        if _has_real_key(settings.deepseek_api_key):
-            return (
-                settings.deepseek_api_key,
-                settings.deepseek_base_url,
-                settings.deepseek_model,
-            )
-        raise RuntimeError(
-            "DEEPSEEK_API_KEY is required when BID_LLM_PROVIDER=deepseek"
-        )
-    if provider == "openrouter":
-        if _has_real_key(settings.openrouter_api_key):
-            return (
-                settings.openrouter_api_key,
-                settings.openrouter_base_url,
-                settings.openrouter_model,
-            )
-        raise RuntimeError(
-            "OPENROUTER_API_KEY is required when BID_LLM_PROVIDER=openrouter"
-        )
-    if _has_real_key(settings.openrouter_api_key):
-        return (
-            settings.openrouter_api_key,
-            settings.openrouter_base_url,
-            settings.openrouter_model,
-        )
-    if _has_real_key(settings.deepseek_api_key):
-        return (
-            settings.deepseek_api_key,
-            settings.deepseek_base_url,
-            settings.deepseek_model,
-        )
-    raise RuntimeError("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
+    return resolve_llm_config(get_settings())
