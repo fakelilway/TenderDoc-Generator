@@ -20,6 +20,26 @@ jobs:
     name: backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 测试全程 mock 掉 PG/Redis/MinIO/LLM,这里只为让 pydantic Settings 能实例化
+    # 提供 dummy 值(真实 .env 被 gitignore,CI 上不存在)。DEBUG=true 镜像本地,
+    # 避开生产模式对默认 JWT 密钥的启动校验。
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ci
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      MINIO_API_URL: http://localhost:9000
+      MINIO_CONSOLE_URL: http://localhost:9001
+      MINIO_ROOT_USER: ci-minio
+      MINIO_ROOT_PASSWORD: ci-minio-secret
+      MINIO_BUCKET: ci-bucket
+      DEBUG: "true"
+      JWT_SECRET: ci-dummy-jwt-secret-not-for-production-0123456789
     steps:
       - name: Checkout
         uses: actions/checkout@v4
