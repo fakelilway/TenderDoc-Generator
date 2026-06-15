@@ -514,6 +514,10 @@ export function listKnowledgeDocuments(
   );
 }
 
+export function getKnowledgeCategoryCounts() {
+  return requestJson<Record<string, number>>("/api/knowledge/category-counts");
+}
+
 export function getKnowledgeDocumentPreview(documentId: number) {
   return requestJson<KnowledgeDocumentPreview>(
     `/api/knowledge/documents/${documentId}/preview`

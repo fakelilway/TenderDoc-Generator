@@ -251,6 +251,25 @@ def list_knowledge_documents(
     ]
 
 
+def count_documents_by_category() -> dict[str, int]:
+    """每个资料类别的文档数(供前端分类标签显示数量),含 total。"""
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT coalesce(metadata_json->>'document_category', '未分类') AS cat,
+                       count(*) AS n
+                FROM documents
+                WHERE project_id IS NULL
+                GROUP BY 1
+                """
+            )
+            rows = cursor.fetchall()
+    counts = {str(row[0]): int(row[1]) for row in rows}
+    counts["全部"] = sum(counts.values())
+    return counts
+
+
 def get_knowledge_document_preview(document_id: int) -> dict[str, object]:
     row = _fetch_knowledge_document_row(document_id)
     file_name = str(row["file_name"])

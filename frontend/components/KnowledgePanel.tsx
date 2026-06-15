@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   deleteKnowledgeDocument,
+  getKnowledgeCategoryCounts,
   getKnowledgeDocumentPreview,
   listKnowledgeDocuments,
   renameKnowledgeDocument,
@@ -52,7 +53,9 @@ function formatDate(value: string) {
 }
 
 const projectTypeOptions = ["公路工程", "市政道路", "桥梁涵洞", "交通安全设施", "养护维修", "改建扩建", "排水管网"];
-const documentCategoryOptions = ["公司证件", "人员证件", "业绩", "标书", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
+const documentCategoryOptions = ["公司证件", "人员证件", "业绩", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
+// 顶部分类标签的主类别(历史标书归"风格案例库",不在知识库里)
+const categoryTabs = ["公司证件", "人员证件", "业绩", "图片资料", "其他资料"];
 const volumeOptions = ["商务文件", "资格文件", "技术文件", "报价文件", "附图附表"];
 const specialtyOptions = ["路基", "路面", "桥涵", "交安", "排水", "照明", "绿化", "质量", "安全", "进度", "环保"];
 const ownerTypeOptions = ["公司", "人员", "项目"];
@@ -134,21 +137,6 @@ function splitTags(value: string) {
 
 function isImageFile(file: File | null) {
   return Boolean(file?.type.startsWith("image/") || /\.(jpe?g|png|gif|webp)$/i.test(file?.name ?? ""));
-}
-
-function compactMeta(document: KnowledgeDocumentSummary) {
-  return [
-    document.project_type,
-    document.volume,
-    document.document_category ?? document.document_type,
-    document.specialty,
-    document.region,
-    document.certificate_type,
-    document.owner_name,
-    document.verified_status,
-    document.valid_to ? `有效期至${document.valid_to}` : null,
-    ...(document.tags ?? [])
-  ].filter(Boolean);
 }
 
 function TagChips({
@@ -261,6 +249,8 @@ export function KnowledgePanel() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [docSearch, setDocSearch] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [showUploadMeta, setShowUploadMeta] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
 
@@ -275,6 +265,11 @@ export function KnowledgePanel() {
         search: submittedSearch || undefined
       });
       setDocuments(response.documents);
+      try {
+        setCategoryCounts(await getKnowledgeCategoryCounts());
+      } catch {
+        /* counts 失败不影响列表 */
+      }
     } catch (listError) {
       setError(listError instanceof Error ? listError.message : "知识库加载失败");
     } finally {
@@ -548,18 +543,31 @@ export function KnowledgePanel() {
               >
                 <UploadCloud className="mb-2 h-6 w-6 text-muted" />
                 <span className="text-sm font-medium text-ink">
-                  上传历史标书 / 企业资料
+                  上传企业资料(证件 / 人员 / 业绩 / 图片素材)
                 </span>
                 <span className="mt-1 text-xs text-muted">
-                  PDF / DOC / DOCX / TXT / MD / JPG / PNG
+                  PDF / DOC / DOCX / TXT / MD / JPG / PNG · 历史标书请放「风格案例库」
                 </span>
               </button>
             )}
 
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <MetaSelect value={documentCategory} onChange={setDocumentCategory} placeholder="资料类别(证件/人员/业绩/图片素材)" options={documentCategoryOptions} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUploadMeta((value) => !value)}
+                className="h-9 shrink-0 rounded-md border border-line bg-field px-3 text-xs text-muted hover:text-ink"
+              >
+                {showUploadMeta ? "收起标签" : "更多标签(可选)"}
+              </button>
+            </div>
+
+            {showUploadMeta ? (
             <div className="grid grid-cols-2 gap-2">
               <MetaSelect value={projectType} onChange={setProjectType} placeholder="项目类型" options={projectTypeOptions} />
               <MetaSelect value={volume} onChange={setVolume} placeholder="所属卷册" options={volumeOptions} />
-              <MetaSelect value={documentCategory} onChange={setDocumentCategory} placeholder="资料类别" options={documentCategoryOptions} />
               <input
                 value={documentType}
                 onChange={(event) => setDocumentType(event.target.value)}
@@ -628,6 +636,7 @@ export function KnowledgePanel() {
                 <option value="evidence_only">仅存原件不索引</option>
               </select>
             </div>
+            ) : null}
 
             <button
               type="button"
@@ -699,40 +708,49 @@ export function KnowledgePanel() {
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted" />
             ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={categoryFilter}
-              onChange={(event) => setCategoryFilter(event.target.value)}
-              className="h-8 rounded-md border border-line bg-field px-2 text-xs text-ink"
-            >
-              <option value="">全部类别</option>
-              {documentCategoryOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <form
-              className="flex min-w-0 flex-1 items-center gap-1"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setSubmittedSearch(docSearch.trim());
-              }}
-            >
-              <input
-                value={docSearch}
-                onChange={(event) => setDocSearch(event.target.value)}
-                placeholder="搜文件名 / 人名 / 证件类型"
-                className="h-8 min-w-0 flex-1 rounded-md border border-line bg-field px-2 text-xs text-ink"
-              />
-              <button
-                type="submit"
-                className="h-8 shrink-0 rounded-md border border-line bg-white px-2 text-xs text-muted hover:text-ink"
-              >
-                搜索
-              </button>
-            </form>
+          <div className="flex flex-wrap gap-1.5">
+            {["全部", ...categoryTabs].map((tab) => {
+              const value = tab === "全部" ? "" : tab;
+              const active = categoryFilter === value;
+              const count = categoryCounts[tab];
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setCategoryFilter(value)}
+                  className={[
+                    "rounded-full border px-3 py-1 text-xs transition-colors",
+                    active
+                      ? "border-brand bg-blue-50 font-medium text-brand"
+                      : "border-line bg-field text-muted hover:border-brand hover:text-ink"
+                  ].join(" ")}
+                >
+                  {tab}
+                  {typeof count === "number" ? ` ${count}` : ""}
+                </button>
+              );
+            })}
           </div>
+          <form
+            className="flex min-w-0 items-center gap-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setSubmittedSearch(docSearch.trim());
+            }}
+          >
+            <input
+              value={docSearch}
+              onChange={(event) => setDocSearch(event.target.value)}
+              placeholder="搜文件名 / 人名 / 证件类型"
+              className="h-8 min-w-0 flex-1 rounded-md border border-line bg-field px-2 text-xs text-ink"
+            />
+            <button
+              type="submit"
+              className="h-8 shrink-0 rounded-md border border-line bg-white px-2 text-xs text-muted hover:text-ink"
+            >
+              搜索
+            </button>
+          </form>
           <div className="max-h-72 space-y-2 overflow-auto">
             {documents.length === 0 ? (
               <div className="rounded-md border border-dashed border-line bg-field px-3 py-4 text-center text-xs text-muted">
@@ -808,11 +826,28 @@ export function KnowledgePanel() {
                             {document.extraction_message}
                           </p>
                         ) : null}
-                        {compactMeta(document).length ? (
-                          <p className="mt-1 truncate text-xs text-muted">
-                            {compactMeta(document).join(" / ")}
-                          </p>
-                        ) : null}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {document.certificate_type || document.document_category ? (
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-brand">
+                              {document.certificate_type || document.document_category}
+                            </span>
+                          ) : null}
+                          {document.owner_name ? (
+                            <span className="rounded-full bg-field px-2 py-0.5 text-xs text-muted">
+                              {document.owner_name}
+                            </span>
+                          ) : null}
+                          {document.image_insertable ? (
+                            <span className="rounded-full bg-field px-2 py-0.5 text-xs text-muted">
+                              可插图
+                            </span>
+                          ) : null}
+                          {document.valid_to ? (
+                            <span className="rounded-full bg-field px-2 py-0.5 text-xs text-muted">
+                              有效期至{document.valid_to}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                       {canEdit ? (
                         <div className="flex shrink-0 gap-1">

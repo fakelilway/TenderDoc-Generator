@@ -351,6 +351,16 @@ def list_knowledge_documents(
     )
 
 
+@app.get("/api/knowledge/category-counts")
+def knowledge_category_counts(
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
+) -> dict[str, int]:
+    try:
+        return knowledge_service.count_documents_by_category()
+    except Exception as error:
+        _raise_http_error(error)
+
+
 @app.patch(
     "/api/knowledge/documents/{document_id}",
     response_model=KnowledgeDocumentSummary,
