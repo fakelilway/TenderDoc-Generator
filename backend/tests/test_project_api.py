@@ -313,7 +313,7 @@ def test_search_knowledge_returns_results(monkeypatch) -> None:
 def test_list_knowledge_documents_returns_indexed_files(monkeypatch) -> None:
     monkeypatch.setattr(
         "api.main.knowledge_service.list_knowledge_documents",
-        lambda limit=50: [
+        lambda limit=50, category=None, search=None: [
             {
                 "document_id": 9,
                 "file_name": "企业技术标模板.pdf",
@@ -335,7 +335,7 @@ def test_list_knowledge_documents_returns_indexed_files(monkeypatch) -> None:
 def test_regular_user_can_view_knowledge_documents(monkeypatch) -> None:
     monkeypatch.setattr(
         "api.main.knowledge_service.list_knowledge_documents",
-        lambda limit=50: [],
+        lambda limit=50, category=None, search=None: [],
     )
     app.dependency_overrides[auth_service.get_current_user] = lambda: UserProfile(
         id=2,
