@@ -76,6 +76,10 @@ def export_markdown_for_project(
                     f"projects/{project_id}/generated/{vol}.docx",
                 )
 
+        # 非阻断质量打分钩子：直接用临时目录里已生成的卷(别再去 MinIO 重下)按卷
+        # 体检并落 eval_results/。严格非阻断——打分失败绝不影响出标。
+        _score_delivery_quality(project_id, tmp_path)
+
     _update_generation_paths(
         project_id,
         markdown_object,
@@ -83,6 +87,58 @@ def export_markdown_for_project(
         quality_report,
     )
     return markdown_object, docx_object
+
+
+def _score_delivery_quality(project_id: int, tmp_path: Path) -> None:
+    """非阻断地给刚出的标书按卷打分(quality_score + hard_block)。
+
+    两卷模式才有 commercial/technical 两个文件;非两卷模式只有 bid.docx,这时
+    technical_path 传 bid.docx、commercial_path=None。整段 try/except 包裹,
+    出标流程绝不能因打分崩。
+    """
+    try:
+        from services.delivery_quality import score_delivery_files
+
+        commercial = tmp_path / f"project_{project_id}_commercial.docx"
+        technical = tmp_path / f"project_{project_id}_technical.docx"
+        bid = tmp_path / f"project_{project_id}_bid.docx"
+
+        commercial_path = commercial if commercial.exists() else None
+        if technical.exists():
+            technical_path = technical
+        elif bid.exists():
+            technical_path = bid
+        else:
+            technical_path = None
+
+        if commercial_path is None and technical_path is None:
+            logger.warning("质量打分跳过：项目 %s 未找到可打分的卷文件", project_id)
+            return
+
+        result = score_delivery_files(
+            commercial_path=commercial_path,
+            technical_path=technical_path,
+            project_id=project_id,
+        )
+        quality_score = result.get("quality_score")
+        hard_block = result.get("hard_block")
+        logger.info(
+            "标书质量打分 project=%s quality_score=%s hard_block=%s",
+            project_id,
+            quality_score,
+            hard_block,
+        )
+        if hard_block or (isinstance(quality_score, (int, float)) and quality_score < 60):
+            logger.warning(
+                "标书质量偏低 project=%s quality_score=%s hard_block=%s notes=%s"
+                "（仅告警，不阻断出标）",
+                project_id,
+                quality_score,
+                hard_block,
+                result.get("notes"),
+            )
+    except Exception:
+        logger.exception("标书质量打分失败 project=%s（非阻断，出标继续）", project_id)
 
 
 def _try_export_original_docx_format(project_id: int, docx_path: Path) -> bool:

@@ -1,6 +1,19 @@
+import pytest
+
 from services import generation_service
 from utils.docx_exporter import combine_delivery_volumes
 from docx import Document
+
+
+@pytest.fixture(autouse=True)
+def _isolate_delivery_quality_eval_dir(monkeypatch, tmp_path):
+    """出标后的非阻断质量打分钩子会往仓库根 eval_results/ 落 JSON;测试里把它
+    重定向到 tmp,避免 export 测试污染工作区(钩子本身仍真实运行)。"""
+    from services import delivery_quality
+
+    monkeypatch.setattr(
+        delivery_quality, "_EVAL_RESULTS_DIR", tmp_path / "eval_results"
+    )
 
 
 def test_evaluate_generation_quality_counts_placeholders() -> None:
