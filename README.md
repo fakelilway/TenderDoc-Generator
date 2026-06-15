@@ -1,11 +1,12 @@
 # TenderDoc-Generator
 
-TenderDoc-Generator 是面向正奇建设投标场景的本地 MVP。当前生成内核只有一条主线：**以招标文件原始格式页为最高权威，复制格式，填真实字段，写技术正文，审查后交给人工终审。**
+TenderDoc-Generator 是面向正奇建设投标场景的本地 MVP。当前生成内核只有一条主线：**以招标文件原始格式页为最高权威，照抄商务格式并填真实字段，写技术正文，审查后交给人工终审。交付商务卷 + 技术卷两卷；报价卷由外部造价软件单独做，本系统不产出。**
 
 核心原则：
 
-- 格式必须来自招标文件原文，商务文件、报价文件、函件、表格、签章位、下划线和附件说明不由模型重画。
+- 格式必须来自招标文件原文，商务文件的函件、表格、签章位、下划线和附件说明不由模型重画。
 - 已知事实来自招标文件、公司档案和知识库；没有证据的字段保留空白或交给人工确认。
+- 商务卷采用"整页截图照抄 + 已知字段烧录进表单"，纯内联图，Pages/LibreOffice/Word/新点都能渲染。
 - 格式复制失败或技术正文写作失败时，系统直接报错，不输出看似完整但可能废标的近似稿；审查发现严重问题时不抛错，而是阻断下游审查/导出流水线并保留草稿供人工预览修正。
 
 ## 当前产品架构
@@ -17,13 +18,14 @@ flowchart TD
     C --> D["人工确认解析结果"]
     D --> E["资料选择：公司档案 + 知识库证据"]
     E --> F["V2 Generation Service"]
-    F --> G["Original Format Service 复制格式页"]
-    F --> H["Content Writer 只写技术正文"]
+    F --> G["商务卷：照抄招标格式章 + 已知字段烧录进表单"]
+    F --> H["技术卷：Content Writer 写施工组织设计正文(标准深度大纲)"]
     G --> I["V2 Audit 格式/内容/证据审查"]
     H --> I
     I --> J["Reviewer Agent 废标风险审查"]
     J --> K["人工终审和在线编辑"]
-    K --> L["Generation Service 导出 DOCX/Markdown/审查报告"]
+    K --> L["导出 商务卷/技术卷 DOCX + 审查报告"]
+    L --> M["报价卷由外部造价软件单独做 → 一起进新点软件"]
 ```
 
 ### 自然语言流程
@@ -32,23 +34,23 @@ flowchart TD
 2. 后端提取全文，Parser Agent 生成结构化招标要求，包括项目名称、招标人、工期、质量、资质、评分项、废标项和 `format_outline_tree`。
 3. 用户在工作台确认解析结果，系统自动生成大纲并直接进入可生成状态。
 4. 用户在资料选择面板勾选本次投标要用的公司证件、人员证件、业绩、技术素材和图片资料。
-5. 生成时，系统先从招标文件中复制“投标文件格式/响应文件格式”相关页面或 DOCX OOXML。
-6. 商务文件和报价文件以复制出来的原格式为准；系统只做有依据的有限字段替换，未知字段保留下划线。
-7. 技术文件正文由 Content Writer 根据招标要求、技术大纲和知识库证据写入。
+5. 生成时，系统从招标文件复制"投标文件格式/响应文件格式"章节作为**商务卷**：PDF 招标走整页截图，DOCX 招标走 copy-then-prune。
+6. 商务卷以原格式为准；系统把公司档案里的已知字段（投标人/地址/法定代表人/电话）**烧录进表单填空横线**，未知字段保留下划线。
+7. **技术卷**正文由 Content Writer 按标准施工组织设计深度大纲（招标技术大纲薄时自动扩展为 25 节）逐节写入，独立成文。
 8. V2 审查先挡格式、正文和证据问题，再进入废标风险审查。
 9. 用户查看状态、审查报告和预览，在线编辑后人工确认。
-10. 系统导出完整 DOCX、三卷 DOCX、Markdown 和审查报告；新点软件负责最终电子标封装、签章、加密和上传。
+10. 系统导出商务卷 + 技术卷 DOCX、Markdown 和审查报告；报价卷由造价软件单独做；新点软件负责最终电子标封装、签章、加密和上传。
 
 ## 当前哪些代码管格式
 
 | 文件 | 作用 | 对格式的影响 |
 |------|------|--------------|
-| `backend/services/original_docx_format_service.py` | 复制招标文件格式页 | DOCX 走 OOXML deepcopy；PDF 走整页图片 + 可编辑文本层 + 隐藏页标记，是格式保真的核心 |
-| `backend/services/generation_service.py` | 导出和拆卷 | 原格式 DOCX 存在时按 OOXML/页块拆成商务、技术、报价三卷，并只给技术卷追加技术正文 |
-| `backend/services/v2_generation_service.py` | V2 编排 | 决定是否启用原格式复制、何时失败、技术正文写入哪个卷 |
-| `backend/services/format_skeleton_service.py` | 文本格式页提取 | 用于大纲、预览和非原格式文本路径，不是商务/报价精确保真的最终权威 |
-| `backend/utils/docx_exporter.py` | 普通 Markdown 导出 | 负责字体、标题、表格、图片、页眉脚等普通排版；不应重画招标文件锁定格式 |
-| `backend/agents/parser_agent.py` | 格式目录树提取 | `format_outline_tree` 用于导航和技术标题收集；`bid_format_requirements` 不再参与生成 |
+| `backend/services/original_docx_format_service.py` | 复制招标格式章 | DOCX 走 copy-then-prune（保留页眉脚/图片）；PDF 走整页截图 + `_bake_fill_values_on_page` 把已知值烧进填空横线，是格式保真核心 |
+| `backend/services/generation_service.py` | 两卷装配和导出 | `_assemble_two_volumes`：商务卷=copy2 格式章+合规正文，技术卷=独立生成正文；不再三卷拆分 |
+| `backend/services/v2_generation_service.py` | V2 编排 | 决定原格式复制、失败语义；`_collect_technical_sections` 把薄技术大纲扩展为标准深度大纲 |
+| `backend/prompts/construction_plan_outline.py` | 标准施工组织设计大纲 | 25 节深度子章节常量（对标真实中标标书），驱动技术正文逐节生成 |
+| `backend/utils/docx_exporter.py` | 技术卷 Markdown 导出 | 负责字体、标题、表格、图片、自动更新目录域等排版；不重画招标锁定格式 |
+| `backend/agents/parser_agent.py` | 格式目录树提取 | `format_outline_tree` 用于导航和技术标题收集 |
 | `frontend/components/ParsedReviewPanel.tsx` | 前端确认展示 | 展示解析结果供人工确认 |
 
 ## 当前哪些代码管审查
@@ -71,7 +73,7 @@ flowchart TD
 - 公司档案维护：企业信息、资质、账户、拟派项目班子。
 - 知识库结构化标签：资料类别、册别、专业、地区、年份、证书类型、有效期、敏感级别、使用范围、核验状态、图片可插入等。
 - 公司风格案例库：用于参考技术正文深度、语气和图片位，不控制投标文件结构。
-- DOCX/Markdown/审查报告下载，支持三卷分册交付。
+- **商务卷 + 技术卷 DOCX + Markdown + 审查报告下载（两卷交付，报价卷由外部造价软件单独做）。**
 
 ## 本地启动
 

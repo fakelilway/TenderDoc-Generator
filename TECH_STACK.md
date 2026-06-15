@@ -38,7 +38,7 @@
 
 ## Document Processing
 
-- PyMuPDF：PDF 文本提取、页面渲染、格式页复制
+- PyMuPDF：PDF 文本提取、页面渲染、格式页整页截图 + 已知字段烧录
 - python-docx：DOCX 读取、OOXML 复制、DOCX 导出
 - pypdf/pdfplumber：辅助 PDF 文本解析
 
@@ -57,12 +57,12 @@ flowchart TD
     H --> I["DOCX / Markdown / Review Report"]
 ```
 
-当前只有 V2 原格式复制生成内核：
+当前只有 V2 原格式复制生成内核（两卷交付：商务卷 + 技术卷；报价卷外部造价软件）：
 
-- DOCX 招标文件：复制格式章 OOXML。
-- PDF 招标文件：复制格式页整页图片，叠加可编辑文本层。
-- 商务/报价锁定格式：不由模型重画。
-- 技术正文：由 Content Writer 生成。
+- DOCX 招标文件：copy-then-prune 复制格式章（保留页眉脚/图片）。
+- PDF 招标文件：复制格式页整页图片，已知字段烧录进表单填空横线（不再叠 VML 文本层）。
+- 商务锁定格式：不由模型重画。
+- 技术正文：由 Content Writer 按标准施工组织设计深度大纲逐节生成，独立成文。
 - 审查：V2 格式/内容/证据审查 + workflow 废标风险审查。
 
 ## Environment Variables
