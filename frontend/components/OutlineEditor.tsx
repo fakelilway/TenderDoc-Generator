@@ -1,6 +1,14 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ImagePlus, Plus, Save, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ImagePlus,
+  ListPlus,
+  Plus,
+  Save,
+  Trash2
+} from "lucide-react";
 import type {
   BidDocumentOutlineSection,
   BidOutlineSection,
@@ -46,6 +54,24 @@ export function OutlineEditor({
     onChange(outline.filter((_item, itemIndex) => itemIndex !== index));
   }
 
+  function addSection() {
+    onChange([
+      ...outline,
+      {
+        title: "",
+        required: true,
+        source_item: "",
+        focus_points: [],
+        manual_image_slots: []
+      }
+    ]);
+  }
+
+  // 技术文件大纲编辑只针对技术卷；商务卷是照抄招标格式、不在此编辑。
+  const technicalDocSections = documentOutline.filter(
+    (section) => section.volume === "技术标"
+  );
+
   function addImageSlot(index: number) {
     const section = outline[index];
     const nextSlots: ManualImageSlot[] = [
@@ -82,8 +108,17 @@ export function OutlineEditor({
   return (
     <section className="ios-panel rounded-[26px] border p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-ink">大纲编辑</h2>
+        <h2 className="text-sm font-semibold text-ink">技术文件大纲编辑</h2>
         <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/68 px-3.5 text-xs font-medium text-[#1d1d1f] hover:bg-white disabled:text-muted"
+            onClick={addSection}
+          >
+            <ListPlus className="h-4 w-4" />
+            添加章节
+          </button>
           <button
             type="button"
             disabled={busy}
@@ -91,7 +126,7 @@ export function OutlineEditor({
             onClick={onBuild}
           >
             <Plus className="h-4 w-4" />
-            生成
+            重新扫描
           </button>
           <button
             type="button"
@@ -104,11 +139,11 @@ export function OutlineEditor({
           </button>
         </div>
       </div>
-      {documentOutline.length > 0 ? (
+      {technicalDocSections.length > 0 ? (
         <div className="mt-3 rounded-[22px] border border-black/[0.06] bg-white/42 p-3">
-          <div className="text-xs font-semibold text-ink">完整标书目录</div>
+          <div className="text-xs font-semibold text-ink">技术卷目录预览</div>
           <div className="mt-2 space-y-2">
-            {documentOutline.map((section, index) => (
+            {technicalDocSections.map((section, index) => (
               <div key={`${section.title}-${index}`} className="text-xs text-muted">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-white/78 px-2.5 py-0.5 font-medium text-ink">
