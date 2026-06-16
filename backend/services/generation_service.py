@@ -321,6 +321,52 @@ def _is_markdown_table_control_line(line: str) -> bool:
     return all(cell and set(cell) <= {"-", ":"} for cell in cells)
 
 
+# 正文渲染器(markdown_to_docx)依赖的命名段落样式。
+_PROSE_BASE_STYLES = ("Heading 1", "Heading 2", "Heading 3", "List Bullet", "List Number")
+
+
+def _ensure_named_styles(doc) -> None:
+    """Make the paragraph styles the markdown renderer relies on fetchable.
+
+    Some converted DOCX (notably 福昕云 PDF→Word output) carry builtin heading/
+    list styles whose raw OOXML ``w:name`` doesn't match python-docx's name
+    lookup, so ``styles["Heading 1"]`` / ``add_heading`` / ``style="List Bullet"``
+    all raise ``KeyError: no style with name 'Heading 1'`` even though the name
+    appears in ``iter(styles)``. We can still *create* a real, fetchable style for
+    each one (``add_style`` succeeds), which repairs the lookup for both
+    ``_configure_styles`` and ``add_heading`` — without this, the entire two-volume
+    export aborts here and no downloadable DOCX is produced.
+    """
+    from docx.enum.style import WD_STYLE_TYPE
+
+    for name in _PROSE_BASE_STYLES:
+        try:
+            doc.styles[name]
+        except KeyError:
+            try:
+                doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            except Exception:  # noqa: BLE001 - best effort; plaintext fallback covers it
+                logger.warning("无法为 '%s' 补建命名样式;合规正文将走纯文本兜底", name)
+
+
+def _append_prose_plaintext(docx_path: Path, prose_markdown: str) -> None:
+    """Last-resort prose append that never touches named styles.
+
+    Used when the styled append fails (e.g. a converted base docx whose styles
+    can't be repaired). Keeps the合规正文 content (unstyled) instead of dropping
+    it or failing the whole export → 出标不被阻断、下载件照常产出。
+    """
+    from docx import Document
+
+    doc = Document(str(docx_path))
+    doc.add_page_break()
+    for line in prose_markdown.splitlines():
+        text = line.strip().lstrip("#").strip()
+        if text:
+            doc.add_paragraph(text)
+    doc.save(str(docx_path))
+
+
 def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     """Append prose content after format pages in a DOCX.
 
@@ -328,6 +374,9 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     headings (H1–H3), markdown tables, tdg:pagebreak markers,
     underlined blanks, and the zhengqi style profile (SimSun 14pt,
     SimHei headings, 32pt line spacing).
+
+    若按样式渲染失败(如福昕转换件的内置样式 python-docx 取不到),退到纯文本
+    追加,绝不让商务卷整卷导出失败 → 保证有下载件。
     """
     if not prose_markdown.strip():
         return
@@ -335,30 +384,42 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     from utils.docx_exporter import _render_markdown_body, _configure_styles
     from docx import Document
 
-    doc = Document(str(docx_path))
+    try:
+        doc = Document(str(docx_path))
 
-    # _configure_styles sets zhengqi margins on ALL sections; that would clobber
-    # the full-bleed (0-margin) geometry of any format-page image sections, making
-    # the page images overflow/clip → blank pages in LibreOffice/Pages. Snapshot
-    # existing sections and restore their geometry after styling.
-    geom = [
-        (
-            s.page_width, s.page_height,
-            s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
-            s.header_distance, s.footer_distance,
+        # 福昕等转换器产出的 docx,其内置标题/列表样式 python-docx 按名取不到
+        # (styles[name]/add_heading 抛 KeyError),先补成可取的真样式,否则
+        # _configure_styles 与正文渲染会在此让整卷导出失败 → 无下载件。
+        _ensure_named_styles(doc)
+
+        # _configure_styles sets zhengqi margins on ALL sections; that would clobber
+        # the full-bleed (0-margin) geometry of any format-page image sections, making
+        # the page images overflow/clip → blank pages in LibreOffice/Pages. Snapshot
+        # existing sections and restore their geometry after styling.
+        geom = [
+            (
+                s.page_width, s.page_height,
+                s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
+                s.header_distance, s.footer_distance,
+            )
+            for s in doc.sections
+        ]
+        _configure_styles(doc, "zhengqi")
+        for s, g in zip(doc.sections, geom):
+            (s.page_width, s.page_height,
+             s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
+             s.header_distance, s.footer_distance) = g
+
+        doc.add_page_break()
+        # 传 image_resolver,让附录里的 {{knowledge_image:...}} 标记从 MinIO 取图插入(B)
+        _render_markdown_body(doc, prose_markdown, "zhengqi", _resolve_knowledge_image)
+        doc.save(str(docx_path))
+    except Exception:
+        logger.warning(
+            "商务卷合规正文按样式追加失败,改用纯文本兜底(不丢内容、不阻断出标)",
+            exc_info=True,
         )
-        for s in doc.sections
-    ]
-    _configure_styles(doc, "zhengqi")
-    for s, g in zip(doc.sections, geom):
-        (s.page_width, s.page_height,
-         s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
-         s.header_distance, s.footer_distance) = g
-
-    doc.add_page_break()
-    # 传 image_resolver,让附录里的 {{knowledge_image:...}} 标记从 MinIO 取图插入(B)
-    _render_markdown_body(doc, prose_markdown, "zhengqi", _resolve_knowledge_image)
-    doc.save(str(docx_path))
+        _append_prose_plaintext(docx_path, prose_markdown)
 
 
 def _assemble_two_volumes(
