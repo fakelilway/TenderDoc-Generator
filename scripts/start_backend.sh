@@ -13,4 +13,10 @@ if [ ! -f "$REPO_ROOT/backend/.env" ]; then
 fi
 
 cd "$REPO_ROOT/backend"
-exec "$REPO_ROOT/.venv/bin/python" -m uvicorn api.main:app --reload --host 0.0.0.0 --port "${BACKEND_PORT:-8000}"
+# --reload 在跑真实生成时是有害的:生成是后台 daemon 线程,任何 .py 改动都会让
+# uvicorn 重启、把在跑的生成线程杀掉、状态冻住。跑真实生成请用 BACKEND_NO_RELOAD=1。
+RELOAD_ARG="--reload"
+if [ "${BACKEND_NO_RELOAD:-0}" = "1" ]; then
+  RELOAD_ARG=""
+fi
+exec "$REPO_ROOT/.venv/bin/python" -m uvicorn api.main:app $RELOAD_ARG --host 0.0.0.0 --port "${BACKEND_PORT:-8000}"
