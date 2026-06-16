@@ -9,12 +9,35 @@ from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
     _drop_spurious_stream_tables,
     _fill_known_table_cells,
+    _looks_like_next_chapter_page,
+    _looks_like_other_volume_start,
     _table_label_value,
     build_original_format_docx,
     build_original_format_docx_from_pdf,
     build_original_format_docx_from_pdf_editable,
     build_original_format_docx_from_pdf_with_fields,
 )
+
+
+def test_next_chapter_ignores_midsentence_crossreference() -> None:
+    # 实测招标#122 p105：跨引用"…招标文件第二章…"不得当成新章(会切掉资格审查后半+八)
+    assert not _looks_like_next_chapter_page(
+        "106备注注：1.投标人应根据招标文件第二章“投标人须知”第3.5.1项的要求在本表后附材料。"
+    )
+    # 页首(带页码)的真章标题才算边界
+    assert _looks_like_next_chapter_page("106第八章评标办法投标人应仔细阅读")
+    assert _looks_like_next_chapter_page("第三章投标人须知")
+    # 格式章自身不作为结束边界
+    assert not _looks_like_next_chapter_page("第八章投标文件格式")
+
+
+def test_other_volume_start_marks_commercial_end() -> None:
+    # 技术/报价卷起始 → 商务格式章到此为止
+    assert _looks_like_other_volume_start("（标段名称）施工招标投标文件（技术文件）投标人：（盖单位章）")
+    assert _looks_like_other_volume_start("（标段名称）施工招标投标文件（报价文件）投标人")
+    # 商务卷自身、普通表单不触发
+    assert not _looks_like_other_volume_start("（标段名称）施工招标投标文件（商务文件）")
+    assert not _looks_like_other_volume_start("三、联合体协议书（所有成员单位名称）自愿组成")
 
 
 def _add_cell_borders(cell) -> None:
