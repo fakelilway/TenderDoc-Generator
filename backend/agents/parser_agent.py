@@ -928,20 +928,41 @@ def _is_empty_parse(result: TenderRequirements) -> bool:
     return not has_string_data and not has_list_data
 
 
+def _estimate_prompt_tokens(messages: list[dict[str, str]]) -> int:
+    """粗估 prompt 的 token 数。招标文件以中文为主,实测 120000 字 ≈ 89660 token
+    (约 1.34 字/token);这里按 1.25 字/token 略微高估——高估输入→少留输出更安全,
+    避免严格供应商(输入token + max_tokens 超上下文)直接 400。"""
+    chars = sum(len(m.get("content", "") or "") for m in messages)
+    return int(chars / 1.25) + 256
+
+
+def _parser_max_tokens(messages: list[dict[str, str]]) -> int:
+    """按输入长度动态确定 parser 的 max_tokens。
+
+    parser 只输出结构化 JSON,远用不到 10 万 token;同时严格供应商(如 OpenRouter)会
+    校验 输入token + max_tokens ≤ 模型上下文上限,超了还没开始就 400(DeepSeek 宽容会
+    自动裁剪、不报错——同一份代码因此在两家表现不同)。取
+    min(期望输出, 上下文上限 − 估算输入 − 余量),并设下限保证 JSON 不被截断。"""
+    settings = get_settings()
+    desired = int(getattr(settings, "parser_max_output_tokens", 32000) or 32000)
+    ctx_limit = int(getattr(settings, "parser_context_limit_tokens", 131072) or 131072)
+    room = ctx_limit - _estimate_prompt_tokens(messages) - 4000
+    return max(6000, min(desired, room))
+
+
 def _chat_json(
     client: OpenAI,
     model: str,
     messages: list[dict[str, str]],
     *,
     timeout_seconds: float,
-    max_tokens: int,
 ) -> str:
     response = chat_completion(
         client,
         model=model,
         messages=messages,
         temperature=0,
-        max_tokens=max_tokens,
+        max_tokens=_parser_max_tokens(messages),
         response_format={"type": "json_object"},
         timeout=timeout_seconds,
     )
@@ -968,7 +989,6 @@ def _parse_or_repair_tender_response(
             model,
             build_parser_json_repair_prompt(content, str(first_error)),
             timeout_seconds=timeout_seconds,
-            max_tokens=100000,
         )
         try:
             return parse_tender_response(repaired)
@@ -999,7 +1019,6 @@ def parse_tender(text: str) -> TenderRequirements:
             model,
             build_parser_prompt(tender_text),
             timeout_seconds=timeout_seconds,
-            max_tokens=100000,
         )
         llm_based = _parse_or_repair_tender_response(
             content,

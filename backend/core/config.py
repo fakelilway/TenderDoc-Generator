@@ -61,6 +61,19 @@ class Settings(BaseSettings):
     bid_long_context_max_tokens: int = Field(
         100000, alias="BID_LONG_CONTEXT_MAX_TOKENS"
     )
+    # 技术卷各节正文 LLM 调用相互独立,用有界并发把 25 节从串行约 25 分钟降到
+    # 约 5-6 分钟。上限保守取值以免触发 DeepSeek 限流;瞬时 429 由 llm_client 重试兜底。
+    bid_writer_concurrency: int = Field(5, alias="BID_WRITER_CONCURRENCY")
+    # Parser 只输出结构化 JSON,不需要很大的输出预算。严格供应商(如 OpenRouter)会校验
+    # 输入token + max_tokens ≤ 模型上下文上限,超了直接 400(DeepSeek 宽容会自动裁剪、不报错)。
+    # 故 parser 的 max_tokens 按输入长度动态算:min(下方期望, 上下文上限 - 估算输入 - 余量)。
+    # 模型上下文不同时(如 OpenRouter 某模型 163840)可调 PARSER_CONTEXT_LIMIT_TOKENS。
+    parser_max_output_tokens: int = Field(
+        32000, alias="PARSER_MAX_OUTPUT_TOKENS"
+    )
+    parser_context_limit_tokens: int = Field(
+        131072, alias="PARSER_CONTEXT_LIMIT_TOKENS"
+    )
 
     embedding_model: str = Field("BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_device: str = Field("cpu", alias="EMBEDDING_DEVICE")

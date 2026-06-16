@@ -370,3 +370,19 @@ def test_extract_format_requirements_empty_when_no_chapter():
     from agents.parser_agent import _extract_format_requirements
 
     assert _extract_format_requirements("本项目位于萧县，计划工期90日历天。") == ""
+
+
+def test_parser_max_tokens_fits_context_for_long_input() -> None:
+    # 修复点:parser 原硬编码 max_tokens=100000,长招标文件下 输入+输出 撑爆上下文
+    # → 严格供应商(OpenRouter)直接 400。现按输入长度动态降,保证不超窗口。
+    from agents.parser_agent import _estimate_prompt_tokens, _parser_max_tokens
+
+    short = [{"role": "user", "content": "项目名称：测试项目"}]
+    assert _parser_max_tokens(short) == 32000  # 短输入给到期望输出上限
+
+    long_msgs = [{"role": "user", "content": "评" * 120000}]  # 约 12 万字超长招标文件
+    mt = _parser_max_tokens(long_msgs)
+    est = _estimate_prompt_tokens(long_msgs)
+    assert mt >= 6000  # 不低于下限,JSON 不被截断
+    assert mt < 32000  # 长输入确实被动态降了
+    assert est + mt <= 131072  # 核心:估算输入 + 预留输出 ≤ 默认上下文上限
