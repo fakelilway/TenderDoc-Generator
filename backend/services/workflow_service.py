@@ -267,6 +267,7 @@ def run_bid_workflow(
         company_profile=company_profile,
         original_format_docx_available=_is_original_format(project),
         tender_bytes=tender_bytes,
+        confirmed_technical_outline=state.bid_outline,
     )
     state.draft_volumes = v2_pkg.volume_map()
     state.draft_markdown = v2_pkg.combined_markdown

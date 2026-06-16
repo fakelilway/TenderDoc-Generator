@@ -128,6 +128,102 @@ def test_v2_technical_volume_uses_writer_content_without_repeating_format_page(
     assert "施工组织正文" in package.technical_markdown
 
 
+def test_sections_from_confirmed_outline_maps_titles_and_focus() -> None:
+    confirmed = [
+        {"title": "总体施工组织布置及规划", "focus_points": ["施工部署", "总体目标"]},
+        {"title": "主要工程施工方案与技术措施", "focus_points": []},
+        {"title": "工期保证体系及措施", "focus_points": ["进度计划"], "target_chars": 2000},
+        {"title": "质量管理体系及保证措施", "focus_points": ["三检制"]},
+    ]
+    sections = v2_generation_service._sections_from_confirmed_outline(confirmed)
+    assert sections is not None
+    assert [s["title"] for s in sections] == [
+        "总体施工组织布置及规划",
+        "主要工程施工方案与技术措施",
+        "工期保证体系及措施",
+        "质量管理体系及保证措施",
+    ]
+    # focus_points become the per-section must-cover guidance
+    assert "施工部署" in sections[0]["must_cover"]
+    assert "三检制" in sections[3]["must_cover"]
+    # explicit target honored; default applied otherwise
+    assert sections[2]["target_chars"] == 2000
+    assert sections[0]["target_chars"] == 1500
+
+
+def test_sections_from_confirmed_outline_falls_back_when_thin() -> None:
+    assert v2_generation_service._sections_from_confirmed_outline(None) is None
+    assert v2_generation_service._sections_from_confirmed_outline([]) is None
+    # too few sections → None so caller uses canonical/legacy logic
+    assert (
+        v2_generation_service._sections_from_confirmed_outline(
+            [{"title": "施工组织设计", "focus_points": []}]
+        )
+        is None
+    )
+
+
+def test_confirmed_outline_overrides_canonical_in_generation(monkeypatch) -> None:
+    """A confirmed bid_outline_json drives the technical目录, not the hardcoded one."""
+    requirements = TenderRequirements(
+        project_name="测试项目",
+        format_outline_tree={
+            "technical": [
+                FormatOutlineNode(
+                    title="投标文件（技术文件）",
+                    children=[FormatOutlineNode(title="一、施工组织设计")],
+                )
+            ]
+        },
+    )
+    page = FormatPage("一、施工组织设计", "正文", "prose_section", "technical")
+    monkeypatch.setattr(
+        v2_generation_service, "extract_format_pages", lambda _t: {"commercial": [page]}
+    )
+    monkeypatch.setattr(
+        v2_generation_service,
+        "assign_page_volumes",
+        lambda _p, _r: {"commercial": [], "technical": [page], "pricing": []},
+    )
+    monkeypatch.setattr(
+        v2_generation_service,
+        "fill_page_template",
+        lambda raw, profile, title: v2_generation_service.FillResult(
+            title=title, raw_template=raw, filled_template=raw, fields=[], missing=[]
+        ),
+    )
+    monkeypatch.setattr(
+        v2_generation_service,
+        "fill_technical_volume",
+        lambda **kw: v2_generation_service.VolumeFillResult(
+            volume="technical",
+            nodes=[NodeFillResult(title=t, content="正文。") for t in kw["node_titles"]],
+        ),
+    )
+    monkeypatch.setattr(
+        v2_generation_service, "full_audit", lambda **_k: AuditResult(True, [], [], [])
+    )
+
+    confirmed = [
+        {"title": "甲节-总体部署", "focus_points": ["要点A"]},
+        {"title": "乙节-主要施工方案", "focus_points": []},
+        {"title": "丙节-工期保证", "focus_points": []},
+        {"title": "丁节-质量保证", "focus_points": []},
+    ]
+    package = v2_generation_service.generate_v2_bid_package(
+        requirements,
+        {},
+        company_name="安徽正奇建设有限公司",
+        tender_text="第八章 投标文件格式\n一、施工组织设计",
+        confirmed_technical_outline=confirmed,
+    )
+    # The confirmed outline's titles drive the目录 …
+    assert "## 甲节-总体部署" in package.technical_markdown
+    assert "## 丁节-质量保证" in package.technical_markdown
+    # … and the canonical hardcoded outline is NOT substituted.
+    assert "第一章 总体施工组织布置及规划" not in package.technical_markdown
+
+
 def test_v2_format_audit_rejects_flattened_form_tables() -> None:
     report = audit_format_layer(
         pages=[
