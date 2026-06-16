@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from agents.content_writer_agent import NodeFillResult
 from agents.form_filler_agent import fill_page_template
 from services import v2_generation_service
 from services.format_skeleton_service import FormatPage
@@ -98,9 +99,12 @@ def test_v2_technical_volume_uses_writer_content_without_repeating_format_page(
     monkeypatch.setattr(
         v2_generation_service,
         "fill_technical_volume",
-        lambda **_kwargs: v2_generation_service.VolumeFillResult(
+        lambda **kw: v2_generation_service.VolumeFillResult(
             volume="technical",
-            combined="## 一、施工组织设计\n\n施工组织正文。\n\n## 二、其他内容\n\n其他正文。",
+            nodes=[
+                NodeFillResult(title=t, content="施工组织正文。")
+                for t in kw["node_titles"]
+            ],
         ),
     )
     monkeypatch.setattr(
@@ -320,15 +324,21 @@ def test_v2_skips_reconstructed_format_audit_when_original_export_available(
     monkeypatch.setattr(
         v2_generation_service,
         "fill_technical_volume",
-        lambda **_kwargs: v2_generation_service.VolumeFillResult(
+        lambda **kw: v2_generation_service.VolumeFillResult(
             volume="technical",
-            combined=(
-                "测试项目施工组织设计正文。\n"
-                "施工部署严格响应招标文件。\n"
-                "质量、安全、进度、环保措施完整。\n"
-                "机械人员投入结合项目特点安排。\n"
-                "竣工资料和缺陷修复按合同执行。"
-            ),
+            nodes=[
+                NodeFillResult(
+                    title=t,
+                    content=(
+                        "测试项目施工组织设计正文。\n"
+                        "施工部署严格响应招标文件。\n"
+                        "质量、安全、进度、环保措施完整。\n"
+                        "机械人员投入结合项目特点安排。\n"
+                        "竣工资料和缺陷修复按合同执行。"
+                    ),
+                )
+                for t in kw["node_titles"]
+            ],
         ),
     )
 

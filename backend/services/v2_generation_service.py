@@ -257,11 +257,23 @@ def generate_v2_bid_package(
     def _call_content_writer(
         sections: list[dict],
     ) -> tuple[VolumeFillResult | None, str]:
-        """Write prose per-node for depth. Each section gets a dedicated LLM call
-        with its must-cover guidance and per-section length budget, so the
-        technical volume reaches winning-bid depth (~25 deep sub-sections)."""
+        """Write prose for every technical section in one bounded-concurrency pass.
+
+        Each section still gets its own focused LLM call (with its must-cover
+        guidance, distributed 评分项/废标项 and per-section length budget) for
+        winning-bid depth (~25 deep sub-sections), but the calls now run
+        concurrently inside ``fill_technical_volume`` (capped by
+        ``BID_WRITER_CONCURRENCY``), cutting the volume from ~25 min to ~5-6 min."""
         titles = [s["title"] for s in sections]
         chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+        knowledge_chunks = [
+            {
+                "content": str(c)
+                if isinstance(c, str)
+                else str(getattr(c, "content", c))
+            }
+            for c in chunks[:MAX_KNOWLEDGE_CHUNKS]
+        ]
         # Distribute scored/废标 criteria across nodes once, so each node only
         # carries the items it should respond to (avoids cross-section bloat).
         score_by_title = _distribute_requirement_items(
@@ -270,35 +282,35 @@ def generate_v2_bid_package(
         invalid_by_title = _distribute_requirement_items(
             titles, requirements.invalid_bid_items
         )
+        guidance_by_title = {s["title"]: str(s.get("must_cover", "")) for s in sections}
+        min_chars_by_title = {
+            s["title"]: int(s.get("target_chars", 0) or 0) for s in sections
+        }
+
+        result = fill_technical_volume(
+            node_titles=titles,
+            project_name=requirements.project_name or "投标项目",
+            requirements=requirements.model_dump(),
+            company_name=company_name,
+            knowledge_chunks=knowledge_chunks,
+            tender_text=tender_text,
+            score_items_by_title=score_by_title,
+            invalid_items_by_title=invalid_by_title,
+            guidance_by_title=guidance_by_title,
+            min_chars_by_title=min_chars_by_title,
+            max_workers=max(1, int(getattr(settings, "bid_writer_concurrency", 5) or 1)),
+        )
+
+        # Reassemble in section order; the format-tree title is the only top-level
+        # heading per section (writer bodies are already cleaned of echoed ones).
         all_results: list[str] = []
-        first_result = None
-        for section in sections:
-            title = section["title"]
-            result = fill_technical_volume(
-                node_titles=[title],  # Single node for deep coverage
-                project_name=requirements.project_name or "投标项目",
-                requirements=requirements.model_dump(),
-                company_name=company_name,
-                knowledge_chunks=[
-                    {
-                        "content": str(c)
-                        if isinstance(c, str)
-                        else str(getattr(c, "content", c))
-                    }
-                    for c in chunks[:MAX_KNOWLEDGE_CHUNKS]
-                ],
-                tender_text=tender_text,
-                score_items=score_by_title.get(title, []),
-                invalid_items=invalid_by_title.get(title, []),
-                section_guidance=str(section.get("must_cover", "")),
-                min_chars=int(section.get("target_chars", 0) or 0),
+        for title, node in zip(titles, result.nodes):
+            section_body = _strip_writer_top_level_headings(
+                f"\n## {title}\n\n{node.content}\n"
             )
-            if first_result is None:
-                first_result = result
-            section_body = _strip_writer_top_level_headings(result.combined)
             all_results.append(f"## {title}\n\n{section_body}")
         combined = "\n\n".join(all_results)
-        return first_result, combined
+        return result, combined
 
     if not original_format_docx_available and classified.get("technical"):
         for page in classified["technical"]:

@@ -47,7 +47,6 @@ def build_node_fill_prompt(
     requirements: dict[str, Any],
     company_name: str,
     knowledge_chunks: list[dict[str, Any]] | None = None,
-    previous_node_content: str = "",
     tender_text: str = "",
     score_items: list[dict[str, Any]] | None = None,
     invalid_items: list[dict[str, Any]] | None = None,
@@ -78,10 +77,6 @@ def build_node_fill_prompt(
         content = str(chunk.get("content", "") or chunk.get("snippet", "")).strip()
         if content:
             snippets.append(redact_pii(content)[:700])
-
-    prev = ""
-    if previous_node_content:
-        prev = f"\n前一节内容（连贯性参考，不可重复）：\n{previous_node_content}"
 
     score_block = _format_requirement_items(score_items)
     invalid_block = _format_requirement_items(invalid_items)
@@ -118,13 +113,12 @@ def build_node_fill_prompt(
 ## 本节点须规避的废标项
 {invalid_block or '（无直接对应废标项）'}
 
-{prev}
-
 ## 写作风格与深度
 - 紧扣本工程的项目名称、建设地点、规模与招标范围展开，避免可套用到任何项目的通用空话。
 - 用确定性工程用语（"本工程采用""施工方法为""具体措施如下"），不写"我们建议""可考虑"等推测语。
 - 给出可量化指标（数值、规格、频次、验收标准、责任分工），少用形容词、多用数据与步骤。
-- 与前一节口吻、术语、详略保持一致，承接而不重复。
+- 只撰写与本节点"{node_title}"直接相关的内容，不复述工程概况/项目背景，不与其他章节重复；
+  上面的项目背景仅作为约束（确保工期、质量与安全目标、工程量等表述与全文一致），不得整段照搬或改写概况。
 
 ## 写作规则
 1. 只写本节点正文，不得输出任何标题或 Markdown 标题符号。

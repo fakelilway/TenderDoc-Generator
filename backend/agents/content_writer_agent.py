@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 # A施工组织设计 section that falls below this is too thin to be competitive, so
 # we rewrite it once with a deepen instruction before accepting it.
 MIN_NODE_CONTENT_CHARS = 1200
+
+# Default bounded fan-out for the per-node LLM calls. Each node is independent,
+# so we generate several at once; the cap keeps us under the provider rate limit.
+DEFAULT_WRITER_CONCURRENCY = 5
 
 _WS = re.compile(r"\s+")
 
@@ -64,36 +69,53 @@ def fill_technical_volume(
     invalid_items: list[dict[str, Any]] | None = None,
     section_guidance: str = "",
     min_chars: int = 0,
+    score_items_by_title: dict[str, list[dict[str, Any]]] | None = None,
+    invalid_items_by_title: dict[str, list[dict[str, Any]]] | None = None,
+    guidance_by_title: dict[str, str] | None = None,
+    min_chars_by_title: dict[str, int] | None = None,
+    max_workers: int = DEFAULT_WRITER_CONCURRENCY,
 ) -> VolumeFillResult:
-    """Fill all prose nodes in the technical volume.
+    """Fill all prose nodes in the technical volume with bounded concurrency.
 
-    Each node gets a focused LLM call. Nodes are processed sequentially
-    to respect rate limits; they are independent so future versions can
-    parallelize via ThreadPoolExecutor.
+    Each node gets a focused, independent LLM call. The same ``requirements`` are
+    injected into every node's prompt so工期/质量·安全目标/工程量 stay consistent
+    across sections, while the prompt itself instructs each node to write only its
+    own topic (no工程概况复述, no cross-section duplication) — so we deliberately
+    drop the old adjacent-node continuity, which does not matter for a bid and
+    blocked parallelism.
 
-    ``score_items`` / ``invalid_items`` are the relevant评分项/废标项 for these
-    nodes; ``section_guidance`` is the canonical must-cover points for the
-    section; ``min_chars`` is the per-section length target.
+    Nodes run through a :class:`ThreadPoolExecutor` capped at ``max_workers`` to
+    cut the ~25-section volume from ~25 min to ~5-6 min; the cap keeps us under
+    the provider's rate limit and transient 429s are retried in ``core.llm_client``.
+    Results are reassembled in ``node_titles`` order, and one node's failure is
+    aggregated and re-raised *after* the others finish rather than cancelling them.
+
+    Per-node overrides (``*_by_title``) let a caller pass each section its own
+    评分项/废标项/must-cover/length budget; the scalar ``score_items`` /
+    ``invalid_items`` / ``section_guidance`` / ``min_chars`` remain as shared
+    fallbacks for single-node callers.
     """
-    # Per-section length budget (canonical outline targets), else the default.
-    target = min_chars or MIN_NODE_CONTENT_CHARS
-    threshold = max(int(target * 0.75), MIN_NODE_CONTENT_CHARS)
+    score_by_title = score_items_by_title or {}
+    invalid_by_title = invalid_items_by_title or {}
+    guidance_map = guidance_by_title or {}
+    min_chars_map = min_chars_by_title or {}
 
-    results: list[NodeFillResult] = []
-    previous_content: str = ""
+    def _fill_node(title: str) -> NodeFillResult:
+        # Per-section length budget (canonical outline targets), else the default.
+        node_min = min_chars_map.get(title, min_chars)
+        target = node_min or MIN_NODE_CONTENT_CHARS
+        threshold = max(int(target * 0.75), MIN_NODE_CONTENT_CHARS)
 
-    for title in node_titles:
         messages = build_node_fill_prompt(
             node_title=title,
             project_name=project_name,
             requirements=requirements,
             company_name=company_name,
             knowledge_chunks=knowledge_chunks,
-            previous_node_content=previous_content,
             tender_text=tender_text,
-            score_items=score_items,
-            invalid_items=invalid_items,
-            section_guidance=section_guidance,
+            score_items=score_by_title.get(title, score_items),
+            invalid_items=invalid_by_title.get(title, invalid_items),
+            section_guidance=guidance_map.get(title, section_guidance),
             target_chars=target,
         )
         raw = _generate_messages_with_llm(
@@ -114,17 +136,48 @@ def fill_technical_volume(
                 "(%d < %d chars) — flagged for review, not silently accepted.",
                 title, _compact_len(cleaned), threshold,
             )
-        results.append(NodeFillResult(title=title, content=cleaned, short=short))
-        previous_content = cleaned[:1200]  # context for next node (continuity)
+        return NodeFillResult(title=title, content=cleaned, short=short)
 
-    # Combine into one markdown per volume
-    combined_parts = []
-    for r in results:
-        combined_parts.append(f"\n## {r.title}\n\n{r.content}\n")
+    # Reassembled in node order; failures collected so one bad node does not
+    # cancel siblings (no silent placeholder prose — we raise once all settle).
+    results: list[NodeFillResult | None] = [None] * len(node_titles)
+    errors: list[tuple[str, BaseException]] = []
+    workers = max(1, min(max_workers, len(node_titles)))
 
+    if workers == 1:
+        for idx, title in enumerate(node_titles):
+            try:
+                results[idx] = _fill_node(title)
+            except Exception as exc:  # noqa: BLE001 - aggregated and re-raised below
+                logger.error("Technical node '%s' failed", title, exc_info=True)
+                errors.append((title, exc))
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_idx = {
+                executor.submit(_fill_node, title): idx
+                for idx, title in enumerate(node_titles)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as exc:  # noqa: BLE001 - aggregated and re-raised below
+                    logger.error(
+                        "Technical node '%s' failed", node_titles[idx], exc_info=True
+                    )
+                    errors.append((node_titles[idx], exc))
+
+    if errors:
+        failed = "、".join(title for title, _ in errors)
+        raise RuntimeError(
+            f"技术正文生成失败的节点（{len(errors)}/{len(node_titles)}）：{failed}"
+        ) from errors[0][1]
+
+    final_nodes = [r for r in results if r is not None]
+    combined_parts = [f"\n## {r.title}\n\n{r.content}\n" for r in final_nodes]
     return VolumeFillResult(
         volume="technical",
-        nodes=results,
+        nodes=final_nodes,
         combined="\n".join(combined_parts),
     )
 

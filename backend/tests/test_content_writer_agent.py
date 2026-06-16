@@ -1,4 +1,7 @@
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 from agents import content_writer_agent
 
@@ -95,3 +98,86 @@ def test_long_node_does_not_trigger_rewrite(monkeypatch) -> None:
     res = _fill_one()
     assert not any("deepen" in c for c in calls)
     assert res.nodes[0].short is False
+
+
+_LONG = "充分详实的工程正文内容。" * 200  # above budget → no deepen rewrite
+
+
+def test_nodes_run_concurrently_and_reassemble_in_order(monkeypatch) -> None:
+    titles = [f"第{i}节" for i in range(4)]
+    # A 4-party barrier only releases if all 4 node calls are in flight at once;
+    # if the pool serialized them, the first wait would time out (BrokenBarrier).
+    barrier = threading.Barrier(4, timeout=5)
+
+    def fake(messages, *, agent_name, continuation_instruction=""):
+        barrier.wait()
+        return _LONG
+
+    monkeypatch.setattr(content_writer_agent, "_generate_messages_with_llm", fake)
+
+    res = content_writer_agent.fill_technical_volume(
+        node_titles=titles,
+        project_name="P",
+        requirements={},
+        company_name="C",
+        max_workers=4,
+    )
+
+    # Concurrency proven (no BrokenBarrierError) and results kept in node order.
+    assert [n.title for n in res.nodes] == titles
+
+
+def test_one_node_failure_is_isolated_and_aggregated(monkeypatch) -> None:
+    titles = ["好节点A", "坏节点B", "好节点C"]
+    seen: list[str] = []
+    lock = threading.Lock()
+
+    def fake(messages, *, agent_name, continuation_instruction=""):
+        with lock:
+            seen.append(agent_name)
+        if "坏节点B" in agent_name:
+            raise RuntimeError("boom")
+        return _LONG
+
+    monkeypatch.setattr(content_writer_agent, "_generate_messages_with_llm", fake)
+
+    with pytest.raises(RuntimeError, match="坏节点B"):
+        content_writer_agent.fill_technical_volume(
+            node_titles=titles,
+            project_name="P",
+            requirements={},
+            company_name="C",
+            max_workers=3,
+        )
+
+    # The failing node did not cancel its siblings — both good nodes still ran.
+    assert any("好节点A" in s for s in seen)
+    assert any("好节点C" in s for s in seen)
+
+
+def test_per_title_overrides_route_to_each_node(monkeypatch) -> None:
+    titles = ["质量管理", "安全文明"]
+    captured: dict[str, str] = {}
+
+    def fake(messages, *, agent_name, continuation_instruction=""):
+        user = next(m["content"] for m in messages if m["role"] == "user")
+        # agent_name is content-writer-<title[:20]>; key by the title fragment.
+        title = agent_name.replace("content-writer-", "")
+        captured[title] = user
+        return _LONG
+
+    monkeypatch.setattr(content_writer_agent, "_generate_messages_with_llm", fake)
+
+    content_writer_agent.fill_technical_volume(
+        node_titles=titles,
+        project_name="P",
+        requirements={},
+        company_name="C",
+        guidance_by_title={"质量管理": "三检制要点", "安全文明": "安全网封闭"},
+        max_workers=2,
+    )
+
+    assert "三检制要点" in captured["质量管理"]
+    assert "安全网封闭" in captured["安全文明"]
+    # guidance is not cross-contaminated between sections
+    assert "安全网封闭" not in captured["质量管理"]
