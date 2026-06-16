@@ -23,6 +23,7 @@ import { FinalChecklistPanel } from "@/components/FinalChecklistPanel";
 import { HumanActionPrompt } from "@/components/HumanActionPrompt";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
 import { NavLinkButton } from "@/components/NavLinkButton";
+import { OutlineEditor } from "@/components/OutlineEditor";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
@@ -134,7 +135,7 @@ function readableStatus(status: string) {
     parsing: "解析中",
     parsed: "已解析",
     parsed_confirmed: "解析已确认",
-    outline_ready: "可以生成",
+    outline_ready: "待确认大纲",
     outline_review: "可以生成",
     outline_confirmed: "可以生成",
     processing: "处理中",
@@ -160,7 +161,9 @@ function nextStepCopy(status: string, hasProject: boolean) {
     uploaded: "下一步：解析招标文件，确认项目名称、招标人、工期、质量标准等字段。",
     parsing: "正在解析招标文件，请等待结构化结果出现。",
     parsed: "下一步：检查解析字段，确认无误后生成标书目录。",
-    parsed_confirmed: "下一步：点击「开始生成」，系统会调用大模型生成完整标书。",
+    parsed_confirmed: "下一步：系统正在生成标书目录草稿，请在「大纲确认」里核对。",
+    outline_ready:
+      "下一步：在「大纲确认」里核对/编辑技术卷目录（可增删章节、调整顺序、勾选附图位），确认后即可开始生成。",
     processing: "正在准备生成上下文，系统会读取招标文件、知识库和可选风格案例。",
     generating: "正在调用大模型生成标书。长文档会停留较久，请看实时状态。",
     reviewing: "正在审查废标风险和响应完整性。",
@@ -310,7 +313,9 @@ export function TenderWorkspace({
   const dirtyFields = useRef<Set<DirtyField>>(new Set());
   const chunkSaveSeq = useRef(0);
   const [knowledgeTags, setKnowledgeTags] = useState<string[]>([]);
-  const [centerTab, setCenterTab] = useState<"parsed" | "draft" | "preview">("parsed");
+  const [centerTab, setCenterTab] = useState<
+    "parsed" | "outline" | "draft" | "preview"
+  >("parsed");
   const [overlayDismissed, setOverlayDismissed] = useState(false);
 
   const reportError = useCallback((caught: unknown) => {
@@ -354,9 +359,12 @@ export function TenderWorkspace({
       workflowState?.awaiting_human &&
       ["human_review", "needs_revision"].includes(status)
   );
+  // Generation is gated on a CONFIRMED outline: at outline_ready the bidder
+  // must review/edit the目录 in the 大纲确认 tab and click 确认 first. (failed/
+  // generation_failed already had a confirmed outline, so re-generate is allowed.)
   const canStartWorkflow = Boolean(
     projectId &&
-      ["parsed_confirmed", "outline_ready", "outline_review", "outline_confirmed", "failed", "generation_failed"].includes(
+      ["outline_review", "outline_confirmed", "failed", "generation_failed"].includes(
         status
       )
   );
@@ -380,6 +388,8 @@ export function TenderWorkspace({
     // Auto-switch center tab based on workflow status
     if (status === "parsed" || status === "parsed_confirmed") {
       setCenterTab("parsed");
+    } else if (["outline_ready", "outline_review"].includes(status)) {
+      setCenterTab("outline");
     } else if (
       ["generated", "reviewing", "human_review", "needs_revision", "draft_saved", "approved", "finished", "generation_failed"].includes(status)
     ) {
@@ -870,18 +880,17 @@ export function TenderWorkspace({
       setStatus(confirmed.status);
       setParsedJson(confirmed.confirmed_parsed_json);
       setParsedJsonText(JSON.stringify(confirmed.confirmed_parsed_json, null, 2));
-      // Build outline, then auto-confirm it (outline editor UI removed in v2)
+      // Build a DRAFT outline and hand it to the user for review/edit. We no
+      // longer auto-confirm: the bidder must check the technical目录 against
+      // this tender (每份招标不同) and click 确认 before generation. The
+      // confirmed outline now actually drives the generated目录 (see
+      // _sections_from_confirmed_outline in v2_generation_service).
       const built = await buildProjectOutline(projectId);
       dirtyFields.current.delete("outline");
       setOutline(built.bid_outline);
       setDocumentOutline(built.document_outline ?? []);
-      // Auto-confirm outline so user can start generation immediately
-      const saved = await saveProjectOutline(
-        projectId,
-        built.bid_outline,
-        built.document_outline
-      );
-      setStatus(saved.status);
+      setStatus(built.status);
+      setCenterTab("outline");
     } catch (confirmError) {
       reportError(confirmError);
     } finally {
@@ -1429,6 +1438,18 @@ export function TenderWorkspace({
                 onClick={() => setCenterTab("parsed")}
               />
               <TabButton
+                active={centerTab === "outline"}
+                label="大纲确认"
+                badge={
+                  status === "outline_confirmed"
+                    ? "ok"
+                    : outline.length > 0
+                      ? "warn"
+                      : undefined
+                }
+                onClick={() => setCenterTab("outline")}
+              />
+              <TabButton
                 active={centerTab === "draft"}
                 label="正文编辑"
                 badge={markdown.trim() ? "ok" : undefined}
@@ -1450,6 +1471,16 @@ export function TenderWorkspace({
                   busy={actionBusy}
                   onChange={handleParsedJsonTextChange}
                   onSave={handleConfirmParsed}
+                />
+              ) : null}
+              {centerTab === "outline" ? (
+                <OutlineEditor
+                  outline={outline}
+                  documentOutline={documentOutline}
+                  busy={actionBusy}
+                  onChange={handleOutlineChange}
+                  onBuild={handleBuildOutline}
+                  onSave={handleSaveOutline}
                 />
               ) : null}
               {centerTab === "draft" ? (
@@ -1560,6 +1591,8 @@ function TabButton({
       {label}
       {badge === "ok" ? (
         <span className="h-1.5 w-1.5 rounded-full bg-[#34c759]" />
+      ) : badge === "warn" ? (
+        <span className="h-1.5 w-1.5 rounded-full bg-[#ff9500]" />
       ) : null}
     </button>
   );
