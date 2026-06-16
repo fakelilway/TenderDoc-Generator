@@ -273,6 +273,7 @@ def run_bid_workflow(
     state.draft_markdown = v2_pkg.combined_markdown
     generation_mode = "v2_format_copy"
     state.v2_format_docx = getattr(v2_pkg, 'format_docx_path', None)
+    state.v2_appendix_docx = getattr(v2_pkg, 'appendix_docx_path', None)
     if v2_pkg.audit_result:
         audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
     else:
@@ -459,6 +460,7 @@ def confirm_project(
             _delivery_markdown(state.draft_markdown)
         ),
         original_format_path=getattr(state, 'v2_format_docx', None),
+        appendix_format_path=getattr(state, 'v2_appendix_docx', None),
     )
     state.final_checklist = _build_final_checklist(requirements, state)
     if exported:

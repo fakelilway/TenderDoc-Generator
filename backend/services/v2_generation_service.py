@@ -107,6 +107,7 @@ class V2BidPackage:
     missing_checklist: list[str] = field(default_factory=list)
     audit_result: AuditResult | None = None
     format_docx_path: str | None = None  # Pre-built format DOCX from PDF
+    appendix_docx_path: str | None = None  # 技术卷附表(福昕可编辑空表,拼到技术卷末)
     audit_blocked: bool = False  # True when critical audit issues found (content still saved for preview)
 
     VOLUME_ORDER = ("commercial", "technical", "pricing")
@@ -199,6 +200,7 @@ def generate_v2_bid_package(
 
     # ── Phase 0: Build original format DOCX if PDF ──
     built_format_docx: str | None = None
+    built_appendix_docx: str | None = None
     if original_format_docx_available and tender_bytes:
         import tempfile
 
@@ -272,6 +274,25 @@ def generate_v2_bid_package(
                 "（系统不输出空壳/近似稿，请检查 PDF 格式章或转换链）："
                 + "；".join(fmt_issues)
             )
+
+    # 技术卷附表:福昕把招标附表区(附表一~八)转成可编辑空表,导出时拼到技术卷末。
+    # best-effort——失败则技术卷不含附表(投标人另行补),不影响主流程。
+    if (
+        original_format_docx_available
+        and tender_bytes
+        and str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() == "foxit"
+    ):
+        try:
+            import tempfile as _tempfile
+
+            from services.cloud_pdf_convert import convert_appendix_pages_via_cloud
+
+            _ap = _tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+            _ap.close()
+            built_appendix_docx = convert_appendix_pages_via_cloud(tender_bytes, _ap.name)
+        except Exception:
+            logger.warning("附表云转换失败 — 技术卷不含附表", exc_info=True)
+            built_appendix_docx = None
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
     if original_format_docx_available:
@@ -532,6 +553,7 @@ def generate_v2_bid_package(
         missing_checklist=missing,
         audit_result=audit,
         format_docx_path=built_format_docx,
+        appendix_docx_path=built_appendix_docx,
         audit_blocked=audit_blocked,
     )
 

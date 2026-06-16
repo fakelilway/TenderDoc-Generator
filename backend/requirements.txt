@@ -19,6 +19,7 @@ pypdf==4.0.1
 pdfplumber==0.10.3
 PyMuPDF==1.27.2.3
 python-docx==1.2.0
+docxcompose==2.2.0
 pdf2docx==0.5.13
 openpyxl==3.1.5  # 解析业绩台账 xlsx（历年中标项目统计表）→ 结构化业绩记录
 # 证件扫描件 OCR（无系统二进制依赖、可移植 Linux 内网）。注意 numpy 须保持 <2
