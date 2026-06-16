@@ -126,6 +126,31 @@ def test_fill_known_table_cells_noop_when_profile_empty() -> None:
     assert table.cell(0, 1).text.strip() == ""
 
 
+def test_fill_known_table_cells_reconstructs_fragmented_label() -> None:
+    # 中文公文表常把"投标人："逐字对齐拆成 投|标|人： 三格 + 空值格;
+    # 单格匹配不到,碎标签重组后应把 company_name 填进值格。
+    doc = Document()
+    table = doc.add_table(rows=1, cols=4)
+    table.cell(0, 0).text = "投"
+    table.cell(0, 1).text = "标"
+    table.cell(0, 2).text = "人："
+    filled = _fill_known_table_cells(doc, {"company_name": "安徽正奇建设有限公司"})
+    assert table.cell(0, 3).text.strip() == "安徽正奇建设有限公司"
+    assert filled == 1
+
+
+def test_fill_known_table_cells_fragmented_does_not_false_match() -> None:
+    # 短格拼起来不构成已知标签 → 绝不误填(防碎标签重组造出假标签)。
+    doc = Document()
+    table = doc.add_table(rows=1, cols=4)
+    table.cell(0, 0).text = "序"
+    table.cell(0, 1).text = "号"
+    table.cell(0, 2).text = "A1"
+    filled = _fill_known_table_cells(doc, {"company_name": "安徽正奇建设有限公司"})
+    assert table.cell(0, 3).text.strip() == ""
+    assert filled == 0
+
+
 def test_build_original_format_docx_copies_format_tables_verbatim(
     tmp_path: Path,
 ) -> None:

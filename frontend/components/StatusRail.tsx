@@ -141,6 +141,34 @@ function readableTraceMeta(meta: string) {
     .replace("deepseek-v4-pro", "DeepSeek V4 Pro");
 }
 
+// 各阶段预计耗时(秒)。进度条按"已用时 / 预计总时"走比例,并据此估算剩余时间。
+// 校准自实测:生成阶段(逐节写技术正文,约 25 节 LLM)约 25 分钟为主导。属估算,非精确。
+const STAGE_EXPECTED_SECONDS = [25, 300, 1500, 120, 60, 15];
+
+function stageExpected(index: number) {
+  return STAGE_EXPECTED_SECONDS[index] ?? 120;
+}
+
+function stageEtaSeconds(index: number, elapsedSeconds: number) {
+  return Math.max(0, stageExpected(index) - elapsedSeconds);
+}
+
+// 活动阶段的提示文案:始终带"已进行 + 预计剩余",这样长阶段也能看到时间推进。
+function activeStageMessage(
+  activeText: string,
+  index: number,
+  elapsedSeconds: number,
+  busy: boolean
+) {
+  if (!busy) {
+    return activeText;
+  }
+  const remaining = stageEtaSeconds(index, elapsedSeconds);
+  const remainingText =
+    remaining > 0 ? `预计剩余 ~${formatElapsed(remaining)}` : "即将完成";
+  return `${activeText}（已进行 ${formatElapsed(elapsedSeconds)} · ${remainingText}）`;
+}
+
 function stageProgress(
   status: string,
   index: number,
@@ -157,8 +185,11 @@ function stageProgress(
   }
 
   if (busy && current === index) {
-    const stageMaxProgress = [45, 55, 92, 90, 95, 98][index] ?? 92;
-    return Math.min(stageMaxProgress, 32 + Math.floor(elapsedSeconds / 4) * 2);
+    // 按"已用时 / 该阶段预计总时长"线性推进,封顶 99%(真正完成时上层切到下一阶段=100)。
+    // 这样长阶段(生成≈25分钟)不会跑几分钟就卡在 92%,而是全程按比例往前爬。
+    const expected = stageExpected(index);
+    const ratio = expected > 0 ? elapsedSeconds / expected : 1;
+    return Math.min(99, Math.max(4, Math.round(ratio * 100)));
   }
 
   const activeProgress: Record<string, number> = {
@@ -230,7 +261,12 @@ export function StatusRail({
     return () => window.clearInterval(interval);
   }, [busy, status]);
 
-  function stageTrace(stage: Stage, complete: boolean, active: boolean) {
+  function stageTrace(
+    stage: Stage,
+    index: number,
+    complete: boolean,
+    active: boolean
+  ) {
     const matched = traceEvents.filter((event) =>
       stage.traceStages.includes(event.stage)
     );
@@ -247,11 +283,10 @@ export function StatusRail({
       }));
     }
     if (active) {
-      const elapsed = busy ? `，已等待 ${formatElapsed(elapsedSeconds)}` : "";
       return [
         {
           status: "running",
-          message: `${stage.activeText}${elapsed}`
+          message: activeStageMessage(stage.activeText, index, elapsedSeconds, busy)
         }
       ];
     }
@@ -294,7 +329,7 @@ export function StatusRail({
             busy,
             elapsedSeconds
           );
-          const traces = stageTrace(stage, complete, active);
+          const traces = stageTrace(stage, index, complete, active);
 
           return (
             <li key={stage.label} className="space-y-2">
@@ -427,7 +462,8 @@ export function StatusProgressOverlay({
     matched.at(-1)?.message ||
     (progress >= 100
       ? activeStage.doneText
-      : `${activeStage.activeText}，已等待 ${formatElapsed(elapsedSeconds)}`);
+      : activeStageMessage(activeStage.activeText, activeIndex, elapsedSeconds, busy));
+  const etaRemaining = stageEtaSeconds(activeIndex, elapsedSeconds);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-2xl backdrop-saturate-50">
@@ -474,6 +510,14 @@ export function StatusProgressOverlay({
                 style={{ width: `${progress}%` }}
               />
             </div>
+            {busy && progress < 100 ? (
+              <p className="mt-2 text-xs tabular-nums text-[#6e6e73]">
+                已进行 {formatElapsed(elapsedSeconds)}
+                {etaRemaining > 0
+                  ? ` · 预计剩余 ~${formatElapsed(etaRemaining)}`
+                  : " · 即将完成"}
+              </p>
+            ) : null}
             <p className="mt-4 text-sm leading-6 text-[#3a3a3c]">
               {activeMessage}
             </p>

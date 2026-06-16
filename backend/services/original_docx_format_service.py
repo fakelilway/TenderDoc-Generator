@@ -441,11 +441,40 @@ def _set_cell_value(cell: Any, value: str) -> None:
         p_pr.append(word_wrap)
 
 
+def _row_label_at(
+    cells: Any, i: int, profile: dict[str, Any]
+) -> tuple[str, int]:
+    """从 cells[i] 起识别标签,支持被逐字拆进相邻短格的"碎标签"。
+
+    中文公文表常把"投标人："逐字对齐成 `投|标|人：` 三格,单格匹配不到。
+    这里把从 i 起连续的短格(≤3 字、非空)拼起来再匹配已知标签;一旦命中即返回
+    ``(value, label_end_index)``(label_end 为标签占用的最后一格下标)。未命中返回
+    ``("", i)``。只匹配 ``_TABLE_FILL_LABELS`` 里已有的标签,故不会凭空造出新标签。
+    """
+    text = cells[i].text.strip()
+    value = _table_label_value(text, profile)
+    if value:
+        return value, i
+    # 碎标签重组:仅拼接 ≤3 字的相邻短格(标签碎片如 投/标/人:),遇到值格/长文本即停。
+    joined = text
+    for k in range(i + 1, min(i + 4, len(cells))):
+        if cells[k]._tc is cells[i]._tc:
+            break  # 合并单元格,不算相邻碎片
+        nxt = cells[k].text.strip()
+        if not nxt or len(nxt) > 3:
+            break
+        joined += nxt
+        v = _table_label_value(joined, profile)
+        if v:
+            return v, k
+    return "", i
+
+
 def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
     """基本情况表式网格自动填:标签格 → 同行右侧第一个空值格。
 
     只写空格、绝不覆盖、不改表结构(保真);未知标签和第二个人的子标签保持空白。
-    返回填入的格数。
+    支持标签被逐字拆进相邻格的"碎标签"(见 _row_label_at)。返回填入的格数。
     """
     if not any(profile.get(key) for _, key in _TABLE_FILL_LABELS):
         return 0
@@ -453,23 +482,27 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
     for table in document.tables:
         for row in table.rows:
             cells = row.cells
-            for i, cell in enumerate(cells):
-                value = _table_label_value(cell.text.strip(), profile)
+            n = len(cells)
+            i = 0
+            while i < n:
+                value, label_end = _row_label_at(cells, i, profile)
                 if not value:
+                    i += 1
                     continue
-                for j in range(i + 1, len(cells)):
+                for j in range(label_end + 1, n):
                     target = cells[j]
-                    if target._tc is cell._tc:
-                        continue  # 同一个合并单元格
+                    if target._tc is cells[i]._tc:
+                        continue  # 同一个合并单元格(含碎标签所在格)
                     text = target.text.strip()
                     if text and _table_label_value(text, profile):
-                        continue  # 右邻又是个已知标签,跳过它继续找值格
+                        break  # 右邻又是个已知标签,本标签不填
                     if text in _TABLE_SUBLABELS:
                         continue  # 子标签(姓名/职称等),跳过去找它后面的值格
                     if _TABLE_BLANK_RE.match(text):
                         _set_cell_value(target, value)
                         filled += 1
                     break
+                i = label_end + 1
     return filled
 
 
