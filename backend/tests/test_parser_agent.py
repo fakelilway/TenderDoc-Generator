@@ -57,6 +57,36 @@ def test_parse_tender_response_strips_markdown_and_trailing_commas() -> None:
     assert parsed.project_name == "测试项目"
 
 
+def test_parse_tender_response_carries_technical_outline() -> None:
+    content = """
+    {
+      "project_name": "某道路项目",
+      "qualification_list": [],
+      "technical_score_items": [],
+      "invalid_bid_items": [],
+      "technical_outline": [
+        {"title": "总体施工组织布置及规划", "focus_points": ["施工部署"], "is_attachment": false},
+        {"title": "附表一 施工总体计划表", "focus_points": [], "is_attachment": true}
+      ]
+    }
+    """
+
+    parsed = parse_tender_response(content)
+
+    assert [s.title for s in parsed.technical_outline] == [
+        "总体施工组织布置及规划",
+        "附表一 施工总体计划表",
+    ]
+    assert parsed.technical_outline[0].focus_points == ["施工部署"]
+    assert parsed.technical_outline[1].is_attachment is True
+
+
+def test_parse_tender_response_defaults_technical_outline_empty() -> None:
+    # Tenders that don't specify a technical structure → empty (no template).
+    parsed = parse_tender_response('{"project_name": "X"}')
+    assert parsed.technical_outline == []
+
+
 def test_extract_text_from_txt_path_and_bytes() -> None:
     path_text = extract_text(FIXTURES / "sample_tender.txt")
     bytes_text = extract_text("项目名称：字节测试".encode("utf-8"), filename="sample.txt")

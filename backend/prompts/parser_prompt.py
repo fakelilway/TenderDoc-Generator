@@ -17,7 +17,7 @@ PARSER_SYSTEM_PROMPT = """角色：你是投标文件框架师——一名严谨
 3. 每一项资格、评分、废标条款必须有 title + description + source.source_text。"""
 
 
-PARSER_USER_TEMPLATE = """请从以下招标文件中提取 13 个字段。按优先级顺序逐项执行：
+PARSER_USER_TEMPLATE = """请从以下招标文件中提取 14 个字段。按优先级顺序逐项执行：
 
 【第一步：核心事实（字段 1-8）】
 1. project_name — 封面/招标公告/投标人须知中的完整项目名称
@@ -54,6 +54,15 @@ PARSER_USER_TEMPLATE = """请从以下招标文件中提取 13 个字段。按�
 10. technical_score_items — 评分/评审项：施工组织设计、主要人员、履约信誉、类似业绩、评标价、偏差率等（含合理低价法价格评分）
 11. invalid_bid_items — 所有明确写有"否决""废标""无效投标""重大偏差""不接受修正价格""低于成本""串通投标""弄虚作假"等后果的条款。同一条款可合并相近表述，但不同原因导致的否决必须分开列出。
 
+【第四步：技术标编制结构（字段 14）— 决定技术卷目录，务必忠实】
+14. technical_outline — 招标文件【明确规定】的技术标（施工组织设计/技术方案）编制结构。
+    通常出现在评标办法、技术标编制要求、或"投标人应按以下要点编制施工组织设计"之类条款里。
+    把它列出的【编制要点/章节】+【要求附的附表/附图】，按其【实际粒度原样】提取：
+    - 它列 3 条就 3 条、列 9 条就 9 条；简单就简单。**不要补全、不要套用通用模板、不要自行扩展或拆细。**
+    - 每项 {{"title": "原文要点标题（保留编号）", "focus_points": ["该要点下的具体子要求，可空"], "is_attachment": false}}
+    - 附表/附图（如"附表一 施工总体计划表""施工总平面图"）→ is_attachment 设 true。
+    - 若招标文件【没有】明确规定技术标编制结构，输出 []（绝不拿评分项硬凑，也不要套模板）。
+
 【输出 JSON 骨架】
 {{
   "project_name": "",
@@ -68,7 +77,8 @@ PARSER_USER_TEMPLATE = """请从以下招标文件中提取 13 个字段。按�
   "format_outline_tree": {{"commercial": [], "technical": [], "pricing": []}},
   "qualification_list": [],
   "technical_score_items": [],
-  "invalid_bid_items": []
+  "invalid_bid_items": [],
+  "technical_outline": []
 }}
 
 招标文件文本：
@@ -118,7 +128,8 @@ def build_parser_json_repair_prompt(
                 '  "format_outline_tree": {{"commercial": [], "technical": [], "pricing": []}},\n'
                 '  "qualification_list": [],\n'
                 '  "technical_score_items": [],\n'
-                '  "invalid_bid_items": []\n'
+                '  "invalid_bid_items": [],\n'
+                '  "technical_outline": []\n'
                 "}\n\n"
                 "待修复内容：\n"
                 f"{broken_json[:12000]}"

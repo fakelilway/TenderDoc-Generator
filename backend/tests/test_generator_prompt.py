@@ -95,20 +95,72 @@ def test_distribute_items_empty_inputs() -> None:
     assert _distribute_requirement_items(["施工组织设计"], []) == {"施工组织设计": []}
 
 
-def test_collect_technical_sections_expands_thin_outline() -> None:
+def test_build_bid_outline_uses_tender_scan_faithfully() -> None:
+    from agents.generator_agent import build_bid_outline
+    from schemas.tender import TechnicalOutlineSection, TenderRequirements
+
+    req = TenderRequirements(
+        project_name="某项目",
+        technical_outline=[
+            TechnicalOutlineSection(title="总体施工组织布置及规划", focus_points=["施工部署"]),
+            TechnicalOutlineSection(title="工期保证体系及措施"),
+            TechnicalOutlineSection(title="附表一 施工总体计划表", is_attachment=True),
+        ],
+    )
+    outline = build_bid_outline(req)
+    titles = [s.title for s in outline]
+    # 编制要点原样进目录
+    assert "总体施工组织布置及规划" in titles
+    assert "工期保证体系及措施" in titles
+    # 附表收进一个"附表与附图"节的 manual_image_slots,不单独成正文节
+    assert "附表一 施工总体计划表" not in titles
+    attach_section = next(s for s in outline if "附表" in s.title)
+    assert any(slot.title == "附表一 施工总体计划表" for slot in attach_section.manual_image_slots)
+    # 不套用硬编码 9 要点模板
+    assert "第一章、总体施工组织布置及规划" not in titles
+
+
+def test_build_bid_outline_minimal_when_no_scan_no_template() -> None:
+    from agents.generator_agent import build_bid_outline
+    from schemas.tender import TenderRequirements
+
+    # 无 technical_outline、无 bid_template → 最小中性壳,不套 9 要点模板
+    outline = build_bid_outline(TenderRequirements(project_name="某项目"))
+    assert [s.title for s in outline] == ["施工组织设计"]
+    assert outline[0].focus_points  # 带"请按本招标补充"提示
+
+
+def test_collect_technical_sections_minimal_when_thin() -> None:
     from schemas.tender import TenderRequirements
     from services.v2_generation_service import _collect_technical_sections
 
-    # Thin/generic tender outline → expand to canonical deep outline.
+    # Thin/generic tender outline → MINIMAL neutral shell, NOT a detailed template.
     req = TenderRequirements(
         project_name="某村庄建设项目",
         format_outline_tree={"technical": [{"title": "一、施工组织设计", "children": []}]},
     )
     sections = _collect_technical_sections(req)
-    assert len(sections) >= 20  # canonical deep outline
-    assert any("总体施工组织布置" in s["title"] for s in sections)
+    assert [s["title"] for s in sections] == ["施工组织设计"]
     assert all(s.get("target_chars", 0) > 0 for s in sections)
-    assert sum(s["target_chars"] for s in sections) > 30000  # winning-bid depth
+
+
+def test_collect_technical_sections_honors_specific_tender_outline() -> None:
+    from schemas.tender import TenderRequirements
+    from services.v2_generation_service import _collect_technical_sections
+
+    # A tender that DOES specify real sections → honored as-is, any granularity.
+    req = TenderRequirements(
+        project_name="某道路项目",
+        format_outline_tree={
+            "technical": [
+                {"title": "路基工程施工方案", "children": []},
+                {"title": "路面工程施工方案", "children": []},
+            ]
+        },
+    )
+    titles = [s["title"] for s in _collect_technical_sections(req)]
+    assert "路基工程施工方案" in titles
+    assert "路面工程施工方案" in titles
 
 
 def test_prompt_includes_section_guidance_and_length() -> None:

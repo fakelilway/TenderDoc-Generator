@@ -536,24 +536,25 @@ _GENERIC_TECH_TITLES = (
 
 
 def _collect_technical_sections(requirements: TenderRequirements) -> list[dict]:
-    """Return technical sub-sections to generate: {title, must_cover, target_chars}.
+    """LEGACY fallback for the technical目录 — only when no confirmed
+    ``bid_outline_json`` drives generation (see ``_sections_from_confirmed_outline``).
 
-    Uses the tender's own technical outline when it is genuinely detailed
-    (≥4 specific sub-sections); otherwise expands to the canonical
-    施工组织设计 outline (25 deep sections) derived from real winning bids.
+    Honour the tender's own technical outline at whatever granularity it has
+    (列几条就几条). When the tender specifies nothing usable, return a minimal
+    neutral shell rather than imposing the detailed canonical outline — 招标各不
+    相同，有的技术标目录就很简单，套统一模板反而画蛇添足/不响应。真正的结构由
+    人工在大纲编辑器里按本招标定稿。
     """
-    from prompts.construction_plan_outline import CONSTRUCTION_PLAN_OUTLINE
-
     titles = _collect_technical_titles(requirements)
     specific = [
         t for t in titles
         if not any(g in t for g in _GENERIC_TECH_TITLES)
     ]
-    if len(specific) >= 4:
-        # Tender provides a real technical content outline — honor it.
+    if specific:
+        # Tender provides its own technical outline — honor it as-is.
         return [{"title": t, "must_cover": "", "target_chars": 1500} for t in titles]
-    # Thin/generic outline → use the canonical deep construction-plan outline.
-    return [dict(s) for s in CONSTRUCTION_PLAN_OUTLINE]
+    # Nothing specified → minimal neutral shell, NOT a detailed template.
+    return [{"title": "施工组织设计", "must_cover": "", "target_chars": 1500}]
 
 
 # Default per-section length budget for a human-confirmed outline, matching the
@@ -597,8 +598,9 @@ def _sections_from_confirmed_outline(
                 or _CONFIRMED_OUTLINE_TARGET_CHARS,
             }
         )
-    # Guard: only drive generation from a substantive confirmed outline.
-    if len(sections) < 4:
+    # Honour a human-confirmed outline at whatever size it is — a deliberately
+    # simple 2-3 section目录 is valid (招标各不相同). Only fall back when empty.
+    if not sections:
         return None
     return sections
 

@@ -120,10 +120,10 @@ def test_v2_technical_volume_uses_writer_content_without_repeating_format_page(
         tender_text="第八章 投标文件格式\n一、施工组织设计",
     )
 
-    # Thin tender technical outline now expands to the canonical deep
-    # construction-plan outline (25 sections derived from real winning bids).
-    assert "## 第一章 总体施工组织布置及规划" in package.technical_markdown
-    assert "## 质量管理体系与质量保证措施" in package.technical_markdown
+    # Thin/generic tender outline now falls back to a MINIMAL neutral shell
+    # (single 施工组织设计 section), NOT an imposed detailed canonical template.
+    assert "## 施工组织设计" in package.technical_markdown
+    assert "## 第一章 总体施工组织布置及规划" not in package.technical_markdown
     assert "投标文件（技术文件）\n投标人应按评审因素编制" not in package.technical_markdown
     assert "施工组织正文" in package.technical_markdown
 
@@ -151,16 +151,18 @@ def test_sections_from_confirmed_outline_maps_titles_and_focus() -> None:
     assert sections[0]["target_chars"] == 1500
 
 
-def test_sections_from_confirmed_outline_falls_back_when_thin() -> None:
+def test_sections_from_confirmed_outline_honors_small_and_only_empty_falls_back() -> None:
+    # Empty/None → None so caller uses legacy logic.
     assert v2_generation_service._sections_from_confirmed_outline(None) is None
     assert v2_generation_service._sections_from_confirmed_outline([]) is None
-    # too few sections → None so caller uses canonical/legacy logic
-    assert (
-        v2_generation_service._sections_from_confirmed_outline(
-            [{"title": "施工组织设计", "focus_points": []}]
-        )
-        is None
+    # A deliberately simple confirmed outline (even a single section) is HONORED
+    # now — 招标各不相同，简单目录也合法。
+    small = v2_generation_service._sections_from_confirmed_outline(
+        [{"title": "施工组织设计", "focus_points": ["总体部署"]}]
     )
+    assert small is not None
+    assert [s["title"] for s in small] == ["施工组织设计"]
+    assert "总体部署" in small[0]["must_cover"]
 
 
 def test_confirmed_outline_overrides_canonical_in_generation(monkeypatch) -> None:
