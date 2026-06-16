@@ -88,23 +88,36 @@ const PreviewBlock = memo(function PreviewBlock({
 
 export const MarkdownPreview = memo(function MarkdownPreview({
   markdown,
-  activeLine
+  activeLine,
+  lineOffset = 0
 }: {
   markdown: string;
   activeLine: number | null;
+  // When rendering a slice of a larger doc (e.g. one delivery volume), the
+  // offset of this slice's first line so block lineNumbers stay absolute and
+  // activeLine scrolling still targets the right anchor.
+  lineOffset?: number;
 }) {
-  // Re-parse only when the markdown changes, not on every poll tick or
-  // activeLine update.
-  const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
+  // Re-parse only when the markdown (or its offset) changes, not on every poll
+  // tick or activeLine update.
+  const blocks = useMemo(
+    () => parseMarkdown(markdown, lineOffset),
+    [markdown, lineOffset]
+  );
 
   useEffect(() => {
     if (!activeLine) {
       return;
     }
+    // Depend on the rendered slice (markdown/lineOffset) too: when a jump targets
+    // a line in the OTHER volume, the parent auto-switches previewVolume and this
+    // preview re-renders with the slice that finally contains #line-{activeLine}.
+    // activeLine itself is unchanged across that switch, so without these deps the
+    // scroll would never re-fire on the volume that actually has the anchor.
     document
       .getElementById(`line-${activeLine}`)
       ?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [activeLine]);
+  }, [activeLine, markdown, lineOffset]);
 
   return (
     <div>
