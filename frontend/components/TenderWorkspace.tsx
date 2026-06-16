@@ -1219,7 +1219,7 @@ export function TenderWorkspace({
               </div>
             </div>
 
-            <nav className="flex items-center gap-2 overflow-x-auto pb-1 lg:justify-end lg:pb-0">
+            <nav className="flex flex-wrap items-center gap-2 lg:justify-end">
               <NavLinkButton href="/projects" icon={FolderOpen}>
                 历史项目
               </NavLinkButton>
