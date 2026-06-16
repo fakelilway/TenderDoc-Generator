@@ -128,6 +128,36 @@ class V2BidPackage:
         return "v2_format_copy"
 
 
+def _audit_built_format_docx(docx_path: str) -> list[str]:
+    """最低内容体检:复制出来的招标格式章 DOCX 不能是空壳。
+
+    PDF 原格式路径绕过了基于页面的格式审查(原格式模式下 filled_pages 为空),
+    一旦 pdf2docx/截图链静默产出一个几乎没有内容的文档,过去会一路绿灯发布。
+    这里做**保守**检查:只在产物近乎为空(无有效段落、无表格、无任何图片)时判失败,
+    不对版式/对齐做判断(那属 P1 渲染基线的范畴),以免误伤正常产出。返回严重问题列表。
+    """
+    from docx import Document
+
+    try:
+        doc = Document(docx_path)
+    except Exception as exc:  # noqa: BLE001 - surface as a content issue
+        return [f"格式章 DOCX 无法打开：{exc}"]
+
+    has_text = any(p.text.strip() for p in doc.paragraphs)
+    table_count = len(doc.tables)
+    inline_images = len(doc.inline_shapes)
+    # 整页截图路径用的是浮动图/VML imagedata,不计入 inline_shapes,需扫 body xml。
+    try:
+        body_xml = doc.element.body.xml
+    except Exception:  # noqa: BLE001
+        body_xml = ""
+    embedded_images = body_xml.count("<a:blip") + body_xml.count("imagedata")
+
+    if not (has_text or table_count or inline_images or embedded_images):
+        return ["格式章复制产物为空（无段落/表格/图片）——复制链可能已失败"]
+    return []
+
+
 def generate_v2_bid_package(
     requirements: TenderRequirements,
     retrieved_chunks_by_section: dict[str, list] | None = None,
@@ -214,6 +244,19 @@ def generate_v2_bid_package(
                     raise ValueError(
                         "PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。"
                     )
+
+    # Content-level audit of the copied format chapter. The PDF path bypasses
+    # the page-based format audit (filled_pages stays empty in original mode), so
+    # a silently-empty/broken copy would otherwise ship unchecked. Per the铁律
+    # (格式复制失败=硬报错,不输出空壳/近似稿) we fail loudly here.
+    if original_format_docx_available and built_format_docx:
+        fmt_issues = _audit_built_format_docx(built_format_docx)
+        if fmt_issues:
+            raise ValueError(
+                "V2 生成失败：招标格式章复制产物未通过内容体检"
+                "（系统不输出空壳/近似稿，请检查 PDF 格式章或转换链）："
+                + "；".join(fmt_issues)
+            )
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
     if original_format_docx_available:
