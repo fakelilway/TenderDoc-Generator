@@ -14,6 +14,13 @@ from docx.oxml.ns import qn
 
 FORMAT_CHAPTER_RE = re.compile(r"第[一二三四五六七八九十百\d]+章\s*(?:投标文件格式|响应文件格式)")
 NEXT_CHAPTER_RE = re.compile(r"第[一二三四五六七八九十百\d]+章")
+# A real next-chapter heading sits at the very start of a page (optionally after
+# the page number), e.g. "106第八章评标办法". Anchoring here avoids treating a
+# mid-sentence cross-reference ("…招标文件第二章…的要求") as a chapter boundary.
+_NEXT_CHAPTER_HEAD_RE = re.compile(r"^\d{0,5}第[一二三四五六七八九十百\d]+章")
+# Start of the 技术文件/报价文件 卷 inside the "投标文件格式" 章, e.g.
+# "（标段名称）施工招标投标文件（技术文件）". The 商务卷 copy ends here.
+_OTHER_VOLUME_START_RE = re.compile(r"投标文件\s*[（(]\s*(?:技术|报价|经济)")
 FORMAT_BODY_MARKERS = (
     "投标文件（商务文件）",
     "投标文件（技术文件）",
@@ -836,11 +843,15 @@ def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
         # Skip TOC pages following the chapter heading
         format_start = _skip_toc_pages(doc, format_start)
 
-        # Find the end: next chapter heading that's NOT the format chapter
+        # Find the end: the next real chapter heading, OR the start of the
+        # 技术文件/报价文件 卷 (the format chapter packs all three volumes; the
+        # 商务卷 copy must stop where 技术/报价 begins — those are生成/外部, not copied).
         format_end = doc.page_count
         for page_num in range(format_start + 1, doc.page_count):
             compact = page_compacts[page_num]
-            if _looks_like_next_chapter_page(compact):
+            if _looks_like_next_chapter_page(compact) or _looks_like_other_volume_start(
+                compact
+            ):
                 format_end = page_num
                 break
 
@@ -850,14 +861,28 @@ def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
 
 
 def _looks_like_next_chapter_page(compact_text: str) -> bool:
-    """Detect a new chapter near the start of a PDF page.
+    """Detect a NEW chapter heading at the START of a PDF page.
 
-    PDF extraction often prefixes a page number or header before the chapter
-    heading, so strict ``match`` misses real boundaries. Limiting the search to
-    the first part of the page avoids cutting on body references.
+    A real chapter heading sits at the very start of the page (optionally after a
+    leading page number), e.g. "106第八章评标办法". A "第X章" embedded mid-sentence
+    is a cross-reference (e.g. "投标人应根据招标文件第二章…的要求") and must NOT end
+    the format chapter — searching the whole page head for it falsely cut the
+    chapter and dropped later 商务 form pages (实测招标#122：p105 的
+    "…招标文件第二章…" 把资格审查后半 + 八、其他资料切掉)。
     """
-    head = compact_text[:160]
-    return bool(NEXT_CHAPTER_RE.search(head) and not FORMAT_CHAPTER_RE.search(head))
+    head = compact_text[:40]
+    if not _NEXT_CHAPTER_HEAD_RE.match(head):
+        return False
+    return not FORMAT_CHAPTER_RE.search(head)
+
+
+def _looks_like_other_volume_start(compact_text: str) -> bool:
+    """Detect the start of the 技术文件/报价文件 卷 within the format chapter.
+
+    The "投标文件格式" 章 packs all three volumes; these volume headings (not
+    "第X章") mark where the 商务卷 ends — 技术卷由 LLM 生成、报价卷外部,不照抄。
+    """
+    return bool(_OTHER_VOLUME_START_RE.search(compact_text[:60]))
 
 
 def _match_section_to_pdf_page(section: Any, page: Any) -> None:
