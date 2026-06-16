@@ -23,6 +23,10 @@ import { DraftEditor } from "@/components/DraftEditor";
 import { FinalChecklistPanel } from "@/components/FinalChecklistPanel";
 import { HumanActionPrompt } from "@/components/HumanActionPrompt";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
+import {
+  buildVolumePreviewSlices,
+  type MarkdownVolumeSlice
+} from "@/lib/markdown";
 import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
@@ -295,6 +299,9 @@ export function TenderWorkspace({
   const [deliveryFormat, setDeliveryFormat] = useState<DeliveryFormat>("docx");
   const [activeDeliveryVolume, setActiveDeliveryVolume] =
     useState<DeliveryVolumeKey>("commercial");
+  // 标书预览分卷:技术文件 / 商务文件。默认技术(施工组织设计是主生成内容)。
+  const [previewVolume, setPreviewVolume] =
+    useState<DeliveryVolumeKey>("technical");
   const [deliveryPreview, setDeliveryPreview] = useState<
     Record<DeliveryVolumeKey, DeliveryVolumePreview> | null
   >(null);
@@ -318,6 +325,28 @@ export function TenderWorkspace({
     "parsed" | "outline" | "draft" | "preview"
   >("parsed");
   const [overlayDismissed, setOverlayDismissed] = useState(false);
+
+  // 标书预览按卷拆分:把合并稿(带 tdg:volume 标记)切成技术/商务两片,行号保持
+  // 绝对(审查/评分"跳到正文行"仍能精确高亮、实时反映编辑)。无标记的老稿/手改稿
+  // 退回整篇合并稿单视图,见 buildVolumePreviewSlices。
+  const previewSlices = useMemo(
+    () => buildVolumePreviewSlices(markdown),
+    [markdown]
+  );
+
+  // 跳到正文行时,自动切到该行所属的分卷,让高亮落在可见的预览里。
+  useEffect(() => {
+    if (activeLine == null) {
+      return;
+    }
+    for (const key of ["technical", "commercial"] as DeliveryVolumeKey[]) {
+      const slice = previewSlices[key];
+      if (slice && activeLine >= slice.startLine && activeLine <= slice.endLine) {
+        setPreviewVolume(key);
+        break;
+      }
+    }
+  }, [activeLine, previewSlices]);
 
   const reportError = useCallback((caught: unknown) => {
     const message = errorMessage(caught);
@@ -1556,7 +1585,12 @@ export function TenderWorkspace({
                 />
               ) : null}
               {centerTab === "preview" ? (
-                <MarkdownPreview markdown={markdown} activeLine={activeLine} />
+                <BidPreviewTabs
+                  slices={previewSlices}
+                  activeVolume={previewVolume}
+                  onActiveVolumeChange={setPreviewVolume}
+                  activeLine={activeLine}
+                />
               ) : null}
             </div>
           </div>
@@ -1658,6 +1692,68 @@ function TabButton({
         <span className="h-1.5 w-1.5 rounded-full bg-[#ff9500]" />
       ) : null}
     </button>
+  );
+}
+
+// 标书预览的分卷子标签:技术文件 / 商务文件(用户要求两卷分开预览)。
+const bidPreviewVolumes: Array<{ key: DeliveryVolumeKey; label: string }> = [
+  { key: "technical", label: "技术文件预览" },
+  { key: "commercial", label: "商务文件预览" }
+];
+
+function BidPreviewTabs({
+  slices,
+  activeVolume,
+  onActiveVolumeChange,
+  activeLine
+}: {
+  slices: Partial<Record<DeliveryVolumeKey, MarkdownVolumeSlice>>;
+  activeVolume: DeliveryVolumeKey;
+  onActiveVolumeChange: (volume: DeliveryVolumeKey) => void;
+  activeLine: number | null;
+}) {
+  const active = slices[activeVolume] ?? null;
+  const hasActive = !!(active && active.markdown.trim());
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {bidPreviewVolumes.map((volume) => {
+          const slice = slices[volume.key];
+          const ready = !!(slice && slice.markdown.trim());
+          const isActive = activeVolume === volume.key;
+          return (
+            <button
+              key={volume.key}
+              type="button"
+              onClick={() => onActiveVolumeChange(volume.key)}
+              className={[
+                "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium transition",
+                isActive
+                  ? "border-[#007aff]/30 bg-[#007aff]/10 text-[#007aff]"
+                  : "border-black/[0.08] bg-white/56 text-[#3a3a3c] hover:bg-white"
+              ].join(" ")}
+            >
+              {volume.label}
+              {!ready ? (
+                <span className="text-[11px] font-normal text-muted">待生成</span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      {hasActive ? (
+        <MarkdownPreview
+          markdown={active!.markdown}
+          activeLine={activeLine}
+          lineOffset={active!.lineOffset}
+        />
+      ) : (
+        <div className="grid min-h-[500px] place-items-center rounded-[22px] border border-dashed border-black/[0.08] bg-white/54 text-sm text-[#8e8e93]">
+          {activeVolume === "technical" ? "技术文件" : "商务文件"}生成后在此预览
+        </div>
+      )}
+    </div>
   );
 }
 
