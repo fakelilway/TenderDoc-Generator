@@ -269,3 +269,33 @@ def test_two_volume_technical_excludes_commercial_sections(tmp_path) -> None:
     assert "资格响应" not in technical_text
     assert "投标保证金" not in technical_text
     assert "项目管理机构" not in technical_text
+
+
+def test_append_prose_falls_back_to_plaintext_when_styled_render_fails(
+    tmp_path, monkeypatch
+) -> None:
+    """转换件(如福昕云)的内置标题样式 python-docx 按名取不到,会让 add_heading/
+    _configure_styles 抛 ``KeyError: no style with name 'Heading 1'``。此时商务卷
+    合规正文必须退到纯文本追加 —— 不丢内容、绝不让整卷导出失败(=出标有下载件)。
+    回归:用户实测"显示生成好了→突然报 no style with name 'Heading 1'→无下载按钮"。"""
+    from utils import docx_exporter
+
+    base = tmp_path / "commercial.docx"
+    doc = Document()
+    doc.add_paragraph("投标人基本情况表")
+    doc.save(base)
+
+    def boom(*_a, **_k):
+        raise KeyError("no style with name 'Heading 1'")
+
+    # 函数内 `from utils.docx_exporter import _render_markdown_body` 在调用时读模块属性
+    monkeypatch.setattr(docx_exporter, "_render_markdown_body", boom)
+
+    # 不得抛异常;合规正文(带 ## 标题)仍须写入
+    generation_service._append_prose_to_docx(
+        base, "## 商务响应\n\n本公司承诺响应全部商务条款。"
+    )
+
+    text = "\n".join(p.text for p in Document(base).paragraphs)
+    assert "投标人基本情况表" in text  # 原格式章保留
+    assert "本公司承诺响应全部商务条款" in text  # 合规正文未丢
