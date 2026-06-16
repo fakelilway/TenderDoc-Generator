@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from core.config import get_settings
-from schemas.bid import BidDocumentOutlineSection, BidSectionOutline
+from schemas.bid import BidDocumentOutlineSection, BidSectionOutline, ManualImageSlot
 from schemas.bid_template import BidTemplate
 from schemas.tender import RequirementItem, TenderRequirements
 
@@ -90,21 +90,77 @@ def load_bid_template(template_path: str | Path | None = None) -> BidTemplate | 
         return None
 
 
+def _sections_from_tender_scan(
+    requirements: TenderRequirements,
+) -> list[BidSectionOutline]:
+    """Build the technical outline from what THIS tender actually specifies.
+
+    Uses ``requirements.technical_outline`` (parser-scanned 编制要点 + 附表),
+    faithfully at the tender's own granularity — 列几条就几条, simple stays
+    simple. 附表/附图 are collected into one section's manual_image_slots (they
+    are tables/figures to fill or insert, not prose). Returns ``[]`` when the
+    tender did not specify a structure, so the caller can fall back to minimal.
+    """
+    scanned = getattr(requirements, "technical_outline", None) or []
+    sections: list[BidSectionOutline] = []
+    attachments: list[ManualImageSlot] = []
+    for entry in scanned:
+        title = str(getattr(entry, "title", "") or "").strip()
+        if not title:
+            continue
+        focus = [str(p) for p in (getattr(entry, "focus_points", None) or []) if str(p).strip()]
+        if getattr(entry, "is_attachment", False):
+            attachments.append(ManualImageSlot(title=title, placement="技术标 附表"))
+        else:
+            sections.append(
+                BidSectionOutline(title=title, required=True, focus_points=focus)
+            )
+    if attachments:
+        sections.append(
+            BidSectionOutline(
+                title="附表与附图（按招标要求填表/插图）",
+                required=True,
+                focus_points=["以下附表/附图按招标文件格式要求由人工填表或插入，正文仅作简要引述。"],
+                manual_image_slots=attachments,
+            )
+        )
+    return sections
+
+
 def build_bid_outline(
     requirements: TenderRequirements,
     bid_template: BidTemplate | None = None,
 ) -> list[BidSectionOutline]:
-    template_titles = _technical_titles_from_template(bid_template)
-    source_titles = template_titles or BID_TEMPLATE_SECTION_TITLES
-    outlines: list[BidSectionOutline] = [
-        BidSectionOutline(title=title, required=True) for title in source_titles
-    ]
+    # P2 priority: (1) what THIS tender specifies (faithful, any granularity),
+    # (2) a configured company bid_template, (3) minimal neutral — NEVER impose a
+    # detailed default template (招标各不相同，有的目录就很简单). The bidder edits
+    # the draft in the outline editor before generation (P1 human gate).
+    outlines = _sections_from_tender_scan(requirements)
+    if not outlines:
+        template_titles = _technical_titles_from_template(bid_template)
+        if template_titles:
+            outlines = [
+                BidSectionOutline(title=title, required=True)
+                for title in template_titles
+            ]
+        else:
+            # Minimal neutral fallback: a single shell + a prompt to fill in per
+            # this tender. Do not auto-expand to the canonical 9/25-section outline.
+            return [
+                BidSectionOutline(
+                    title="施工组织设计",
+                    required=True,
+                    focus_points=[
+                        "未能从招标文件自动识别技术标编制结构，请按本招标要求补充章节（编制要点、附表等）。"
+                    ],
+                )
+            ]
 
     for item in requirements.technical_score_items:
         title = _section_title_for_item(item, [outline.title for outline in outlines])
         _append_focus(outlines, title, item.description)
 
-    return outlines if template_titles else outlines[:MAX_OUTLINE_SECTIONS]
+    return outlines
 
 
 def build_bid_document_outline(
