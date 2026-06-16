@@ -136,7 +136,7 @@ function readableStatus(status: string) {
     parsing: "解析中",
     parsed: "已解析",
     parsed_confirmed: "解析已确认",
-    outline_ready: "待确认大纲",
+    outline_ready: "待确认技术大纲",
     outline_review: "可以生成",
     outline_confirmed: "可以生成",
     processing: "处理中",
@@ -162,9 +162,9 @@ function nextStepCopy(status: string, hasProject: boolean) {
     uploaded: "下一步：解析招标文件，确认项目名称、招标人、工期、质量标准等字段。",
     parsing: "正在解析招标文件，请等待结构化结果出现。",
     parsed: "下一步：检查解析字段，确认无误后生成标书目录。",
-    parsed_confirmed: "下一步：系统正在生成标书目录草稿，请在「大纲确认」里核对。",
+    parsed_confirmed: "下一步：系统正在扫描招标、生成技术卷目录草稿，请在「技术大纲」里核对。",
     outline_ready:
-      "下一步：在「大纲确认」里核对/编辑技术卷目录（可增删章节、调整顺序、勾选附图位），确认后即可开始生成。",
+      "下一步：在「技术大纲」里核对/编辑技术卷目录（可添加/删除章节、调整顺序、勾选附图位），确认后即可开始生成。商务卷照抄招标格式，无需在此编辑。",
     processing: "正在准备生成上下文，系统会读取招标文件、知识库和可选风格案例。",
     generating: "正在调用大模型生成标书。长文档会停留较久，请看实时状态。",
     reviewing: "正在审查废标风险和响应完整性。",
@@ -1502,7 +1502,7 @@ export function TenderWorkspace({
               />
               <TabButton
                 active={centerTab === "outline"}
-                label="大纲确认"
+                label="技术大纲"
                 badge={
                   status === "outline_confirmed"
                     ? "ok"
