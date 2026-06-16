@@ -3,7 +3,7 @@
 本文只记录当前版本、当前路线和下一步任务。开发史请看 Git，不放在产品文档里。
 
 **当前版本：** V2 原格式复制生成内核（两卷交付）
-**当前重点：** 知识库真实资料入库、新点软件交付实测、公司内网落地
+**当前重点：** 本项目专用技术材料库（技术卷实质素材）、新点软件交付实测、公司内网落地
 **硬边界：** 招标文件原格式页是最高权威；系统不输出近似重画格式稿。
 
 ## 当前主流程
@@ -14,11 +14,12 @@ flowchart LR
     B --> C["人工确认解析"]
     C --> C2["人工确认/编辑技术卷大纲(扫招标为主)"]
     C2 --> D["选择知识库资料"]
-    D --> E["复制招标格式章为商务卷"]
-    E --> F["已知字段烧录进表单"]
-    D --> G["按确认目录写技术正文"]
+    D --> E["复制招标格式章为商务卷<br/>福昕云 PDF→可编辑 Word"]
+    E --> F["已知字段烧录进表单/自动填公司档案"]
+    D --> G["按确认目录并发写技术正文"]
+    G --> G2["福昕云转可编辑附表(一~八)拼到技术卷末尾"]
     F --> H["格式/内容/证据审查 + 废标风险审查"]
-    G --> H
+    G2 --> H
     H --> I["人工终审"]
     I --> J["下载 商务卷/技术卷 DOCX + 审查报告"]
 ```
@@ -26,10 +27,10 @@ flowchart LR
 ## 交付与格式铁律（现状）
 
 - **两卷交付：商务卷 + 技术卷。报价卷由外部造价软件单独做，本系统不产出。**
-- **商务卷 = 照抄招标格式章 + 字段填空 + 合规正文**。
-  - PDF 招标：每页**整页截图**（像素级保真），知识库已知值（投标人/地址/法定代表人/电话）在转图前**烧录进填空横线**；纯内联图，Pages/LibreOffice/Word 都能渲染；未知字段留空给新点/手填。
+- **商务卷 = 照抄招标格式章 + 字段自动填 + 合规正文**。
+  - PDF 招标：**优先福昕国内云转可编辑 Word**（真段落/真表格，开关 `CLOUD_PDF_CONVERT=foxit`）+ 自动填公司档案（投标人/地址/法代/资质等）；云失败自动下沉 pdf2docx → 整页截图+域 → 纯整页图 → 硬报错。纯文字版招标最佳，扫描版需先 OCR。
   - DOCX 招标：**copy-then-prune**（复制源文件、删格式章外元素），保留页眉页脚/图片/表格。
-- **技术卷 = LLM 写的施工组织设计正文，独立成文**（正奇排版 + 自动更新目录），不与商务格式页混排。
+- **技术卷 = 人工确认目录 + LLM 写的施工组织设计正文 + 福昕可编辑附表**（附表一~八，数据格留空人工填，docxcompose 拼到卷末另起页），正奇排版 + 自动更新目录，不与商务格式页混排。
 - 失败语义：格式复制 / 技术正文写作失败 = 硬错误直接报错；审查发现严重问题 = 软阻断（`audit_blocked=True`，保留草稿供人工预览）。
 
 ## 已完成
@@ -49,6 +50,9 @@ flowchart LR
 | M13 | ✅ | 样本项目端到端验收 | 招标#1–#4 格式跑通（#4 DOCX 定位 bug 已修）；技术正文 E2E 实测 76,875 字 / 25 节 / 评分点 3-3 / 审查通过。剩 #2–#4 含 LLM 正文的完整端到端可后续抽测 |
 | M15 | ✅ | 视觉回归 | `backend/scripts/visual_regression.py`（soffice 渲染断言）+ `docs/visual_review_checklist.md` |
 | M16 | ✅ | 知识库 OCR | RapidOCR（`rapidocr-onnxruntime`，无系统二进制）落地；证件扫描件（JPG/PNG）文字提取，证号/有效期/资质等级可检索可填空；图片证件各 mode 均 OCR |
+| M22 | ✅ | 技术卷大纲人工确认 | 放出大纲编辑器（中心标签「技术大纲」+「添加章节」）；parser 扫招标"编制要点+附表"逐条原样（`technical_outline`）；`_collect_technical_sections` 优先读人工确认的 `bid_outline_json` 驱动目录、无规定时给最小中性壳（不再盲套硬编码大纲）；商务卷移出大纲环节。已合 main |
+| M24 | ✅ | 福昕云 PDF→可编辑Word（格式复制升级） | 商务格式章 + 技术附表经福昕国内云转**真·可编辑 Word**（非贴图）+ 自动填字段；Phase0 最上层（`CLOUD_PDF_CONVERT=foxit`）失败下沉 pdf2docx→图；附表 docxcompose 拼技术卷末；P0-2 内容体检防空壳。**解决"可编辑 vs 一模一样"取舍**。实测招标#122：商务 168 段 19 表 + 附表 6 可编辑表 + 字段已填 |
+| - | ✅ | 技术卷生成并行化 | 25 节逐节 LLM 改有界并发（`ThreadPoolExecutor`，`BID_WRITER_CONCURRENCY` 默认 5），约 25min→5-6min |
 | - | ✅ | 两卷重构 | 删除旧三卷拆分整链；`_assemble_two_volumes` 为唯一原格式导出路径 |
 | - | ✅ | 结构重构 + 工程化 | `api/main.py` 拆 router（1004→~75 行）、`project_service` 拆 `services/project/` 包（1396→~122 行门面）、抽 `core/llm_client`（统一 provider + LLM 重试退避）；新增 CI（`.github/workflows/ci.yml`,后端 pytest + 前端 typecheck/lint/test/build,已实跑通过)、前端 vitest 地基（覆盖 `lib/api.ts`）；后端测试 287→311 passed |
 
@@ -56,9 +60,7 @@ flowchart LR
 
 | 编号 | 状态 | 内容 | 验收标准 |
 |------|------|------|----------|
-| M22 | 🔧 | 技术卷大纲人工确认 | 放出大纲编辑器（P1，已合 main）+ 目录"扫招标为主→最小中性兜底"（P2，已 push 待实测）。生成读人工确认的 `bid_outline_json` 驱动目录，**不再盲套硬编码大纲**。验收：解析后在「大纲确认」编辑、确认后生成目录跟着走；朋友实测中 |
-| M23 | 🔧 | 本项目专用技术材料库 | 每个项目上传同类施工组织设计参考（可提取文字），`project_id` 隔离喂技术卷 RAG（不污染全局库）。**这是 M12 里"技术文本素材"的正确落地方式**——施工组织设计因项目而异，不该灌全局库 |
-| - | ✅ | 技术卷生成并行化 | 25 节逐节 LLM 改有界并发（`ThreadPoolExecutor`，`BID_WRITER_CONCURRENCY`），约 25min→5-6min |
+| M23 | 🔧 | 本项目专用技术材料库 | 每个项目上传同类施工组织设计参考（可提取文字），`project_id` 隔离喂技术卷 RAG（不污染全局库）。**这是 M12 里"技术文本素材"的正确落地方式、技术卷实质的下一个瓶颈**——全局库零技术方案文本，需用户提供真实施工组织设计文本 |
 
 ## 下一步该做什么（按优先级）
 
@@ -83,8 +85,9 @@ flowchart LR
 
 ## 格式相关代码责任
 
-- `backend/services/original_docx_format_service.py`：格式章复制。DOCX 走 copy-then-prune；PDF 走整页截图 + `_bake_fill_values_on_page` 把已知值烧进填空横线（弃用 VML 文本层/pdf2docx）。
-- `backend/services/generation_service.py`：两卷装配 `_assemble_two_volumes`（商务=copy2 格式章+合规正文，技术=独立生成正文）和导出。
+- `backend/services/cloud_pdf_convert.py`：福昕国内云 PDF→可编辑 Word（`convert_pdf_to_docx_via_foxit` + 商务/附表包装）；纯 httpx 调用、SN 签名、create→轮询→download。
+- `backend/services/original_docx_format_service.py`：格式章复制与回退。DOCX 走 copy-then-prune；PDF 走 pdf2docx 可编辑 → 整页截图+域（`_bake_fill_values_on_page`）→ 纯整页图；`_find_format_page_range_in_pdf` / `_find_appendix_page_range_in_pdf` 定位商务/附表页区。
+- `backend/services/generation_service.py`：两卷装配 `_assemble_two_volumes`（商务=copy2 格式章+合规正文，技术=独立生成正文）+ `_append_docx`（docxcompose 把附表拼到技术卷末、先校验再原子替换）和导出。
 - `backend/services/v2_generation_service.py`：生成编排 + `_sections_from_confirmed_outline`（读人工确认的 `bid_outline_json` 驱动目录）+ `_collect_technical_sections`（旧回退：忠实跟招标，无则最小壳，不再展开 25 节）。
 - `backend/prompts/construction_plan_outline.py`：25 节标准施工组织设计深度大纲常量（对标真实中标标书）。
 - `backend/prompts/generator_prompt.py`：逐节写作 prompt（评分项/废标项/必覆盖要点/字数预算注入）。

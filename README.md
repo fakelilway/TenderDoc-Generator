@@ -6,8 +6,8 @@ TenderDoc-Generator 是面向正奇建设投标场景的本地 MVP。当前生�
 
 - 格式必须来自招标文件原文，商务文件的函件、表格、签章位、下划线和附件说明不由模型重画。
 - 已知事实来自招标文件、公司档案和知识库；没有证据的字段保留空白或交给人工确认。
-- 商务卷采用"整页截图照抄 + 已知字段烧录进表单"，纯内联图，Pages/LibreOffice/Word/新点都能渲染。
-- 格式复制失败或技术正文写作失败时，系统直接报错，不输出看似完整但可能废标的近似稿；审查发现严重问题时不抛错，而是阻断下游审查/导出流水线并保留草稿供人工预览修正。
+- 商务卷格式章与技术卷附表优先经福昕国内云 PDF→可编辑 Word 转换（真段落/真表格，非整页贴图），并自动填公司档案字段；福昕失败时自动下沉到 pdf2docx → 整页截图+域 → 纯整页图 → 硬报错（铁律：不输出空壳/近似稿）。纯文字版招标效果最好，扫描版需先 OCR。
+- 格式复制失败或技术正文写作失败时，系统直接报错，不输出看似完整但可能废标的近似稿；审查发现严重问题时不抛错，而是阻断下游审查/导出流水线并保留草稿供人工预览修正。PDF 原格式路径会做内容体检，防空壳/丢页静默发布。
 
 ## 当前产品架构
 
@@ -15,11 +15,11 @@ TenderDoc-Generator 是面向正奇建设投标场景的本地 MVP。当前生�
 flowchart TD
     A["用户上传招标文件 PDF/DOCX/TXT"] --> B["文件入库 MinIO"]
     B --> C["Parser Agent 提取招标要求和格式目录树"]
-    C --> D["人工确认解析结果"]
+    C --> D["人工确认解析结果 + 人工确认技术大纲"]
     D --> E["资料选择：公司档案 + 知识库证据"]
     E --> F["V2 Generation Service"]
-    F --> G["商务卷：照抄招标格式章 + 已知字段烧录进表单"]
-    F --> H["技术卷：Content Writer 写施工组织设计正文(标准深度大纲)"]
+    F --> G["商务卷：福昕可编辑照抄招标格式章 + 自动填公司档案字段"]
+    F --> H["技术卷：人工确认目录 + Content Writer 写施工组织设计正文 + 可编辑附表"]
     G --> I["V2 Audit 格式/内容/证据审查"]
     H --> I
     I --> J["Reviewer Agent 废标风险审查"]
@@ -32,11 +32,11 @@ flowchart TD
 
 1. 用户创建项目并上传招标文件。
 2. 后端提取全文，Parser Agent 生成结构化招标要求，包括项目名称、招标人、工期、质量、资质、评分项、废标项和 `format_outline_tree`。
-3. 用户在工作台确认解析结果，系统自动生成大纲并直接进入可生成状态。
+3. 用户在工作台确认解析结果；parser 从招标里扫"施工组织设计编制要点 + 附表清单"逐条原样列出（technical_outline），用户在中心标签「技术大纲」编辑器里人工确认技术卷目录（含「添加章节」），商务卷不需在此编辑（照抄招标格式）。
 4. 用户在资料选择面板勾选本次投标要用的公司证件、人员证件、业绩、技术素材和图片资料。
-5. 生成时，系统从招标文件复制"投标文件格式/响应文件格式"章节作为**商务卷**：PDF 招标走整页截图，DOCX 招标走 copy-then-prune。
-6. 商务卷以原格式为准；系统把公司档案里的已知字段（投标人/地址/法定代表人/电话）**烧录进表单填空横线**，未知字段保留下划线。
-7. **技术卷**正文由 Content Writer 按标准施工组织设计深度大纲（招标技术大纲薄时自动扩展为 25 节）逐节写入，独立成文。
+5. 生成时，系统从招标文件复制"投标文件格式/响应文件格式"章节作为**商务卷**：开启 `CLOUD_PDF_CONVERT=foxit` 时经福昕云把 PDF 转成真·可编辑 Word（真段落/真表格），失败再依次下沉到 pdf2docx → 整页截图+域 → 纯整页图 → 硬报错。
+6. 商务卷以原格式为准；系统把公司档案里的已知字段（投标人/地址/法定代表人/资质等）**自动填进表单**，未知字段保留空白。
+7. **技术卷**正文由 Content Writer 按"人工确认的目录"逐节写施工组织设计；福昕生成的可编辑附表（附表一~八，空表，数据格人工填）经 docxcompose 另起页拼到技术卷末尾。技术卷 25 节 LLM 已改为有界并发（`BID_WRITER_CONCURRENCY` 默认 5），约 25min→约 5-6min。
 8. V2 审查先挡格式、正文和证据问题，再进入废标风险审查。
 9. 用户查看状态、审查报告和预览，在线编辑后人工确认。
 10. 系统导出商务卷 + 技术卷 DOCX、Markdown 和审查报告；报价卷由造价软件单独做；新点软件负责最终电子标封装、签章、加密和上传。
@@ -45,12 +45,11 @@ flowchart TD
 
 | 文件 | 作用 | 对格式的影响 |
 |------|------|--------------|
-| `backend/services/original_docx_format_service.py` | 复制招标格式章 | DOCX 走 copy-then-prune（保留页眉脚/图片）；PDF 走整页截图 + `_bake_fill_values_on_page` 把已知值烧进填空横线，是格式保真核心 |
-| `backend/services/generation_service.py` | 两卷装配和导出 | `_assemble_two_volumes`：商务卷=copy2 格式章+合规正文，技术卷=独立生成正文；不再三卷拆分 |
-| `backend/services/v2_generation_service.py` | V2 编排 | 决定原格式复制、失败语义；`_collect_technical_sections` 把薄技术大纲扩展为标准深度大纲 |
-| `backend/prompts/construction_plan_outline.py` | 标准施工组织设计大纲 | 25 节深度子章节常量（对标真实中标标书），驱动技术正文逐节生成 |
+| `backend/services/original_docx_format_service.py` | 复制招标格式章 | 开关 `CLOUD_PDF_CONVERT=foxit` 时优先走福昕云 PDF→可编辑 Word（真段落/真表格）；失败下沉 pdf2docx → 整页截图+域（`_bake_fill_values_on_page`）→ 纯整页图 → 硬报错；`_audit_built_format_docx` 做内容体检防空壳 |
+| `backend/services/generation_service.py` | 两卷装配和导出 | `_assemble_two_volumes`：商务卷=copy2 格式章+合规正文，技术卷=独立生成正文+可编辑附表（docxcompose 拼到卷末）；不再三卷拆分 |
+| `backend/services/v2_generation_service.py` | V2 编排 | 决定原格式复制、失败语义；`_collect_technical_sections` 优先读人工确认的 `bid_outline_json` 驱动技术卷目录，招标没规定结构时给最小中性壳（不再自动套通用模板）；25 节 LLM 有界并发（`BID_WRITER_CONCURRENCY` 默认 5） |
 | `backend/utils/docx_exporter.py` | 技术卷 Markdown 导出 | 负责字体、标题、表格、图片、自动更新目录域等排版；不重画招标锁定格式 |
-| `backend/agents/parser_agent.py` | 格式目录树提取 | `format_outline_tree` 用于导航和技术标题收集 |
+| `backend/agents/parser_agent.py` | 格式目录树提取 | `format_outline_tree` 用于导航；另扫"施工组织设计编制要点 + 附表清单"成 `technical_outline`（逐条原样、不合并），驱动人工确认的技术卷目录；`max_tokens` 按输入长度动态算 |
 | `frontend/components/ParsedReviewPanel.tsx` | 前端确认展示 | 展示解析结果供人工确认 |
 
 ## 当前哪些代码管审查
@@ -68,7 +67,8 @@ flowchart TD
 
 - 登录、注册、管理员注册码、用户权限。
 - 项目创建、上传、解析、确认、资料选择、生成、审查、在线编辑、终审确认、下载。
-- 工作台三栏布局：左栏上传+进度+资料选择，中栏 Tab 切换（解析确认/正文编辑/标书预览），右栏渐进展示分卷/审查/策略。
+- 工作台三栏布局：左栏上传+进度+资料选择，中栏 Tab 切换（解析确认/技术大纲/正文编辑/标书预览），右栏渐进展示分卷/审查/策略；「技术大纲」编辑器供人工确认技术卷目录并「添加章节」；顶部「新项目」按钮可不退出登录直接开新标。
+- 商务卷格式章 + 技术卷附表经福昕云转成真·可编辑 Word（WPS 级：肉眼一致 + 可编辑），并自动填公司档案字段；极复杂表偶尔需人工微调。
 - 招标文件支持 PDF/DOCX/TXT；知识库支持 PDF/DOCX/TXT/JPG/JPEG/PNG 等资料入库和预览。
 - 公司档案维护：企业信息、资质、账户、拟派项目班子。
 - 知识库结构化标签：资料类别、册别、专业、地区、年份、证书类型、有效期、敏感级别、使用范围、核验状态、图片可插入等。
@@ -94,6 +94,12 @@ flowchart TD
 - 前端工作台：http://localhost:3000
 - 后端 API 文档：http://localhost:8000/docs
 - MinIO Console：http://localhost:9001
+
+福昕可编辑转换相关配置（`.env`）：
+
+- `CLOUD_PDF_CONVERT=foxit`：开启福昕国内云 PDF→可编辑 Word（不开则走 pdf2docx/截图链）。
+- `FOXIT_CLOUD_CLIENT_ID` / `FOXIT_CLOUD_CLIENT_SECRET`：福昕云凭证。
+- 依赖新增 `docxcompose==2.2.0`（把可编辑附表拼到技术卷末尾）。
 
 更完整的安装、端口冲突、验证命令和常见问题见 [setup.md](setup.md)。
 
