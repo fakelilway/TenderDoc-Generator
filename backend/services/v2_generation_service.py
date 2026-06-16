@@ -107,6 +107,7 @@ class V2BidPackage:
     missing_checklist: list[str] = field(default_factory=list)
     audit_result: AuditResult | None = None
     format_docx_path: str | None = None  # Pre-built format DOCX from PDF
+    appendix_docx_path: str | None = None  # 技术卷附表(福昕可编辑空表,拼到技术卷末)
     audit_blocked: bool = False  # True when critical audit issues found (content still saved for preview)
 
     VOLUME_ORDER = ("commercial", "technical", "pricing")
@@ -126,6 +127,36 @@ class V2BidPackage:
     @property
     def generation_mode(self) -> str:
         return "v2_format_copy"
+
+
+def _audit_built_format_docx(docx_path: str) -> list[str]:
+    """最低内容体检:复制出来的招标格式章 DOCX 不能是空壳。
+
+    PDF 原格式路径绕过了基于页面的格式审查(原格式模式下 filled_pages 为空),
+    一旦 pdf2docx/截图链静默产出一个几乎没有内容的文档,过去会一路绿灯发布。
+    这里做**保守**检查:只在产物近乎为空(无有效段落、无表格、无任何图片)时判失败,
+    不对版式/对齐做判断(那属 P1 渲染基线的范畴),以免误伤正常产出。返回严重问题列表。
+    """
+    from docx import Document
+
+    try:
+        doc = Document(docx_path)
+    except Exception as exc:  # noqa: BLE001 - surface as a content issue
+        return [f"格式章 DOCX 无法打开：{exc}"]
+
+    has_text = any(p.text.strip() for p in doc.paragraphs)
+    table_count = len(doc.tables)
+    inline_images = len(doc.inline_shapes)
+    # 整页截图路径用的是浮动图/VML imagedata,不计入 inline_shapes,需扫 body xml。
+    try:
+        body_xml = doc.element.body.xml
+    except Exception:  # noqa: BLE001
+        body_xml = ""
+    embedded_images = body_xml.count("<a:blip") + body_xml.count("imagedata")
+
+    if not (has_text or table_count or inline_images or embedded_images):
+        return ["格式章复制产物为空（无段落/表格/图片）——复制链可能已失败"]
+    return []
 
 
 def generate_v2_bid_package(
@@ -169,6 +200,7 @@ def generate_v2_bid_package(
 
     # ── Phase 0: Build original format DOCX if PDF ──
     built_format_docx: str | None = None
+    built_appendix_docx: str | None = None
     if original_format_docx_available and tender_bytes:
         import tempfile
 
@@ -185,10 +217,25 @@ def generate_v2_bid_package(
         # 自动填公司档案(含基本情况表表格)。满足标书员三点:保真(WPS级)、可编辑、已填。
         # Fallback 1: 整页截图 + 下划线烧录(像素级保真但不可编辑)——转换失败/退化时。
         # Fallback 2: 纯整页截图。全部失败才硬报错。
+        # 最上层:福昕云转换(开关 CLOUD_PDF_CONVERT=foxit;真·可编辑+保真+自动填)。
+        # 未开启或失败则下沉到 pdf2docx 可编辑 → 整页图+域 → 纯整页图。
+        if str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() == "foxit":
+            try:
+                from services.cloud_pdf_convert import convert_format_pages_via_cloud
+
+                built_format_docx = convert_format_pages_via_cloud(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
+            except Exception:
+                logger.warning(
+                    "云转换(福昕)失败 — 下沉 pdf2docx 可编辑路径", exc_info=True
+                )
+
         try:
-            built_format_docx = build_original_format_docx_from_pdf_editable(
-                tender_bytes, tmp_path, profile=combined_profile
-            )
+            if built_format_docx is None:
+                built_format_docx = build_original_format_docx_from_pdf_editable(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
         except Exception:
             logger.warning(
                 "Editable (pdf2docx) format build failed — falling back to page-image+fields",
@@ -214,6 +261,38 @@ def generate_v2_bid_package(
                     raise ValueError(
                         "PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。"
                     )
+
+    # Content-level audit of the copied format chapter. The PDF path bypasses
+    # the page-based format audit (filled_pages stays empty in original mode), so
+    # a silently-empty/broken copy would otherwise ship unchecked. Per the铁律
+    # (格式复制失败=硬报错,不输出空壳/近似稿) we fail loudly here.
+    if original_format_docx_available and built_format_docx:
+        fmt_issues = _audit_built_format_docx(built_format_docx)
+        if fmt_issues:
+            raise ValueError(
+                "V2 生成失败：招标格式章复制产物未通过内容体检"
+                "（系统不输出空壳/近似稿，请检查 PDF 格式章或转换链）："
+                + "；".join(fmt_issues)
+            )
+
+    # 技术卷附表:福昕把招标附表区(附表一~八)转成可编辑空表,导出时拼到技术卷末。
+    # best-effort——失败则技术卷不含附表(投标人另行补),不影响主流程。
+    if (
+        original_format_docx_available
+        and tender_bytes
+        and str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() == "foxit"
+    ):
+        try:
+            import tempfile as _tempfile
+
+            from services.cloud_pdf_convert import convert_appendix_pages_via_cloud
+
+            _ap = _tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+            _ap.close()
+            built_appendix_docx = convert_appendix_pages_via_cloud(tender_bytes, _ap.name)
+        except Exception:
+            logger.warning("附表云转换失败 — 技术卷不含附表", exc_info=True)
+            built_appendix_docx = None
 
     # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
     if original_format_docx_available:
@@ -474,6 +553,7 @@ def generate_v2_bid_package(
         missing_checklist=missing,
         audit_result=audit,
         format_docx_path=built_format_docx,
+        appendix_docx_path=built_appendix_docx,
         audit_blocked=audit_blocked,
     )
 

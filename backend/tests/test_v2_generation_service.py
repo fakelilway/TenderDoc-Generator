@@ -128,6 +128,32 @@ def test_v2_technical_volume_uses_writer_content_without_repeating_format_page(
     assert "施工组织正文" in package.technical_markdown
 
 
+def test_audit_built_format_docx_flags_empty_and_passes_content(tmp_path) -> None:
+    from docx import Document
+
+    # 空文档(只有一个空段落)→ 判失败
+    empty = tmp_path / "empty.docx"
+    Document().save(str(empty))
+    assert v2_generation_service._audit_built_format_docx(str(empty))
+
+    # 有文字 → 通过
+    with_text = tmp_path / "text.docx"
+    d1 = Document()
+    d1.add_paragraph("投标人：安徽正奇建设有限公司")
+    d1.save(str(with_text))
+    assert v2_generation_service._audit_built_format_docx(str(with_text)) == []
+
+    # 只有表格(无正文)也算有内容 → 通过
+    with_table = tmp_path / "table.docx"
+    d2 = Document()
+    d2.add_table(rows=2, cols=3)
+    d2.save(str(with_table))
+    assert v2_generation_service._audit_built_format_docx(str(with_table)) == []
+
+    # 打不开的文件 → 判失败
+    assert v2_generation_service._audit_built_format_docx(str(tmp_path / "nope.docx"))
+
+
 def test_sections_from_confirmed_outline_maps_titles_and_focus() -> None:
     confirmed = [
         {"title": "总体施工组织布置及规划", "focus_points": ["施工部署", "总体目标"]},

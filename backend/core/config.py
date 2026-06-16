@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # 技术卷各节正文 LLM 调用相互独立,用有界并发把 25 节从串行约 25 分钟降到
     # 约 5-6 分钟。上限保守取值以免触发 DeepSeek 限流;瞬时 429 由 llm_client 重试兜底。
     bid_writer_concurrency: int = Field(5, alias="BID_WRITER_CONCURRENCY")
+    # 云端 PDF→可编辑Word(格式章复制最上层)。off=用现有 pdf2docx;foxit=用福昕国内云
+    # (真·可编辑+保真),失败自动下沉 pdf2docx→整页图。转的是公开招标格式章。
+    cloud_pdf_convert: str = Field("off", alias="CLOUD_PDF_CONVERT")
+    foxit_cloud_client_id: str = Field("", alias="FOXIT_CLOUD_CLIENT_ID")
+    foxit_cloud_secret: str = Field("", alias="FOXIT_CLOUD_SECRET")
     # Parser 只输出结构化 JSON,不需要很大的输出预算。严格供应商(如 OpenRouter)会校验
     # 输入token + max_tokens ≤ 模型上下文上限,超了直接 400(DeepSeek 宽容会自动裁剪、不报错)。
     # 故 parser 的 max_tokens 按输入长度动态算:min(下方期望, 上下文上限 - 估算输入 - 余量)。

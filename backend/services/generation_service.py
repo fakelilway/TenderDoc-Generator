@@ -27,6 +27,7 @@ def export_markdown_for_project(
     quality_report: dict[str, float | int],
     *,
     original_format_path: str | None = None,
+    appendix_format_path: str | None = None,
 ) -> tuple[str, str]:
     # Keep volume markers intact for splitting; strip meta/markers only for the
     # human-readable bid.md and the non-format whole-doc render. Stripping before
@@ -45,7 +46,13 @@ def export_markdown_for_project(
             # 技术=LLM 正文独立成文，报价=外部造价软件不产出。
             # 不再按页块三卷拆分——格式章即商务卷，硬拆会错分页面、丢图片。
             _assemble_two_volumes(
-                original_format_path, tmp_path, project_id, markdown, docx_path, title
+                original_format_path,
+                tmp_path,
+                project_id,
+                markdown,
+                docx_path,
+                title,
+                appendix_format_path=appendix_format_path,
             )
         elif not _try_export_original_docx_format(project_id, docx_path):
             markdown_to_docx(
@@ -361,6 +368,8 @@ def _assemble_two_volumes(
     markdown: str,
     main_docx_path: Path,
     title: str,
+    *,
+    appendix_format_path: str | None = None,
 ) -> None:
     """Two-volume delivery for editable format docs (pdf2docx / DOCX 照抄).
 
@@ -404,5 +413,42 @@ def _assemble_two_volumes(
     else:
         shutil.copy2(format_path, technical_path)
 
+    # 附表:把福昕转的可编辑附表(附表一~八空表)拼到技术卷末尾(另起页)。
+    # best-effort——拼接失败不影响技术卷正文。
+    if appendix_format_path and Path(appendix_format_path).exists():
+        try:
+            _append_docx(technical_path, appendix_format_path)
+        except Exception:
+            logger.warning("附表拼接到技术卷失败,技术卷不含附表", exc_info=True)
+
     shutil.copy2(technical_path, main_docx_path)
+
+
+def _append_docx(base_path: Path, appendix_path: str) -> None:
+    """把 appendix docx 内容拼到 base docx 末尾(另起页)。
+
+    用 docxcompose 合并,保留附表的真实表格与图片关系(优于手动 deepcopy 元素)。
+    **先写临时文件并校验(能打开 + 正文不少于合并前),通过才原子替换 base** —— docxcompose
+    遇 style/numbering 冲突可能产出"打开需修复"的损坏 docx,这样坏了也不污染技术卷正文
+    (校验失败抛异常,由调用方丢弃附表、保留纯技术卷)。
+    """
+    import os
+
+    from docx import Document
+    from docxcompose.composer import Composer
+
+    master = Document(str(base_path))
+    base_paragraphs = sum(1 for p in master.paragraphs if p.text.strip())
+    master.add_page_break()
+    composer = Composer(master)
+    composer.append(Document(str(appendix_path)))
+
+    tmp_out = f"{base_path}.merged.docx"
+    composer.save(tmp_out)
+    # 校验:合并产物必须能打开,且正文段落不少于合并前(防 docxcompose 吞内容/产损坏件)
+    merged = Document(tmp_out)
+    if sum(1 for p in merged.paragraphs if p.text.strip()) < base_paragraphs:
+        os.remove(tmp_out)
+        raise RuntimeError("附表合并产物异常(正文丢失),丢弃附表保留纯技术卷")
+    os.replace(tmp_out, str(base_path))
 
