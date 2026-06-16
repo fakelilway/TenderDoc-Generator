@@ -215,10 +215,25 @@ def generate_v2_bid_package(
         # 自动填公司档案(含基本情况表表格)。满足标书员三点:保真(WPS级)、可编辑、已填。
         # Fallback 1: 整页截图 + 下划线烧录(像素级保真但不可编辑)——转换失败/退化时。
         # Fallback 2: 纯整页截图。全部失败才硬报错。
+        # 最上层:福昕云转换(开关 CLOUD_PDF_CONVERT=foxit;真·可编辑+保真+自动填)。
+        # 未开启或失败则下沉到 pdf2docx 可编辑 → 整页图+域 → 纯整页图。
+        if str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() == "foxit":
+            try:
+                from services.cloud_pdf_convert import convert_format_pages_via_cloud
+
+                built_format_docx = convert_format_pages_via_cloud(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
+            except Exception:
+                logger.warning(
+                    "云转换(福昕)失败 — 下沉 pdf2docx 可编辑路径", exc_info=True
+                )
+
         try:
-            built_format_docx = build_original_format_docx_from_pdf_editable(
-                tender_bytes, tmp_path, profile=combined_profile
-            )
+            if built_format_docx is None:
+                built_format_docx = build_original_format_docx_from_pdf_editable(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
         except Exception:
             logger.warning(
                 "Editable (pdf2docx) format build failed — falling back to page-image+fields",

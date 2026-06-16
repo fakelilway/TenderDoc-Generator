@@ -21,6 +21,8 @@ _NEXT_CHAPTER_HEAD_RE = re.compile(r"^\d{0,5}第[一二三四五六七八九十�
 # Start of the 技术文件/报价文件 卷 inside the "投标文件格式" 章, e.g.
 # "（标段名称）施工招标投标文件（技术文件）". The 商务卷 copy ends here.
 _OTHER_VOLUME_START_RE = re.compile(r"投标文件\s*[（(]\s*(?:技术|报价|经济)")
+# 技术卷附表区起始(附表一 …)。这些是要照抄成可编辑模板、给投标人填的表/图。
+_APPENDIX_START_RE = re.compile(r"附表一")
 FORMAT_BODY_MARKERS = (
     "投标文件（商务文件）",
     "投标文件（技术文件）",
@@ -856,6 +858,36 @@ def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
                 break
 
         return (format_start, max(format_start + 1, format_end))
+    finally:
+        doc.close()
+
+
+def _find_appendix_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
+    """定位技术卷附表区(附表一…)的零基、右开页范围。
+
+    附表模板落在"投标文件格式"章的技术文件段;从"附表一"起,到报价文件卷起始或下一章止。
+    商务范围(_find_format_page_range_in_pdf)已在技术卷起始处收尾、不含附表,故附表单独定位。
+    """
+    import fitz
+
+    doc = fitz.open(pdf_path)
+    try:
+        compacts = [
+            re.sub(r"\s+", "", doc[i].get_text()) for i in range(doc.page_count)
+        ]
+        start = next(
+            (i for i, c in enumerate(compacts) if _APPENDIX_START_RE.search(c)), None
+        )
+        if start is None:
+            return None
+        end = doc.page_count
+        for i in range(start + 1, doc.page_count):
+            if _looks_like_other_volume_start(compacts[i]) or _looks_like_next_chapter_page(
+                compacts[i]
+            ):
+                end = i
+                break
+        return (start, max(start + 1, end))
     finally:
         doc.close()
 
