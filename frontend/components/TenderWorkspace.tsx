@@ -10,6 +10,7 @@ import {
   Building2,
   FolderOpen,
   Database,
+  FilePlus,
   Loader2,
   LogOut,
   PencilLine,
@@ -1132,6 +1133,58 @@ export function TenderWorkspace({
     window.location.replace("/login");
   }
 
+  // Reset the workspace to a fresh "new project" state WITHOUT logging out.
+  // The current project stays persisted server-side (reachable at /project/{id});
+  // this only clears the local view so the user can start another tender.
+  function handleNewProject() {
+    if (
+      projectId &&
+      !window.confirm("开始新项目？当前项目进度已保存在服务器，可稍后通过项目链接返回。")
+    ) {
+      return;
+    }
+    // Invalidate any in-flight refresh/poll for the previous project.
+    projectIdRef.current = null;
+    refreshSeq.current += 1;
+    dirtyFields.current = new Set();
+    autoStartedWorkflowProject.current = null;
+    autoAnalysisTriggered.current = new Set();
+    lastHumanPromptKey.current = "";
+    lastRefreshedStatus.current = null;
+
+    setProjectId(null);
+    setStatus("idle");
+    setBusy(false);
+    setActionBusy(false);
+    setError(null);
+    setPersistentError(null);
+    setReviewReport(null);
+    setWorkflowState(null);
+    setParsedJson(null);
+    setParsedJsonText("");
+    setOutline([]);
+    setDocumentOutline([]);
+    setRagResults([]);
+    setSelectedChunkIds([]);
+    setRagReferences([]);
+    setFinalChecklist(null);
+    setFinalVersions([]);
+    setScorePrediction(null);
+    setResponseMatrix(null);
+    setMarkdown("");
+    setDeliveryPreview(null);
+    setModalOpen(false);
+    setHumanPromptOpen(false);
+    setActiveLine(null);
+    setCenterTab("parsed");
+    setFile(null);
+    setProjectName("演示技术标项目");
+    setSelectedTemplateId(null);
+    setRecommendedTemplateId(null);
+
+    window.history.pushState(null, "", "/");
+  }
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.96),rgba(245,245,247,0)_34%),linear-gradient(180deg,#f9f9fb_0%,#f5f5f7_42%,#eef0f4_100%)] text-[#1d1d1f]">
       <header className="sticky top-0 z-20 border-b border-white/60 bg-white/54 backdrop-blur-2xl">
@@ -1185,6 +1238,16 @@ export function TenderWorkspace({
                     账号管理
                   </NavLinkButton>
                 </>
+              ) : null}
+              {projectId ? (
+                <button
+                  type="button"
+                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-[#007aff]/30 bg-[#007aff]/10 px-3.5 text-sm font-semibold text-[#007aff] transition hover:bg-[#007aff]/16"
+                  onClick={handleNewProject}
+                >
+                  <FilePlus className="h-4 w-4" />
+                  新项目
+                </button>
               ) : null}
               {username ? (
                 <span className="inline-flex h-10 shrink-0 items-center rounded-full border border-white/70 bg-white/56 px-3.5 text-sm font-medium text-[#6e6e73]">
