@@ -140,6 +140,7 @@ def test_one_node_failure_is_isolated_and_aggregated(monkeypatch) -> None:
         return _LONG
 
     monkeypatch.setattr(content_writer_agent, "_generate_messages_with_llm", fake)
+    monkeypatch.setattr(content_writer_agent.time, "sleep", lambda *_: None)
 
     with pytest.raises(RuntimeError, match="坏节点B"):
         content_writer_agent.fill_technical_volume(
@@ -153,6 +154,32 @@ def test_one_node_failure_is_isolated_and_aggregated(monkeypatch) -> None:
     # The failing node did not cancel its siblings — both good nodes still ran.
     assert any("好节点A" in s for s in seen)
     assert any("好节点C" in s for s in seen)
+    # 坏节点B 在彻底失败前重试了 NODE_MAX_ATTEMPTS 次
+    assert sum("坏节点B" in s for s in seen) == content_writer_agent.NODE_MAX_ATTEMPTS
+
+
+def test_node_recovers_from_transient_failure(monkeypatch) -> None:
+    # 某节首次失败、重试即成功 → 不拖垮整卷
+    attempts = {"n": 0}
+
+    def flaky(messages, *, agent_name, continuation_instruction=""):
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise RuntimeError("429 transient")
+        return _LONG
+
+    monkeypatch.setattr(content_writer_agent, "_generate_messages_with_llm", flaky)
+    monkeypatch.setattr(content_writer_agent.time, "sleep", lambda *_: None)
+
+    res = content_writer_agent.fill_technical_volume(
+        node_titles=["节A"],
+        project_name="P",
+        requirements={},
+        company_name="C",
+        max_workers=1,
+    )
+    assert content_writer_agent._compact_len(res.nodes[0].content) > 0
+    assert attempts["n"] == 2  # 第 1 次失败、第 2 次成功
 
 
 def test_per_title_overrides_route_to_each_node(monkeypatch) -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,6 +30,12 @@ MIN_NODE_CONTENT_CHARS = 1200
 # Default bounded fan-out for the per-node LLM calls. Each node is independent,
 # so we generate several at once; the cap keeps us under the provider rate limit.
 DEFAULT_WRITER_CONCURRENCY = 5
+
+# Full re-attempts per node before it counts as failed. A transient LLM blip
+# (429/timeout/empty) on ONE node under concurrency must not fail the whole
+# volume — most clear on a fresh attempt. (This is on top of core.llm_client's
+# in-call transient retries.) Only if ALL attempts fail do we surface it.
+NODE_MAX_ATTEMPTS = 3
 
 _WS = re.compile(r"\s+")
 
@@ -118,25 +125,39 @@ def fill_technical_volume(
             section_guidance=guidance_map.get(title, section_guidance),
             target_chars=target,
         )
-        raw = _generate_messages_with_llm(
-            messages,
-            agent_name=f"content-writer-{title[:20]}",
-            continuation_instruction="继续输出本节正文，从上次中断处继续。",
-        )
-        cleaned = _clean_node_content(raw, title)
+        # 每节多次完整尝试:并发下某节偶发 429/超时/空返回,不该拖垮整卷;多数重试即过。
+        # 全部尝试都失败才上抛(由调用方聚合、按铁律失败,不输出占位)。
+        last_exc: Exception | None = None
+        for attempt in range(1, NODE_MAX_ATTEMPTS + 1):
+            try:
+                raw = _generate_messages_with_llm(
+                    messages,
+                    agent_name=f"content-writer-{title[:20]}",
+                    continuation_instruction="继续输出本节正文，从上次中断处继续。",
+                )
+                cleaned = _clean_node_content(raw, title)
 
-        # Phase 1.3 — one rewrite when the node is below its length/depth budget.
-        if _compact_len(cleaned) < threshold:
-            cleaned = _rewrite_node_deeper(messages, cleaned, title, target)
+                # Phase 1.3 — one rewrite when the node is below its length/depth budget.
+                if _compact_len(cleaned) < threshold:
+                    cleaned = _rewrite_node_deeper(messages, cleaned, title, target)
 
-        short = _compact_len(cleaned) < threshold
-        if short:
-            logger.warning(
-                "Technical node '%s' still below budget after rewrite "
-                "(%d < %d chars) — flagged for review, not silently accepted.",
-                title, _compact_len(cleaned), threshold,
-            )
-        return NodeFillResult(title=title, content=cleaned, short=short)
+                short = _compact_len(cleaned) < threshold
+                if short:
+                    logger.warning(
+                        "Technical node '%s' still below budget after rewrite "
+                        "(%d < %d chars) — flagged for review, not silently accepted.",
+                        title, _compact_len(cleaned), threshold,
+                    )
+                return NodeFillResult(title=title, content=cleaned, short=short)
+            except Exception as exc:  # noqa: BLE001 - retried; re-raised after all attempts
+                last_exc = exc
+                logger.warning(
+                    "Technical node '%s' attempt %d/%d failed: %s",
+                    title, attempt, NODE_MAX_ATTEMPTS, exc,
+                )
+                if attempt < NODE_MAX_ATTEMPTS:
+                    time.sleep(min(2 ** attempt, 10))
+        raise last_exc  # all attempts failed → caller aggregates & fails loud
 
     # Reassembled in node order; failures collected so one bad node does not
     # cancel siblings (no silent placeholder prose — we raise once all settle).
