@@ -21,8 +21,9 @@ _NEXT_CHAPTER_HEAD_RE = re.compile(r"^\d{0,5}第[一二三四五六七八九十�
 # Start of the 技术文件/报价文件 卷 inside the "投标文件格式" 章, e.g.
 # "（标段名称）施工招标投标文件（技术文件）". The 商务卷 copy ends here.
 _OTHER_VOLUME_START_RE = re.compile(r"投标文件\s*[（(]\s*(?:技术|报价|经济)")
-# 技术卷附表区起始(附表一 …)。这些是要照抄成可编辑模板、给投标人填的表/图。
-_APPENDIX_START_RE = re.compile(r"附表一")
+# 技术卷附表区起始:页首(可带页码)就是"附表一 …"的那页才算起点,避免命中正文里
+# 引用"附表一"的页或附表目录页(注:不可套 _skip_toc_pages——它会把稀疏附表误判成 TOC、丢表)。
+_APPENDIX_START_RE = re.compile(r"^\d{0,5}附表一")
 FORMAT_BODY_MARKERS = (
     "投标文件（商务文件）",
     "投标文件（技术文件）",

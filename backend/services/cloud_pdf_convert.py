@@ -8,7 +8,7 @@ Phase 0 的 try/except 阶梯自动回退到 pdf2docx → 整页图 → 纯图�
 
 鉴权(逐字照搬官方 demo foxitsoftware/ServicesAPIDemo):
   sn = md5( urlencode(sorted(本次查询参数,不含sn)) + "&sk=" + secret )
-异步三段式:document/create(taskId) → 轮询 task(percentage==100 → docId) → download。
+异步三段式:document/convert(taskId) → 轮询 task(percentage==100 → docId) → download。
 """
 
 from __future__ import annotations
@@ -71,14 +71,22 @@ def convert_pdf_to_docx_via_foxit(
         # ② 轮询任务直到 percentage==100。任务运行中时 /api/task 会返回 HTTP 错误
         #    且 detail 含 "The task is running"——这是"还在跑",要继续轮询,不能当失败。
         doc_id = None
-        waited = 0.0
-        while waited <= max_wait_seconds:
+        deadline = time.monotonic() + max_wait_seconds
+        while time.monotonic() <= deadline:
             task_base = {"clientId": client_id, "taskId": task_id}
             task_params = {**task_base, "sn": _sn(client_id, secret, task_base)}
             try:
                 tr = client.get(f"{FOXIT_API_BASE}/task", params=task_params)
                 tr.raise_for_status()
-                info = (tr.json().get("data") or {}).get("taskInfo") or {}
+                payload = tr.json()
+                # 任务真失败要立刻抛(否则空转到 max_wait 才报通用超时、吞真因)
+                if payload.get("code") not in (0, None):
+                    raise RuntimeError(
+                        f"福昕 task 失败: code={payload.get('code')} {payload.get('msg') or ''}"
+                    )
+                info = (payload.get("data") or {}).get("taskInfo") or {}
+                if str(info.get("status") or "").lower() in ("failed", "fail", "error"):
+                    raise RuntimeError(f"福昕转换任务失败: {info}")
                 if info.get("percentage") == 100:
                     doc_id = info.get("docId")
                     break
@@ -91,7 +99,6 @@ def convert_pdf_to_docx_via_foxit(
                 if "The task is running" not in detail:
                     raise
             time.sleep(poll_interval_seconds)
-            waited += poll_interval_seconds
         if not doc_id:
             raise RuntimeError(f"福昕转换未在 {max_wait_seconds}s 内完成")
 

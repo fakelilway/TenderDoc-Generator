@@ -91,3 +91,22 @@ def test_convert_raises_on_create_error_code(tmp_path, monkeypatch) -> None:
         assert False, "应在 code!=0 时抛异常"
     except RuntimeError as exc:
         assert "600000" in str(exc)
+
+
+def test_convert_raises_on_task_failure_not_spin(tmp_path, monkeypatch) -> None:
+    # 任务失败要立刻抛(而非空转到 max_wait)
+    fake = _FakeClient(
+        create=_Resp({"code": 0, "data": {"taskInfo": {"taskId": "t1"}}}),
+        task=_Resp({"code": 0, "data": {"taskInfo": {"status": "failed", "percentage": 30}}}),
+        download=_Resp(content=b""),
+    )
+    monkeypatch.setattr(cloud_pdf_convert.httpx, "Client", lambda *a, **k: fake)
+    out = str(tmp_path / "out.docx")
+    try:
+        cloud_pdf_convert.convert_pdf_to_docx_via_foxit(
+            b"x", out, client_id="CID", secret="SEC",
+            poll_interval_seconds=0, max_wait_seconds=5,
+        )
+        assert False, "任务失败应抛异常"
+    except RuntimeError as exc:
+        assert "失败" in str(exc)

@@ -428,13 +428,27 @@ def _append_docx(base_path: Path, appendix_path: str) -> None:
     """把 appendix docx 内容拼到 base docx 末尾(另起页)。
 
     用 docxcompose 合并,保留附表的真实表格与图片关系(优于手动 deepcopy 元素)。
+    **先写临时文件并校验(能打开 + 正文不少于合并前),通过才原子替换 base** —— docxcompose
+    遇 style/numbering 冲突可能产出"打开需修复"的损坏 docx,这样坏了也不污染技术卷正文
+    (校验失败抛异常,由调用方丢弃附表、保留纯技术卷)。
     """
+    import os
+
     from docx import Document
     from docxcompose.composer import Composer
 
     master = Document(str(base_path))
+    base_paragraphs = sum(1 for p in master.paragraphs if p.text.strip())
     master.add_page_break()
     composer = Composer(master)
     composer.append(Document(str(appendix_path)))
-    composer.save(str(base_path))
+
+    tmp_out = f"{base_path}.merged.docx"
+    composer.save(tmp_out)
+    # 校验:合并产物必须能打开,且正文段落不少于合并前(防 docxcompose 吞内容/产损坏件)
+    merged = Document(tmp_out)
+    if sum(1 for p in merged.paragraphs if p.text.strip()) < base_paragraphs:
+        os.remove(tmp_out)
+        raise RuntimeError("附表合并产物异常(正文丢失),丢弃附表保留纯技术卷")
+    os.replace(tmp_out, str(base_path))
 
