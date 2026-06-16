@@ -137,6 +137,7 @@ def generate_v2_bid_package(
     company_profile: dict[str, str] | None = None,
     original_format_docx_available: bool = False,
     tender_bytes: bytes | None = None,
+    confirmed_technical_outline: list[dict] | None = None,
 ) -> V2BidPackage:
     """V2 generation: extract → fill → write → audit.
 
@@ -253,6 +254,9 @@ def generate_v2_bid_package(
     # ── Phase 3: Write prose content ──
     tech_content = ""
     prose_results: VolumeFillResult | None = None
+    # A human-confirmed outline (bid_outline_json) drives the technical目录 when
+    # present & substantive; otherwise fall back to tender outline / canonical.
+    confirmed_sections = _sections_from_confirmed_outline(confirmed_technical_outline)
 
     def _call_content_writer(
         sections: list[dict],
@@ -315,13 +319,15 @@ def generate_v2_bid_package(
     if not original_format_docx_available and classified.get("technical"):
         for page in classified["technical"]:
             if page.page_type == "prose_section" or "施工" in page.title:
-                tech_sections = _collect_technical_sections(requirements)
+                tech_sections = confirmed_sections or _collect_technical_sections(
+                    requirements
+                )
                 if not tech_sections:
                     tech_sections = [{"title": page.title}]
                 prose_results, tech_content = _call_content_writer(tech_sections)
                 break
     elif original_format_docx_available:
-        tech_sections = _collect_technical_sections(requirements)
+        tech_sections = confirmed_sections or _collect_technical_sections(requirements)
         try:
             prose_results, tech_content = _call_content_writer(tech_sections)
         except Exception as exc:
@@ -548,6 +554,53 @@ def _collect_technical_sections(requirements: TenderRequirements) -> list[dict]:
         return [{"title": t, "must_cover": "", "target_chars": 1500} for t in titles]
     # Thin/generic outline → use the canonical deep construction-plan outline.
     return [dict(s) for s in CONSTRUCTION_PLAN_OUTLINE]
+
+
+# Default per-section length budget for a human-confirmed outline, matching the
+# "specific tender outline" path in _collect_technical_sections.
+_CONFIRMED_OUTLINE_TARGET_CHARS = 1500
+
+
+def _sections_from_confirmed_outline(
+    confirmed: list[dict] | None,
+) -> list[dict] | None:
+    """Map a human-confirmed technical outline into content-writer sections.
+
+    ``confirmed`` is the project's ``bid_outline_json`` (a list of
+    ``BidSectionOutline`` dicts: title / focus_points / …). When the bidder has
+    confirmed a real outline we honour it verbatim — its titles become the
+    technical目录 and its ``focus_points`` become each section's must-cover
+    guidance — instead of falling back to the canonical hardcoded outline. This
+    is the wire that makes "改大纲 → 改生成目录" actually true.
+
+    Returns ``None`` (so the caller falls back to
+    :func:`_collect_technical_sections`) when the outline is absent or too thin
+    to drive a full technical volume, preserving existing behaviour for projects
+    without a real confirmed outline.
+    """
+    if not confirmed:
+        return None
+    sections: list[dict] = []
+    for item in confirmed:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "")).strip()
+        if not title:
+            continue
+        focus = item.get("focus_points") or []
+        must_cover = "\n".join(str(p).strip() for p in focus if str(p).strip())
+        sections.append(
+            {
+                "title": title,
+                "must_cover": must_cover,
+                "target_chars": int(item.get("target_chars", 0) or 0)
+                or _CONFIRMED_OUTLINE_TARGET_CHARS,
+            }
+        )
+    # Guard: only drive generation from a substantive confirmed outline.
+    if len(sections) < 4:
+        return None
+    return sections
 
 
 def _strip_writer_top_level_headings(markdown: str) -> str:
