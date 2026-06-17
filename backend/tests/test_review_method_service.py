@@ -95,6 +95,20 @@ def test_build_review_method_injected_complete() -> None:
     assert rm.criteria[0].factor == "投标报价"
 
 
+def test_parse_json_salvages_truncated_output() -> None:
+    """LLM 被 max_tokens 截断成半截 JSON 时,抢救出已完整的条目而非整盘返回空。"""
+    from services.review_method_service import _parse_json
+
+    truncated = (
+        '{"method_name":"X","criteria":['
+        '{"factor":"a","standard":"s1","is_reject":true},'
+        '{"factor":"b","standard":"s2'  # 第二条被截断
+    )
+    data = _parse_json(truncated)
+    assert data.get("criteria")
+    assert data["criteria"][0]["factor"] == "a"  # 第一条抢救成功
+
+
 def test_build_review_method_empty_skips_llm_when_no_chapter() -> None:
     called = {"n": 0}
 

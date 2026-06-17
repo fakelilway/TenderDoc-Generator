@@ -43,10 +43,35 @@ def _default_complete(messages: list[dict[str, str]]) -> str:
         model=model,
         messages=messages,
         temperature=0.1,
-        max_tokens=4000,
-        timeout=float(getattr(get_settings(), "parser_llm_timeout_seconds", 60.0)),
+        # 评标办法逐条照抄原文,输出量大;4000 太小会把 JSON 截断成半截导致解析空。
+        max_tokens=8000,
+        timeout=float(getattr(get_settings(), "parser_llm_timeout_seconds", 120.0)),
     )
     return response.choices[0].message.content or ""
+
+
+def _salvage_truncated_json(text: str) -> dict[str, Any]:
+    """LLM 输出被 max_tokens 截断时,从尾部回退到最后一个完整对象,补齐括号抢救出已抽到的条目。"""
+    start = text.find("{")
+    if start < 0:
+        return {}
+    body = text[start:]
+    # 从最后一个 '}' 往前逐个尝试:截到该处 + 补齐未闭合的 ] 和 }
+    close_positions = [i for i, ch in enumerate(body) if ch == "}"]
+    for pos in reversed(close_positions):
+        frag = body[: pos + 1].rstrip().rstrip(",")
+        opens = frag.count("{") - frag.count("}")
+        obrk = frag.count("[") - frag.count("]")
+        candidate = frag + "]" * max(0, obrk) + "}" * max(0, opens)
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict) and any(
+                data.get(k) for k in ("criteria", "score_items", "rejection_rules")
+            ):
+                return data
+        except Exception:
+            continue
+    return {}
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
@@ -56,11 +81,17 @@ def _parse_json(raw: str) -> dict[str, Any]:
         _strip_markdown_fence,
     )
 
+    cleaned_raw = _strip_markdown_fence(raw)
     try:
-        cleaned = _remove_trailing_commas(_extract_json_object(_strip_markdown_fence(raw)))
+        cleaned = _remove_trailing_commas(_extract_json_object(cleaned_raw))
         data = json.loads(cleaned)
         return data if isinstance(data, dict) else {}
     except Exception:
+        # 多半是被截断的半截 JSON → 抢救出已完整的条目,而不是整盘返回空。
+        salvaged = _salvage_truncated_json(cleaned_raw)
+        if salvaged:
+            logger.warning("评标办法 JSON 疑似截断,已抢救出部分条目")
+            return salvaged
         logger.warning("评标办法 JSON 解析失败,返回空", exc_info=True)
         return {}
 
