@@ -682,39 +682,60 @@ def _iter_fillable_paragraphs(document: Any):
 def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
     """填 "标签：<tab>" 这类段落内联空(投标函工程质量/安全目标/工期)。返回填入数。
 
-    逐 run 扫:见到 "…标签：" 记下待填值,遇到随后的 tab 槽(definitive 填空标记)就把值写进
-    那个 run;值不会覆盖已有内容(只动纯 tab run),标签必须紧贴冒号(endswith),跨分隔符即作废。
+    **不依赖 run 边界**:把整段拼成全文 + 记每个字符归属哪个 run,在全文上找 "标签：[空白]*\\t",
+    再把那个 tab 字符在它所属 run 里替换成值。这样无论福昕/pdf2docx 把"标签：\\t"切成一个 run
+    还是几个 run 都能填。标签须紧贴冒号、跨分隔符作废;只动 tab 字符、不覆盖已有内容;单位去重。
     """
     if not any(profile.get(key) for _lbl, key in _INLINE_LABELS):
         return 0
     filled = 0
     for paragraph in _iter_fillable_paragraphs(document):
         runs = paragraph.runs
-        seg = ""
-        pending = ""  # 已见"标签：",待随后 tab 槽填入的值
+        if not runs:
+            continue
+        # 全文 + 每字符 (run下标, run内下标)
+        chars: list[str] = []
+        owner: list[tuple[int, int]] = []
         for ri, run in enumerate(runs):
-            text = run.text
-            if pending and "\t" in text:
-                value = pending
-                nxt = runs[ri + 1].text.strip() if ri + 1 < len(runs) else ""
-                for unit in _INLINE_UNITS:
-                    if nxt.startswith(unit) and value.endswith(unit):
-                        value = value[: -len(unit)].strip()
-                        break
-                run.text = text.replace("\t", value, 1)
-                filled += 1
-                pending = ""
+            for li, ch in enumerate(run.text):
+                chars.append(ch)
+                owner.append((ri, li))
+        s = "".join(chars)
+        n = len(s)
+        edits: list[tuple[int, int, str]] = []  # (run下标, run内下标, 值) —— tab 字符替成值
+        seg = ""
+        i = 0
+        while i < n:
+            ch = s[i]
+            if ch in "：:":
+                value = _inline_value_for(seg, profile)
                 seg = ""
-                continue
-            for ch in text:
-                if ch in _INLINE_DELIMS:
-                    seg = ""
-                    pending = ""  # 跨分隔符,标签作废(防止串到别的空)
-                elif ch in "：:":
-                    pending = _inline_value_for(seg, profile)
-                    seg = ""
-                else:
-                    seg += ch
+                if value:
+                    j = i + 1
+                    while j < n and s[j] in " 　":  # 跳过冒号后的空格/全角空格
+                        j += 1
+                    if j < n and s[j] == "\t":  # 第一个 tab = 填槽
+                        after = s[j + 1 : j + 12].lstrip()
+                        for unit in _INLINE_UNITS:  # 模板已带单位则去重
+                            if after.startswith(unit) and value.endswith(unit):
+                                value = value[: -len(unit)].strip()
+                                break
+                        ri, li = owner[j]
+                        edits.append((ri, li, value))
+                        i = j + 1
+                        continue
+            elif ch in _INLINE_DELIMS:
+                seg = ""
+            else:
+                seg += ch
+            i += 1
+        # 同一 run 内从后往前替换 tab 字符,避免前面的替换移位后面的下标
+        for ri, li, value in sorted(edits, key=lambda e: (e[0], -e[1])):
+            run = runs[ri]
+            text = run.text
+            if li < len(text) and text[li] == "\t":
+                run.text = text[:li] + value + text[li + 1 :]
+                filled += 1
     return filled
 
 
