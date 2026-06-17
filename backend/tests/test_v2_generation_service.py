@@ -772,3 +772,33 @@ def test_qualification_evidence_groups_all_company_certs(monkeypatch) -> None:
     assert len(qual) == 16                       # 资质证书组上限 16(20里取16)
     assert "### 企业资质证书" in md and "### 营业执照" in md
     assert "资质证书（专业0）" in md             # specialty 进 caption
+
+
+def test_build_performance_evidence_chain_priority_and_caps() -> None:
+    """A3b:业绩证明按项目成组,完整链(中标+交工)优先、年份新→旧;每类有上限。"""
+    import re
+
+    from services.v2_generation_service import _build_performance_evidence_md
+
+    rows = (
+        [(1, "A路2024", "中标通知书", "2024", "0"),
+         (2, "A路2024", "合同", "2024", "0"),
+         (3, "A路2024", "交工验收", "2024", "0")]
+        + [(4, "B路2025", "合同", "2025", "0")]          # 更新但无链
+        + [(5, "C路2023", "中标通知书", "2023", "0"),
+           (6, "C路2023", "交工验收", "2023", "0")]
+        + [(100 + i, "A路2024", "交工验收", "2024", str(i + 1)) for i in range(6)]  # 超 cap4
+    )
+    md = _build_performance_evidence_md(list(rows), limit_projects=6)
+    secs = re.findall(r"### 类似业绩 \d+：(.+)", md)
+
+    assert secs[0] == "A路2024" and secs[1] == "C路2023"   # 完整链优先,年份新先
+    assert "B路2025" in secs                                # 无链也收,排后
+    assert "A路2024-中标通知书" in md and "A路2024-交工验收（4）" in md
+    assert "A路2024-交工验收（5）" not in md                 # 交工验收上限 4
+    assert md.count('document_id=') >= 7
+
+
+def test_performance_evidence_empty_when_no_rows() -> None:
+    from services.v2_generation_service import _build_performance_evidence_md
+    assert _build_performance_evidence_md([], 6) == ""

@@ -898,6 +898,11 @@ def _enrich_commercial_markdown(
     if kb_tables_md:
         parts.append(kb_tables_md)
 
+    # A3:类似业绩证明链——每个业绩附 中标通知书+合同+交工验收 扫描(import_performance_evidence)
+    perf_evidence_md = _performance_evidence_markdown()
+    if perf_evidence_md:
+        parts.append(perf_evidence_md)
+
     return "\n".join(parts)
 
 
@@ -1098,6 +1103,93 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
         "\n## 附录：资格证明材料（系统按知识库自动插入，请人工核验/补充）\n"
         + "".join(blocks)
     )
+
+
+# A3b 业绩证明链:每个类似业绩附 中标通知书 + 合同 + 交工验收 扫描(import_performance_evidence
+# 已入库,document_category=业绩证明、metadata 带 performance_project/evidence_type/evidence_seq)。
+_PERF_EVIDENCE_ORDER = ("中标通知书", "合同", "交工验收")
+_PERF_PER_TYPE_CAP = {"中标通知书": 2, "合同": 2, "交工验收": 4}
+
+
+def _build_performance_evidence_md(
+    rows: list[tuple], limit_projects: int = 6
+) -> str:
+    """纯函数:业绩证明行 [(doc_id, 项目, 类型, 年, 序号)] → 按项目成组的插图 markdown。
+
+    选片规则:有完整链(中标+交工)优先,再按年份新→旧取前 limit_projects 个项目;每个项目
+    每类按序号取前几张(中标2/合同2/交工4)。
+    """
+    projects: dict[str, dict] = {}
+    for doc_id, proj, etype, year, seq in rows:
+        if not proj or not etype:
+            continue
+        try:
+            doc_id = int(doc_id)
+        except (TypeError, ValueError):
+            continue
+        bucket = projects.setdefault(proj, {"year": 0, "by_type": {}})
+        try:
+            bucket["year"] = max(bucket["year"], int(year or 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            seq_i = int(seq) if seq is not None else 0
+        except (TypeError, ValueError):
+            seq_i = 0
+        bucket["by_type"].setdefault(etype, []).append((seq_i, doc_id))
+
+    def has_chain(bucket: dict) -> bool:
+        return {"中标通知书", "交工验收"} <= set(bucket["by_type"])
+
+    ordered = sorted(
+        projects.items(),
+        key=lambda kv: (has_chain(kv[1]), kv[1]["year"]),
+        reverse=True,
+    )
+    blocks: list[str] = []
+    for i, (proj, bucket) in enumerate(ordered[:limit_projects], 1):
+        title = str(proj).replace('"', "")[:48]
+        seg = [f"\n### 类似业绩 {i}：{title}\n"]
+        any_img = False
+        for etype in _PERF_EVIDENCE_ORDER:
+            imgs = sorted(bucket["by_type"].get(etype, []))[: _PERF_PER_TYPE_CAP[etype]]
+            for j, (_seq, doc_id) in enumerate(imgs, 1):
+                cap = f"{title}-{etype}" + (f"（{j}）" if len(imgs) > 1 else "")
+                seg.append(
+                    f'\n{{{{knowledge_image:document_id={doc_id} '
+                    f'caption="{cap}" width_cm=14}}}}\n'
+                )
+                any_img = True
+        if any_img:
+            blocks.append("".join(seg))
+
+    if not blocks:
+        return ""
+    return (
+        "\n<!-- tdg:pagebreak -->\n"
+        "\n## 附录：类似业绩证明材料（中标通知书·合同·交工验收，系统自动插入，请人工核验筛选）\n"
+        + "".join(blocks)
+    )
+
+
+def _performance_evidence_markdown(limit_projects: int = 6) -> str:
+    """A3b:从知识库取业绩证明扫描,按项目成组插中标通知书/合同/交工验收。无数据返回空。"""
+    try:
+        from rag.vector_store import get_db_connection
+
+        with get_db_connection() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, metadata_json->>'performance_project', "
+                "metadata_json->>'evidence_type', metadata_json->>'project_year', "
+                "metadata_json->>'evidence_seq' FROM documents "
+                "WHERE project_id IS NULL "
+                "AND metadata_json->>'document_category' = '业绩证明' "
+                "AND coalesce(metadata_json->>'image_insertable', '') <> 'false'"
+            )
+            rows = cursor.fetchall()
+    except Exception:
+        return ""
+    return _build_performance_evidence_md(list(rows), limit_projects)
 
 
 def _match_profile_field(title: str, profile: dict[str, str]) -> str:
