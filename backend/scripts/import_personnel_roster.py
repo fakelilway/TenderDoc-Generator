@@ -18,6 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.personnel_roster_service import (  # noqa: E402
+    kb_builder_candidates,
+    merge_kb_builders,
     parse_roster_xlsx,
     save_personnel_roster,
 )
@@ -25,7 +27,13 @@ from services.personnel_roster_service import (  # noqa: E402
 
 def _summarize(members: list) -> None:
     pms = [m for m in members if m.is_pm_candidate]
-    print(f"名册共 {len(members)} 人;项目经理候选(有建造师证) {len(pms)} 人")
+    src = {}
+    for member in pms:
+        src[member.source] = src.get(member.source, 0) + 1
+    print(
+        f"名册共 {len(members)} 人;项目经理候选(有建造师证) {len(pms)} 人 "
+        f"(来源 {src})"
+    )
     combo: Counter = Counter()
     for member in pms:
         for cert in member.builder_certs:
@@ -43,12 +51,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save", action="store_true", help="存入 company_personnel(默认仅预览)"
     )
+    parser.add_argument(
+        "--no-kb",
+        action="store_true",
+        help="不并入知识库建造师(默认台账+知识库合并)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     members = parse_roster_xlsx(args.xlsx)
+    if not args.no_kb:
+        members = merge_kb_builders(members, kb_builder_candidates())
     _summarize(members)
     if args.save:
         save_personnel_roster(members)

@@ -31,6 +31,7 @@ class PersonnelMember(BaseModel):
     title_specialty: str = ""  # 职称专业
     eight_roles: list[str] = []  # 八大员证书类别(标准员/材料员/机械员…)
     special_works: list[str] = []  # 特种工工种
+    source: str = "台账"  # 来源:台账 / 知识库 / 台账+知识库(知识库含历年,可能离职/过期)
 
     @property
     def is_pm_candidate(self) -> bool:

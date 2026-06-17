@@ -2,7 +2,8 @@ from io import BytesIO
 
 from openpyxl import Workbook
 
-from services.personnel_roster_service import parse_roster_xlsx
+from schemas.personnel import BuilderCert, PersonnelMember
+from services.personnel_roster_service import merge_kb_builders, parse_roster_xlsx
 
 
 def _build_xlsx() -> BytesIO:
@@ -61,3 +62,27 @@ def test_parse_roster_joins_certs_by_id_and_name() -> None:
     pm_names = [m.name for m in members if m.is_pm_candidate]
     assert set(pm_names) == {"江舟", "李刚"}
     assert "王五" not in by_name  # 造价-only,未被任一证书表收录
+
+
+def test_merge_kb_builders_supplements_and_adds() -> None:
+    """知识库建造师并入:台账已有的保台账;台账有人但无证→KB补(双来源);台账没的→新增。"""
+    roster = [
+        PersonnelMember(
+            name="江舟",
+            builder_certs=[BuilderCert(level="一级建造师", specialty="公路工程")],
+            source="台账",
+        ),
+        PersonnelMember(name="许明英", source="台账"),  # 台账有人、无建造师证
+    ]
+    kb = {
+        "江舟": [BuilderCert(level="一级建造师", specialty="公路工程")],
+        "许明英": [BuilderCert(level="二级建造师", specialty="市政公用工程")],
+        "周明明": [BuilderCert(level="二级建造师", specialty="公路工程")],
+    }
+    merged = {m.name: m for m in merge_kb_builders(roster, kb)}
+
+    assert merged["江舟"].source == "台账"  # 已是候选,保台账不动
+    assert merged["许明英"].is_pm_candidate
+    assert merged["许明英"].source == "台账+知识库"  # 用 KB 补证
+    assert merged["周明明"].source == "知识库"  # 台账没这人 → 新增
+    assert merged["周明明"].builder_specialties == ["公路工程"]
