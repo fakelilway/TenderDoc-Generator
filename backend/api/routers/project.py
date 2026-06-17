@@ -344,22 +344,6 @@ def get_project_personnel_recommendations(
     return PMRecommendationResponse(**result)
 
 
-@router.get(
-    "/api/project/{project_id}/personnel",
-    response_model=PMSelectionResponse,
-)
-def get_project_personnel_selection(
-    project_id: int,
-    _project: int = Depends(authorized_project),
-) -> PMSelectionResponse:
-    try:
-        result = project_service.get_selected_personnel(project_id)
-    except Exception as error:
-        _raise_http_error(error)
-
-    return PMSelectionResponse(**result)
-
-
 @router.put(
     "/api/project/{project_id}/personnel",
     response_model=PMSelectionResponse,
@@ -603,16 +587,3 @@ def delete_project(
 
     return ProjectDeleteResponse(ok=True)
 
-
-@router.patch("/api/project/{project_id}/template", response_model=ProjectTemplateResponse)
-def set_project_template(
-    project_id: int,
-    request: ProjectTemplateRequest,
-    _project: int = Depends(authorized_project),
-) -> ProjectTemplateResponse:
-    try:
-        result = template_service.set_project_template(project_id, request.template_id)
-    except Exception as error:
-        _raise_http_error(error)
-
-    return ProjectTemplateResponse(**result)

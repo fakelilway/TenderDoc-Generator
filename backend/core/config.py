@@ -28,9 +28,6 @@ class Settings(BaseSettings):
     postgres_password: str = Field(..., alias="POSTGRES_PASSWORD")
 
     redis_url: str = Field(..., alias="REDIS_URL")
-    redis_host: str = Field(..., alias="REDIS_HOST")
-    redis_port: int = Field(..., alias="REDIS_PORT")
-    redis_password: str = Field("", alias="REDIS_PASSWORD")
 
     minio_root_user: str = Field(..., alias="MINIO_ROOT_USER")
     minio_root_password: str = Field(..., alias="MINIO_ROOT_PASSWORD")
@@ -43,7 +40,6 @@ class Settings(BaseSettings):
         "https://api.deepseek.com", alias="DEEPSEEK_BASE_URL"
     )
     deepseek_model: str = Field("deepseek-v4-pro", alias="DEEPSEEK_MODEL")
-    qianwen_api_key: str = Field("", alias="QIANWEN_API_KEY")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(

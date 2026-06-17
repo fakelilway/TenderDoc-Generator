@@ -282,16 +282,3 @@ def test_template_profile_for_project_builds_fallback_from_template(
     assert profile.template_name == "公路模板"
     assert profile.project_type == "公路工程"
 
-
-def test_set_project_template_validates_and_updates(monkeypatch) -> None:
-    cursor = FakeCursor(
-        [
-            _template_row(id=3),  # template existence check
-            {"id": 7, "template_id": 3},  # project update RETURNING
-        ]
-    )
-    monkeypatch.setattr(template_service, "_connect", lambda: FakeConnection(cursor))
-
-    result = template_service.set_project_template(7, 3)
-
-    assert result == {"project_id": 7, "template_id": 3}

@@ -407,23 +407,3 @@ def template_profile_for_project(project_id: int) -> TemplateProfile | None:
         return None
     return None
 
-
-def set_project_template(project_id: int, template_id: int | None) -> dict[str, Any]:
-    """Switch (or clear) the template attached to a project."""
-    if template_id is not None:
-        _fetch_template_row(template_id)  # validate existence
-    with _connect() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(
-                """
-                UPDATE projects
-                SET template_id = %s
-                WHERE id = %s
-                RETURNING id, template_id
-                """,
-                (template_id, project_id),
-            )
-            row = cursor.fetchone()
-    if not row:
-        raise ProjectNotFoundError(f"Project {project_id} was not found")
-    return {"project_id": int(row["id"]), "template_id": row["template_id"]}

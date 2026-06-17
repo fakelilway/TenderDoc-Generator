@@ -175,17 +175,3 @@ def test_update_template_admin_renames(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["template"]["name"] == "公路模板V2"
 
-
-def test_set_project_template(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "api.main.template_service.set_project_template",
-        lambda project_id, template_id: {
-            "project_id": project_id,
-            "template_id": template_id,
-        },
-    )
-
-    response = client.patch("/api/project/7/template", json={"template_id": 3})
-
-    assert response.status_code == 200
-    assert response.json() == {"project_id": 7, "template_id": 3}
