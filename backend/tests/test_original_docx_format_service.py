@@ -614,3 +614,49 @@ def test_fill_known_table_cells_fills_project_name_and_duration() -> None:
     assert table.cell(0, 1).text == "XX路网工程"
     assert table.cell(1, 1).text == "90日历天"
     assert filled == 2
+
+
+# ── 投标函内联空(用户实测):工程质量/安全目标/工期 写在正文里 "标签：<tab>" ──────
+def _bid_letter_para(doc):
+    p = doc.add_paragraph()
+    for t in ["3", ".", "工程质量：", " ", "\t", "，安全目标：", " ", "\t",
+              "，工期", "：", " ", "\t", "日历天", "。"]:
+        p.add_run(t)
+    return p
+
+
+def test_fill_inline_labeled_blanks_fills_bid_letter_prose() -> None:
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    _bid_letter_para(doc)
+    n = _fill_inline_labeled_blanks(doc, {
+        "质量": "符合国家现行工程质量验收标准规范合格标准",
+        "安全": "无安全责任事故发生",
+        "工期": "90日历天",
+    })
+    norm = doc.paragraphs[0].text.replace(" ", "")
+    assert n == 3
+    assert "工程质量：符合国家现行工程质量验收标准规范合格标准" in norm
+    assert "安全目标：无安全责任事故发生" in norm
+    assert "工期：90日历天。" in norm
+    assert "日历天日历天" not in norm  # 单位不重复
+
+
+def test_fill_inline_blanks_ignores_unlabeled_tabs() -> None:
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    p = doc.add_paragraph()
+    for t in ["目录", "\t", "第1页"]:
+        p.add_run(t)
+    assert _fill_inline_labeled_blanks(doc, {"质量": "X"}) == 0
+    assert doc.paragraphs[0].text == "目录\t第1页"  # 无标签的 tab 不动
+
+
+def test_fill_inline_blanks_does_not_overwrite_existing_value() -> None:
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    p = doc.add_paragraph()
+    for t in ["工期：", "90日历天", "。"]:  # 已有值、无 tab 槽
+        p.add_run(t)
+    assert _fill_inline_labeled_blanks(doc, {"工期": "45日历天"}) == 0
+    assert "90日历天" in doc.paragraphs[0].text  # 原值保留,不被覆盖
