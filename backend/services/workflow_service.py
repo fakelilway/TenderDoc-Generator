@@ -194,7 +194,7 @@ def run_bid_workflow(
     selected_chunk_ids = project.get("selected_chunk_ids") or state.selected_chunk_ids
     state.selected_chunk_ids = [int(chunk_id) for chunk_id in selected_chunk_ids]
     retrieved_by_section = _retrieve_for_outline(
-        requirements, outline, state.selected_chunk_ids
+        requirements, outline, state.selected_chunk_ids, project_id=project_id
     )
     knowledge_images = _knowledge_images_for_requirements(requirements)
     selected_references = (
@@ -653,7 +653,9 @@ def _outline_from_project(
     return build_bid_outline(requirements, bid_template)
 
 
-def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
+def _retrieve_for_outline(
+    requirements, outline, selected_chunk_ids=None, project_id=None
+):
     selected_chunk_ids = selected_chunk_ids or []
     if selected_chunk_ids:
         references = get_knowledge_references(selected_chunk_ids)
@@ -682,7 +684,8 @@ def _retrieve_for_outline(requirements, outline, selected_chunk_ids=None):
         f"{score_terms} {invalid_terms}"
     )
     try:
-        shared_chunks = retriever.retrieve(query, top_k=16)
+        # project_id → 本项目专用技术材料 ∪ 全局库(M23 grounding)。
+        shared_chunks = retriever.retrieve(query, top_k=16, project_id=project_id)
     except Exception:
         shared_chunks = []
     return {section.title: shared_chunks[:6] for section in outline}

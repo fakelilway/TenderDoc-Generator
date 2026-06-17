@@ -106,8 +106,15 @@ def rerank_with_cross_encoder(
     ]
 
 
-def retrieve(query: str, top_k: int = 5, rerank: bool = True) -> list[RetrievalResult]:
-    return retrieve_filtered(query=query, top_k=top_k, rerank=rerank)
+def retrieve(
+    query: str,
+    top_k: int = 5,
+    rerank: bool = True,
+    project_id: int | None = None,
+) -> list[RetrievalResult]:
+    return retrieve_filtered(
+        query=query, top_k=top_k, rerank=rerank, project_id=project_id
+    )
 
 
 def retrieve_filtered(
@@ -129,6 +136,7 @@ def retrieve_filtered(
     verified_status: str | None = None,
     tags: list[str] | None = None,
     chunk_ids: list[int] | None = None,
+    project_id: int | None = None,
 ) -> list[RetrievalResult]:
     if top_k <= 0:
         raise ValueError("top_k must be positive")
@@ -163,6 +171,17 @@ def retrieve_filtered(
     if chunk_ids:
         filters.append("id = ANY(%s)")
         params.append(chunk_ids)
+    # M23 项目隔离:metadata.project_id 把"本项目专用技术材料"和全局库分开。
+    # - 显式 chunk_ids 选择是权威的,跳过本过滤(用户按 id 钦点的就用)。
+    # - 生成时传 project_id → 本项目材料 ∪ 全局库(全局材料 project_id 为空)。
+    # - 不传(全局检索/搜索)→ 仅全局,绝不把某项目材料漏给别的项目或全局搜索。
+    elif project_id is not None:
+        filters.append(
+            "(metadata->>'project_id' = %s OR metadata->>'project_id' IS NULL)"
+        )
+        params.append(str(project_id))
+    else:
+        filters.append("metadata->>'project_id' IS NULL")
     where_clause = " AND ".join(filters)
     with _connect() as conn:
         with conn.cursor() as cursor:

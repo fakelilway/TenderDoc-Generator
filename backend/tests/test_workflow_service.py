@@ -203,9 +203,10 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
 def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) -> None:
     captured = {}
 
-    def fake_retrieve(query, top_k=9):
+    def fake_retrieve(query, top_k=9, project_id=None):
         captured["query"] = query
         captured["top_k"] = top_k
+        captured["project_id"] = project_id
         return [RetrievalResult(1, 1, "历史施工措施片段", {}, 0.1, 0.9)]
 
     # top_k widened to 16 / 6-per-section so the evidence pack carries scored material.
@@ -220,9 +221,12 @@ def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) 
                 focus_points=["施工组织设计 30 分"],
             )
         ],
+        project_id=42,
     )
 
     assert captured["top_k"] == 16
+    # M23:project_id 串到检索 → 本项目专用技术材料 ∪ 全局库
+    assert captured["project_id"] == 42
     assert "安徽正奇" not in captured["query"]
     assert "技术文件格式" not in captured["query"]
     assert "素材参考" in captured["query"]

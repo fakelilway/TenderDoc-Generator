@@ -84,6 +84,7 @@ def index_uploaded_knowledge(
     image_insertable: bool | None = None,
     tags: list[str] | None = None,
     ingestion_mode: str | None = None,
+    project_id: int | None = None,
 ) -> dict[str, object]:
     if not file_bytes:
         raise ValueError("Uploaded knowledge file is empty")
@@ -149,6 +150,11 @@ def index_uploaded_knowledge(
         if summary_text:
             raw_chunks = [summary_text, *ocr_chunks]
     metadata = {**metadata, "ocr_extracted": has_ocr}
+    if project_id is not None:
+        # M23 本项目专用技术材料:project_id 既写 documents 真列(随项目级联删),也
+        # 冗余进 metadata —— 检索按 metadata->>'project_id' 过滤(走 GIN、免 JOIN),
+        # 把"本项目材料 ∪ 全局库"喂给技术卷,而全局库视图仍只看 project_id IS NULL。
+        metadata = {**metadata, "project_id": project_id}
 
     chunks = [
         KnowledgeChunk(
@@ -169,6 +175,7 @@ def index_uploaded_knowledge(
         file_type=_file_type(safe_name, content_type),
         chunks=chunks,
         metadata=metadata,
+        project_id=project_id,
     )
     return {
         "document_id": stored["document_id"],
@@ -707,6 +714,94 @@ def delete_knowledge_document(document_id: int) -> None:
         except Exception:
             # The database is the source of truth for retrieval; missing object cleanup
             # should not keep a deleted document searchable.
+            pass
+
+
+def list_project_materials(
+    project_id: int, limit: int = 200
+) -> list[dict[str, object]]:
+    """List a project's own technical-material documents (M23).
+
+    Project-scoped mirror of ``list_knowledge_documents``: filters on the real
+    ``documents.project_id`` column so each project sees only its own uploaded
+    施工组织设计 references — never the global library or another project's.
+    """
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    documents.id AS document_id,
+                    documents.file_name,
+                    documents.file_path,
+                    documents.file_type,
+                    documents.metadata_json,
+                    documents.created_at,
+                    COUNT(knowledge_chunks.id) AS chunk_count
+                FROM documents
+                LEFT JOIN knowledge_chunks
+                    ON knowledge_chunks.document_id = documents.id
+                WHERE documents.project_id = %s
+                GROUP BY
+                    documents.id,
+                    documents.file_name,
+                    documents.file_path,
+                    documents.file_type,
+                    documents.metadata_json,
+                    documents.created_at
+                ORDER BY documents.created_at DESC, documents.id DESC
+                LIMIT %s
+                """,
+                [project_id, limit],
+            )
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "document_id": int(row[0]),
+            "file_name": row[1],
+            "file_path": row[2],
+            "file_type": row[3],
+            **_metadata_summary(row[4] or {}),
+            "created_at": row[5].isoformat(),
+            "chunk_count": int(row[6]),
+        }
+        for row in rows
+    ]
+
+
+def delete_project_material(project_id: int, document_id: int) -> None:
+    """Delete one of a project's own materials (M23).
+
+    Scoped to ``project_id`` so a project can never delete a global-library doc
+    or another project's material.
+    """
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM documents
+                WHERE id = %s AND project_id = %s
+                RETURNING file_path
+                """,
+                (document_id, project_id),
+            )
+            row = cursor.fetchone()
+        conn.commit()
+
+    if not row:
+        raise ValueError(
+            f"Project {project_id} material {document_id} was not found"
+        )
+
+    object_name = row[0]
+    if object_name:
+        try:
+            minio_client.remove_file(settings.minio_bucket, str(object_name))
+        except Exception:
             pass
 
 

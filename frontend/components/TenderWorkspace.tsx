@@ -29,6 +29,7 @@ import {
 } from "@/lib/markdown";
 import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
+import { ProjectMaterialPanel } from "@/components/ProjectMaterialPanel";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
@@ -1566,14 +1567,19 @@ export function TenderWorkspace({
                 />
               ) : null}
               {centerTab === "outline" ? (
-                <OutlineEditor
-                  outline={outline}
-                  documentOutline={documentOutline}
-                  busy={actionBusy}
-                  onChange={handleOutlineChange}
-                  onBuild={handleBuildOutline}
-                  onSave={handleSaveOutline}
-                />
+                <div className="space-y-4">
+                  {projectId != null ? (
+                    <ProjectMaterialPanel projectId={projectId} />
+                  ) : null}
+                  <OutlineEditor
+                    outline={outline}
+                    documentOutline={documentOutline}
+                    busy={actionBusy}
+                    onChange={handleOutlineChange}
+                    onBuild={handleBuildOutline}
+                    onSave={handleSaveOutline}
+                  />
+                </div>
               ) : null}
               {centerTab === "draft" ? (
                 <DraftEditor

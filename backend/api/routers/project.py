@@ -12,6 +12,12 @@ from fastapi import (
 
 from api.deps import _raise_http_error, authorized_project
 from schemas.auth import UserProfile
+from schemas.knowledge import (
+    KnowledgeDeleteResponse,
+    KnowledgeDocumentListResponse,
+    KnowledgeDocumentSummary,
+    KnowledgeUploadResponse,
+)
 from schemas.project import (
     ProjectCreateResponse,
     ProjectDeleteResponse,
@@ -43,7 +49,13 @@ from schemas.workflow import (
     ProjectConfirmResponse,
     WorkflowRunResponse,
 )
-from services import auth_service, project_service, template_service, workflow_service
+from services import (
+    auth_service,
+    knowledge_service,
+    project_service,
+    template_service,
+    workflow_service,
+)
 
 
 router = APIRouter()
@@ -210,6 +222,78 @@ def save_project_knowledge_selection(
         _raise_http_error(error)
 
     return KnowledgeSelectionResponse(**result)
+
+
+@router.post(
+    "/api/project/{project_id}/material",
+    response_model=KnowledgeUploadResponse,
+)
+async def upload_project_material(
+    project_id: int,
+    file: UploadFile = File(...),
+    document_category: str | None = Form(None),
+    specialty: str | None = Form(None),
+    tags: str | None = Form(None),
+    _project: int = Depends(authorized_project),
+) -> KnowledgeUploadResponse:
+    """M23 本项目专用技术材料:上传同类施工组织设计参考。
+
+    project_id 隔离入库(不进全局库),文字索引(rag_text)用于 grounding 技术卷生成;
+    默认归类「施工方案 / 技术文件」。生成时按 project_id 把"本项目材料 ∪ 全局库"喂检索。
+    """
+    try:
+        parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
+        indexed = knowledge_service.index_uploaded_knowledge(
+            file_bytes=await file.read(),
+            filename=file.filename or "material.txt",
+            content_type=file.content_type,
+            document_category=document_category or "施工方案",
+            document_type="施工方案",
+            volume="技术文件",
+            specialty=specialty,
+            tags=parsed_tags or None,
+            ingestion_mode="rag_text",
+            project_id=project_id,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeUploadResponse(**indexed)
+
+
+@router.get(
+    "/api/project/{project_id}/material",
+    response_model=KnowledgeDocumentListResponse,
+)
+def list_project_material(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> KnowledgeDocumentListResponse:
+    try:
+        documents = knowledge_service.list_project_materials(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeDocumentListResponse(
+        documents=[KnowledgeDocumentSummary(**doc) for doc in documents]
+    )
+
+
+@router.delete(
+    "/api/project/{project_id}/material/{document_id}",
+    response_model=KnowledgeDeleteResponse,
+)
+def delete_project_material(
+    project_id: int,
+    document_id: int,
+    _project: int = Depends(authorized_project),
+) -> KnowledgeDeleteResponse:
+    try:
+        knowledge_service.delete_project_material(project_id, document_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return KnowledgeDeleteResponse(ok=True)
 
 
 @router.patch("/api/project/{project_id}/draft", response_model=DraftMarkdownResponse)
