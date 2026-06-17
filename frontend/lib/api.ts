@@ -353,6 +353,42 @@ export function getProjectDeliveryPreview(projectId: number) {
   );
 }
 
+// M23 本项目专用技术材料库:上传同类施工组织设计参考,project_id 隔离喂技术卷 RAG。
+export function uploadProjectMaterial(
+  projectId: number,
+  file: File,
+  meta?: { documentCategory?: string; specialty?: string; tags?: string[] }
+) {
+  const body = new FormData();
+  body.append("file", file);
+  if (meta?.documentCategory) {
+    body.append("document_category", meta.documentCategory);
+  }
+  if (meta?.specialty) {
+    body.append("specialty", meta.specialty);
+  }
+  if (meta?.tags?.length) {
+    body.append("tags", meta.tags.join(","));
+  }
+  return requestJson<KnowledgeUploadResponse>(
+    `/api/project/${projectId}/material`,
+    { method: "POST", body }
+  );
+}
+
+export function listProjectMaterials(projectId: number) {
+  return requestJson<KnowledgeDocumentListResponse>(
+    `/api/project/${projectId}/material`
+  );
+}
+
+export function deleteProjectMaterial(projectId: number, documentId: number) {
+  return requestJson<{ ok: boolean }>(
+    `/api/project/${projectId}/material/${documentId}`,
+    { method: "DELETE" }
+  );
+}
+
 export function uploadKnowledge(
   file: File,
   metadata?: {
