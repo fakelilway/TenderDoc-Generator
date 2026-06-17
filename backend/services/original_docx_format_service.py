@@ -345,6 +345,7 @@ def build_original_format_docx_from_pdf_editable(
         _drop_spurious_stream_tables(doc)  # 删 pdf2docx 把填空行误判出的假表
         _replace_known_fields(doc, profile or {})
         _fill_known_table_cells(doc, profile or {})
+        _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期
         _fill_personnel_table(doc, profile or {})  # 项目管理机构人员表填项目经理行
         _strip_seal_images(doc)  # 清招标原件带进来的招标人/代理红章
         _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
@@ -629,6 +630,87 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
                         filled += 1
                     break
                 i = label_end + 1
+    return filled
+
+
+# 段落内联填空:"标签：<tab/下划线占位>" 这种写在正文里的空(投标函常用
+# "工程质量：__，安全目标：__，工期：__日历天")。表格填空与 token 替换都不管它——
+# 这是诊断早标注的"段落内联"缺口。只填白名单标签、只动 tab/占位 run、不覆盖已有值。
+_INLINE_LABELS: tuple[tuple[str, str], ...] = (
+    ("工程质量", "质量"),
+    ("质量目标", "质量"),
+    ("质量要求", "质量"),
+    ("质量标准", "质量"),
+    ("安全目标", "安全"),
+    ("安全生产目标", "安全"),
+    ("计划工期", "工期"),
+    ("总工期", "工期"),
+    ("工期", "工期"),
+    ("项目名称", "项目名称"),
+    ("工程名称", "项目名称"),
+)
+_INLINE_DELIMS = "，,。.；;、\n\r"
+# 模板里"标签：__单位"已带单位时,去掉值里重复的尾随单位(工期：90日历天日历天 → 90日历天)。
+_INLINE_UNITS = ("日历天", "个月", "万元", "天", "元", "%")
+
+
+def _inline_value_for(seg: str, profile: dict[str, Any]) -> str:
+    """seg=冒号前刚累计的文字;其结尾是已知内联标签且档案有值 → 返回值,否则 ""。"""
+    norm = seg.replace(" ", "").replace("　", "")
+    best_label = ""
+    for label, _key in _INLINE_LABELS:
+        if norm.endswith(label) and len(label) > len(best_label):
+            best_label = label
+    if not best_label:
+        return ""
+    key = next(k for lbl, k in _INLINE_LABELS if lbl == best_label)
+    return str(profile.get(key, "") or "").strip()
+
+
+def _iter_fillable_paragraphs(document: Any):
+    yield from document.paragraphs
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                yield from cell.paragraphs
+
+
+def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
+    """填 "标签：<tab>" 这类段落内联空(投标函工程质量/安全目标/工期)。返回填入数。
+
+    逐 run 扫:见到 "…标签：" 记下待填值,遇到随后的 tab 槽(definitive 填空标记)就把值写进
+    那个 run;值不会覆盖已有内容(只动纯 tab run),标签必须紧贴冒号(endswith),跨分隔符即作废。
+    """
+    if not any(profile.get(key) for _lbl, key in _INLINE_LABELS):
+        return 0
+    filled = 0
+    for paragraph in _iter_fillable_paragraphs(document):
+        runs = paragraph.runs
+        seg = ""
+        pending = ""  # 已见"标签：",待随后 tab 槽填入的值
+        for ri, run in enumerate(runs):
+            text = run.text
+            if pending and "\t" in text:
+                value = pending
+                nxt = runs[ri + 1].text.strip() if ri + 1 < len(runs) else ""
+                for unit in _INLINE_UNITS:
+                    if nxt.startswith(unit) and value.endswith(unit):
+                        value = value[: -len(unit)].strip()
+                        break
+                run.text = text.replace("\t", value, 1)
+                filled += 1
+                pending = ""
+                seg = ""
+                continue
+            for ch in text:
+                if ch in _INLINE_DELIMS:
+                    seg = ""
+                    pending = ""  # 跨分隔符,标签作废(防止串到别的空)
+                elif ch in "：:":
+                    pending = _inline_value_for(seg, profile)
+                    seg = ""
+                else:
+                    seg += ch
     return filled
 
 
