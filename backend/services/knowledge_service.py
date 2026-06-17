@@ -86,6 +86,7 @@ def index_uploaded_knowledge(
     ingestion_mode: str | None = None,
     project_id: int | None = None,
     extra_metadata: dict | None = None,
+    ocr_images: bool = True,
 ) -> dict[str, object]:
     if not file_bytes:
         raise ValueError("Uploaded knowledge file is empty")
@@ -123,7 +124,9 @@ def index_uploaded_knowledge(
     # so the cert text (信用代码/资质等级/有效期/法定代表人 等) becomes searchable,
     # while the file stays image-insertable as a 证件扫描件.
     is_image = Path(safe_name).suffix.lower() in IMAGE_EXTENSIONS
-    if mode == "rag_text" or is_image:
+    # 批量扫描件(如业绩证明 1900+ 张)只需可插入+元数据,不需 OCR 文本;ocr_images=False
+    # 跳过逐图 OCR(否则慢到不可用),仍保留 summary chunk 供按 metadata 过滤/插图。
+    if (mode == "rag_text" or is_image) and ocr_images:
         try:
             text = extract_text(
                 file_bytes, filename=safe_name, content_type=content_type
