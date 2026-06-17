@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from copy import deepcopy
 from io import BytesIO
@@ -10,6 +11,8 @@ from xml.sax.saxutils import escape
 from docx import Document
 from docx.oxml import parse_xml
 from docx.oxml.ns import qn
+
+logger = logging.getLogger(__name__)
 
 
 FORMAT_CHAPTER_RE = re.compile(r"第[一二三四五六七八九十百\d]+章\s*(?:投标文件格式|响应文件格式)")
@@ -344,6 +347,7 @@ def build_original_format_docx_from_pdf_editable(
         _fill_known_table_cells(doc, profile or {})
         _fill_personnel_table(doc, profile or {})  # 项目管理机构人员表填项目经理行
         _strip_seal_images(doc)  # 清招标原件带进来的招标人/代理红章
+        _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
         doc.save(str(path))
         return str(path)
     finally:
@@ -353,19 +357,9 @@ def build_original_format_docx_from_pdf_editable(
             pass
 
 
-# Label keyword → profile keys to pre-fill the adjacent blank. Conservative
-# allowlist; only single-value fields. Segmented blanks (成立时间 年/月/日) and
-# anything not listed stay empty-but-editable.
-_FILL_FIELD_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("投标人", ("company_name", "投标人", "公司名称")),
-    ("单位性质", ("company_type", "单位性质", "公司类型")),
-    ("址", ("registered_address", "注册地址", "地址")),  # 地 址 → '址：'
-    ("名", ("legal_representative", "法定代表人", "姓名")),  # 姓 名 → '名：'
-    ("法定代表", ("legal_representative", "法定代表人")),
-    ("联系电话", ("contact_phone", "联系电话", "电话")),
-    ("号码", ("contact_phone", "手机号码", "手机")),
-)
-# Labels whose blank is segmented or date-like → never auto-fill.
+# Labels whose blank is segmented or date-like → never auto-fill(分段年/月/日 空)。
+# 标签→值的映射统一走 _table_label_value(最长匹配 + 宽泛主体键防误填),不再用单字短键
+# ("名"/"址")误把 法人/地址 乱配 —— PDF 烧录路径与可编辑表格路径共用同一套稳健映射。
 _FILL_SKIP_KEYWORDS = ("成立", "日期", "经营期限", "别", "龄", "务", "年", "月", "日")
 
 
@@ -394,6 +388,24 @@ _TABLE_FILL_LABELS: tuple[tuple[str, str], ...] = (
     ("经营范围", "business_scope"),
     ("成立时间", "establish_date"),
     ("成立日期", "establish_date"),
+    # 扩标签别名:招标各家措辞不一(企业名称≠投标人名称…),覆盖常见同义写法,避免
+    # 标签对不上而留空。靠最长匹配保证"注册地址">"注册地"、不会被短别名抢走。
+    ("企业名称", "company_name"),
+    ("公司名称", "company_name"),
+    ("单位名称", "company_name"),
+    ("投标人全称", "company_name"),
+    ("法定代表", "legal_representative"),
+    ("法人代表", "legal_representative"),
+    ("住所", "registered_address"),
+    ("注册地", "registered_address"),
+    ("通讯地址", "registered_address"),
+    ("联系地址", "registered_address"),
+    ("联系电话", "contact_phone"),
+    ("电话", "contact_phone"),
+    ("手机", "contact_phone"),
+    ("开户行", "bank_name"),
+    ("开户银行名称", "bank_name"),
+    ("账号", "bank_account"),
 )
 # 这些是"另一个人/无对应档案字段"的标签,绝不当作待填项。
 _TABLE_FILL_SKIP = (
@@ -419,26 +431,67 @@ _ENTITY_MODIFIERS = (
 )
 
 
-def _table_label_value(label: str, profile: dict[str, Any]) -> str:
+def _label_to_profile_key(label: str) -> str:
+    """标签 → 该填哪个档案字段(profile key);非可填标签返回 ""。
+
+    取所有命中键里**最长(最具体)**的(让"统一社会信用代码"胜过宽泛"投标人",修
+    first-in-list-order 误配);宽泛主体键(投标人/项目经理)只在标签"要名字"时才认,
+    "投标人响应资质/项目经理身份证号"等子字段返回 ""(不乱填)。
+    """
     norm = (
         label.replace(" ", "").replace("　", "").replace("：", "").replace(":", "").strip()
     )
     if not norm or any(skip in norm for skip in _TABLE_FILL_SKIP):
         return ""
-    # 取所有命中键里**最长(最具体)**的:让"统一社会信用代码"胜过宽泛的"投标人",
-    # 修复原来 first-in-list-order 误配(如"…牵头人统一社会信用代码"被当成投标人名称)。
     matches = [(key, pkey) for key, pkey in _TABLE_FILL_LABELS if key in norm]
     if not matches:
         return ""
     key, profile_key = max(matches, key=lambda kp: len(kp[0]))
-    # 宽泛主体键防误填:只有"要名字"的标签才填名字。
     if key in _BROAD_ENTITY_KEYS:
         remainder = norm.replace(key, "", 1)
         for modifier in _ENTITY_MODIFIERS:
             remainder = remainder.replace(modifier, "")
         if remainder and remainder not in _NAME_TAILS:
             return ""
+    return profile_key
+
+
+def _table_label_value(label: str, profile: dict[str, Any]) -> str:
+    profile_key = _label_to_profile_key(label)
+    if not profile_key:
+        return ""
     return str(profile.get(profile_key, "") or "").strip()
+
+
+def unfilled_known_fields(
+    document: Any, profile: dict[str, Any]
+) -> list[tuple[str, str]]:
+    """扫表格里"认得的标签、但公司档案无值 → 没法填"的字段,供显式告警(别静默留空)。
+
+    返回 ``[(标签文本, profile_key), …]`` 去重。让出标前能提示"商务卷这些格因档案缺
+    XX 字段没填上",而不是用户出完才发现一片空格。
+    """
+    seen: dict[str, str] = {}
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                profile_key = _label_to_profile_key(cell.text)
+                if not profile_key or profile_key in seen:
+                    continue
+                if not str(profile.get(profile_key, "") or "").strip():
+                    seen[profile_key] = cell.text.strip().replace("\n", " ")[:24]
+    return [(label, profile_key) for profile_key, label in seen.items()]
+
+
+def _log_unfilled_fields(document: Any, profile: dict[str, Any]) -> None:
+    """显式告警:商务卷里认得的标签但档案无值 → 不静默留空,出标前留痕提示补档案。"""
+    missing = unfilled_known_fields(document, profile)
+    if missing:
+        logger.warning(
+            "商务卷有 %d 个可填字段因公司档案缺值未填(请在「公司档案」补全后重出):%s",
+            len(missing),
+            "、".join(label for label, _ in missing),
+        )
 
 
 def _set_cell_value(cell: Any, value: str) -> None:
@@ -778,16 +831,11 @@ def _fill_value_for_label(label: str | None, profile: dict[str, Any]) -> str:
     if not label:
         return ""
     norm = label.rstrip("：:").replace(" ", "")
+    # 分段日期(成立__年__月__日)整段跳过,免把整日期塞进"年"那一格。
     if any(kw in norm for kw in _FILL_SKIP_KEYWORDS):
         return ""
-    for keyword, keys in _FILL_FIELD_ALIASES:
-        if keyword in norm:
-            for key in keys:
-                value = str(profile.get(key, "") or "").strip()
-                if value:
-                    return value
-            return ""
-    return ""
+    # 统一走稳健映射:最长匹配 + 宽泛主体键防误填(详见 _table_label_value)。
+    return _table_label_value(label, profile)
 
 
 _CJK_FONT_CANDIDATES = (

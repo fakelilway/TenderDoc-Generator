@@ -170,6 +170,7 @@ def convert_format_pages_via_cloud(
         _fill_known_table_cells,
         _fill_personnel_table,
         _find_format_page_range_in_pdf,
+        _log_unfilled_fields,
         _replace_known_fields,
         _strip_seal_images,
     )
@@ -200,6 +201,7 @@ def convert_format_pages_via_cloud(
     _fill_personnel_table(doc, profile or {})
     # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
     _strip_seal_images(doc)
+    _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
     doc.save(str(output_path))
     return str(output_path)
 
