@@ -239,18 +239,43 @@ async def upload_project_material(
     document_category: str | None = Form(None),
     specialty: str | None = Form(None),
     tags: str | None = Form(None),
+    target_section: str | None = Form(None),
+    caption: str | None = Form(None),
     _project: int = Depends(authorized_project),
 ) -> KnowledgeUploadResponse:
-    """M23 本项目专用技术材料:上传同类施工组织设计参考。
+    """本项目专用材料:两种角色按文件类型自动分流。
 
-    project_id 隔离入库(不进全局库),文字索引(rag_text)用于 grounding 技术卷生成;
-    默认归类「施工方案 / 技术文件」。生成时按 project_id 把"本项目材料 ∪ 全局库"喂检索。
+    - 图片(航拍图/本项目图纸…)→ ② 插入素材:标 image_insertable + target_section,生成时
+      按节插到技术卷对应节(见 v2_generation._inject_project_images)。
+    - 其它(文本)→ M23 接地素材:project_id 隔离入库、rag_text 索引,grounding 技术卷生成。
     """
     try:
         parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
+        filename = file.filename or "material.txt"
+        file_bytes = await file.read()
+        suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        is_image = suffix in {"jpg", "jpeg", "png", "gif", "bmp", "webp"} or (
+            file.content_type or ""
+        ).startswith("image/")
+        if is_image:
+            indexed = knowledge_service.index_uploaded_knowledge(
+                file_bytes=file_bytes,
+                filename=filename,
+                content_type=file.content_type,
+                document_category="图片资料",
+                document_type="本项目图纸",
+                image_insertable=True,
+                tags=parsed_tags or None,
+                project_id=project_id,
+                extra_metadata={
+                    "target_section": (target_section or "").strip(),
+                    "caption": (caption or "").strip(),
+                },
+            )
+            return KnowledgeUploadResponse(**indexed)
         indexed = knowledge_service.index_uploaded_knowledge(
-            file_bytes=await file.read(),
-            filename=file.filename or "material.txt",
+            file_bytes=file_bytes,
+            filename=filename,
             content_type=file.content_type,
             document_category=document_category or "施工方案",
             document_type="施工方案",

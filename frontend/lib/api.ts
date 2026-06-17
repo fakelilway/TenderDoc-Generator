@@ -360,7 +360,14 @@ export function getProjectDeliveryPreview(projectId: number) {
 export function uploadProjectMaterial(
   projectId: number,
   file: File,
-  meta?: { documentCategory?: string; specialty?: string; tags?: string[] }
+  meta?: {
+    documentCategory?: string;
+    specialty?: string;
+    tags?: string[];
+    // ② 插入图:图片会被自动识别为插入素材,target_section 指定插到技术卷哪一节
+    targetSection?: string;
+    caption?: string;
+  }
 ) {
   const body = new FormData();
   body.append("file", file);
@@ -372,6 +379,12 @@ export function uploadProjectMaterial(
   }
   if (meta?.tags?.length) {
     body.append("tags", meta.tags.join(","));
+  }
+  if (meta?.targetSection) {
+    body.append("target_section", meta.targetSection);
+  }
+  if (meta?.caption) {
+    body.append("caption", meta.caption);
   }
   return requestJson<KnowledgeUploadResponse>(
     `/api/project/${projectId}/material`,

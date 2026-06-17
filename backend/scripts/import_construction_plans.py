@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 IMPORT_TAG = "导入批次-施工方案语料"
 MIN_CHARS = 120  # 太短(空壳/封面)不灌
+MAX_FILE_BYTES = 2_500_000  # 超大 .doc 多是嵌图/对象膨胀(实测 8.6MB 那个把嵌入卡死),跳过
+MAX_CHARS = 50_000  # 抽出的文字截断上限,防个别超长文档炸出几百 chunk 拖垮嵌入
 
 # 顶层文件夹 → 规范专业标签(检索时与本项目专业做关键词匹配)。
 _SPECIALTY_MAP = {
@@ -99,7 +101,7 @@ def main() -> None:
 
     existing = _existing_filenames() if args.save else set()
     by_specialty: Counter = Counter()
-    imported = skipped_short = skipped_dup = 0
+    imported = skipped_short = skipped_dup = skipped_big = 0
 
     for path in files:
         specialty = _specialty_of(path, root)
@@ -107,7 +109,11 @@ def main() -> None:
         if file_name in existing:
             skipped_dup += 1
             continue
-        text = _extract_text(path)
+        if path.stat().st_size > MAX_FILE_BYTES:
+            skipped_big += 1  # 超大件(嵌图/对象膨胀)跳过,避免抽取/嵌入卡死
+            print(f"  跳过超大件 {path.stat().st_size // 1024}KB: {path.name}")
+            continue
+        text = _extract_text(path)[:MAX_CHARS]
         if len(text.strip()) < MIN_CHARS:
             skipped_short += 1
             continue
@@ -129,7 +135,7 @@ def main() -> None:
             imported += 1
 
     print(f"扫描 {len(files)} 个文件;按专业(可入库): {dict(by_specialty)}")
-    print(f"太短跳过 {skipped_short};已存在跳过 {skipped_dup}")
+    print(f"太短跳过 {skipped_short};超大跳过 {skipped_big};已存在跳过 {skipped_dup}")
     if args.save:
         print(f"✅ 入库 {imported} 篇,tag={IMPORT_TAG}")
     else:
