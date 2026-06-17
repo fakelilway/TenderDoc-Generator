@@ -31,6 +31,7 @@ import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
 import { ProjectMaterialPanel } from "@/components/ProjectMaterialPanel";
 import { PersonnelPanel } from "@/components/PersonnelPanel";
+import { ConformancePanel } from "@/components/ConformancePanel";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
@@ -1559,13 +1560,18 @@ export function TenderWorkspace({
             {/* Tab content */}
             <div className="p-4">
               {centerTab === "parsed" ? (
-                <ParsedReviewPanel
-                  parsed={parsedJson}
-                  value={parsedJsonText}
-                  busy={actionBusy}
-                  onChange={handleParsedJsonTextChange}
-                  onSave={handleConfirmParsed}
-                />
+                <div className="space-y-4">
+                  <ParsedReviewPanel
+                    parsed={parsedJson}
+                    value={parsedJsonText}
+                    busy={actionBusy}
+                    onChange={handleParsedJsonTextChange}
+                    onSave={handleConfirmParsed}
+                  />
+                  {projectId != null ? (
+                    <ConformancePanel projectId={projectId} />
+                  ) : null}
+                </div>
               ) : null}
               {centerTab === "outline" ? (
                 <div className="space-y-4">

@@ -623,3 +623,22 @@ export type PMSelectionResponse = {
   project_id: number;
   selected: { project_manager?: PersonnelMember | null };
 };
+
+// 逐空核对报告(读懂招标→每个空 找要求→核对→填/告警)
+export type FillRequirement = {
+  field: string;
+  source: string;
+  required: string;
+  our_value: string;
+  status: string; // 符合 | 不符合 | 缺料 | 待人工 | 一致 | 不一致
+  action: string; // 填 | 告警 | 留空
+  note: string;
+};
+
+export type ConformanceReportResponse = {
+  project_id: number;
+  items: FillRequirement[];
+  has_blocking: boolean;
+  warning_count: number;
+  pending_count: number;
+};

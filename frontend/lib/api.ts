@@ -13,6 +13,7 @@ import type {
   KnowledgeDocumentSummary,
   KnowledgeSelectionResponse,
   KnowledgeSearchResponse,
+  ConformanceReportResponse,
   KnowledgeUploadResponse,
   PersonnelMember,
   PMRecommendationResponse,
@@ -402,6 +403,13 @@ export function listProjectMaterials(projectId: number) {
 export function getPersonnelRecommendations(projectId: number) {
   return requestJson<PMRecommendationResponse>(
     `/api/project/${projectId}/personnel/recommendations`
+  );
+}
+
+// 逐空核对报告
+export function getProjectConformance(projectId: number) {
+  return requestJson<ConformanceReportResponse>(
+    `/api/project/${projectId}/conformance`
   );
 }
 
