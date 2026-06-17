@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from typing import Any
 
 from schemas.tender_spec import (
@@ -19,6 +21,55 @@ from schemas.tender_spec import (
 _GRADE_RANK = {"特级": 4, "一级": 3, "二级": 2, "三级": 1}
 _GRADE_NORMALIZE = {"壹级": "一级", "贰级": "二级", "叁级": "三级"}
 _DEFAULT_BASIC_INFO_ATTACHMENTS = ["营业执照", "资质证书", "安全生产许可证"]
+
+# 证件"即将到期"窗口:到期前 90 天内就预警(投标+工期跨度内别失效)。
+_EXPIRY_SOON_DAYS = 90
+# 从有效期文本里抠日期:支持 2028 / 2028-05 / 2028.5.15 / 2028年5月15日 等。
+_DATE_RE = re.compile(r"(20\d{2})[.\-_/年]?(1[0-2]|0?[1-9])?[.\-_/月]?(3[01]|[12]\d|0?[1-9])?")
+
+
+def _parse_valid_to(raw: str) -> str:
+    """有效期文本 → ISO 日期(YYYY-MM-DD)。
+
+    取"至"之后那段(如 "2023至2028" → 2028);只有年→当年末(12-31);只有年月→该月 28
+    (保守、避开月末长度坑)。抠不出返回 ""。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if "至" in text:
+        text = text.rsplit("至", 1)[-1].strip()
+    match = _DATE_RE.search(text)
+    if not match:
+        return ""
+    year = int(match.group(1))
+    month = int(match.group(2)) if match.group(2) else 12
+    if match.group(3):
+        day = int(match.group(3))
+    elif match.group(2):
+        day = 28
+    else:
+        day = 31
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return date(year, month, 28).isoformat()
+
+
+def _expiry_status(valid_to_iso: str, today: date) -> tuple[str, int]:
+    """ISO 有效期 + 今天 → (状态, 剩余天数)。状态:已过期/即将到期/有效/未知。"""
+    if not valid_to_iso:
+        return ("未知", 0)
+    try:
+        expires = date.fromisoformat(valid_to_iso)
+    except ValueError:
+        return ("未知", 0)
+    days = (expires - today).days
+    if days < 0:
+        return ("已过期", days)
+    if days <= _EXPIRY_SOON_DAYS:
+        return ("即将到期", days)
+    return ("有效", days)
 
 
 def _normalize_grades(text: str) -> str:
@@ -152,6 +203,76 @@ def check_project_manager(
     )
 
 
+def check_pm_cert_expiry(
+    selected_pm: dict[str, Any] | None, today: date
+) -> FillRequirement | None:
+    """选派项目经理的建造师证有效期核对:过期=废标级,临近到期=预警。
+
+    用名册已结构化的 BuilderCert.valid_to(从台账 xlsx 抠出),不需 OCR。未选派/无证 →
+    返回 None(check_project_manager 已分别告警,不重复刷屏)。
+    """
+    if not selected_pm or not selected_pm.get("name"):
+        return None
+    certs = selected_pm.get("builder_certs") or []
+    if not certs:
+        return None
+
+    name = selected_pm.get("name", "")
+    expired: list[str] = []
+    soon: list[str] = []
+    known = 0
+    for cert in certs:
+        label = f"{cert.get('level', '')}{cert.get('specialty', '')}".strip() or "建造师证"
+        valid_to = _parse_valid_to(str(cert.get("valid_to", "") or ""))
+        status, days = _expiry_status(valid_to, today)
+        if status == "未知":
+            continue
+        known += 1
+        if status == "已过期":
+            expired.append(f"{label}已过期({valid_to})")
+        elif status == "即将到期":
+            soon.append(f"{label}{days}天后到期({valid_to})")
+
+    cert_desc = "、".join(
+        f"{(c.get('level', '') + c.get('specialty', '')).strip() or '建造师证'}"
+        f"{('有效期至' + _parse_valid_to(str(c.get('valid_to', '') or ''))) if _parse_valid_to(str(c.get('valid_to', '') or '')) else '(无有效期信息)'}"
+        for c in certs
+    )
+    base = dict(
+        field="项目经理证件有效期",
+        source="投标人须知（资格审查）",
+        required="投标截止日仍在有效期内",
+        our_value=f"{name}:{cert_desc}",
+    )
+    if expired:
+        return FillRequirement(
+            **base,
+            status="不符合",
+            action="告警",
+            note="；".join(expired) + " —— 过期证件投标即废标,务必换证或换人",
+        )
+    if soon:
+        return FillRequirement(
+            **base,
+            status="缺料",
+            action="告警",
+            note="；".join(soon) + " —— 临近到期,确认投标及工期内不失效",
+        )
+    if known == 0:
+        return FillRequirement(
+            **base,
+            status="待人工",
+            action="告警",
+            note="选派项目经理的建造师证无有效期信息,人工核扫描件是否在有效期内",
+        )
+    return FillRequirement(
+        **base,
+        status="符合",
+        action="留空",
+        note="选派项目经理证件均在有效期内",
+    )
+
+
 def check_duration(spec: TenderSpec) -> FillRequirement | None:
     """工期:招标在前附表里规定了工期 → 投标函按它填(填from出处,不是核对我方)。"""
     if not spec.duration:
@@ -207,8 +328,10 @@ def build_conformance_report(
     pm_requirement: Any = None,
     selected_pm: dict[str, Any] | None = None,
     available_cert_types: set[str] | None = None,
+    today: date | None = None,
 ) -> ConformanceReport:
-    """组装本切片的逐空核对报告(4 个空)。"""
+    """组装本切片的逐空核对报告。today 可注入(便于测试),默认今天。"""
+    today = today or date.today()
     items: list[FillRequirement] = []
     for result in (
         check_duration(spec),
@@ -218,6 +341,9 @@ def build_conformance_report(
             items.append(result)
     if pm_requirement is not None:
         items.append(check_project_manager(pm_requirement, selected_pm))
+    pm_expiry = check_pm_cert_expiry(selected_pm, today)
+    if pm_expiry is not None:
+        items.append(pm_expiry)
     items.append(
         check_basic_info_attachments(spec, available_cert_types or set())
     )
