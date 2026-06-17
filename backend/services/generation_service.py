@@ -354,14 +354,31 @@ def _append_prose_plaintext(docx_path: Path, prose_markdown: str) -> None:
 
     Used when the styled append fails (e.g. a converted base docx whose styles
     can't be repaired). Keeps the合规正文 content (unstyled) instead of dropping
-    it or failing the whole export → 出标不被阻断、下载件照常产出。
+    it or失败 → 出标不被阻断、下载件照常产出。
+
+    **仍会解析 {{knowledge_image:...}} 插图**:证件/业绩扫描是资格审查的硬内容,绝不能因为
+    走了兜底就退化成一行死 token 文字(用户实测"插图没插"正是旧版样式渲染崩→兜底吞图所致)。
     """
     from docx import Document
+
+    from utils.docx_exporter import _add_knowledge_image, _parse_knowledge_image_marker
 
     doc = Document(str(docx_path))
     doc.add_page_break()
     for line in prose_markdown.splitlines():
-        text = line.strip().lstrip("#").strip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        marker = _parse_knowledge_image_marker(stripped)
+        if marker is not None:
+            try:
+                _add_knowledge_image(doc, marker, _resolve_knowledge_image, "zhengqi")
+            except Exception:
+                logger.warning(
+                    "纯文本兜底插图失败 doc=%s", marker.get("document_id"), exc_info=True
+                )
+            continue
+        text = stripped.lstrip("#").strip()
         if text:
             doc.add_paragraph(text)
     doc.save(str(docx_path))
