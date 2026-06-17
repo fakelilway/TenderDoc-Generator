@@ -9,10 +9,12 @@ from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
     _drop_spurious_stream_tables,
     _fill_known_table_cells,
+    _fill_value_for_label,
     _looks_like_next_chapter_page,
     _looks_like_other_volume_start,
     _table_label_value,
     build_original_format_docx,
+    unfilled_known_fields,
     build_original_format_docx_from_pdf,
     build_original_format_docx_from_pdf_editable,
     build_original_format_docx_from_pdf_with_fields,
@@ -151,6 +153,56 @@ def test_strip_seal_images_removes_seals_keeps_rest() -> None:
     assert before - after == 1  # 只删了红章,蓝图还在
     text = "\n".join(p.text for p in doc.paragraphs)
     assert "盖单位章" in text and "附表二" in text  # 文字完整
+
+
+def test_fill_value_for_label_no_single_char_misfill() -> None:
+    """回归:PDF 路径原用单字键('名'/'址')会把 项目名称→法人、邮政编码→地址 乱填。
+    改走统一稳健映射后,这些歧义/无对应标签一律留空,只精确标签才填。"""
+    profile = {
+        "company_name": "安徽正奇建设有限公司",
+        "legal_representative": "许明英",
+        "registered_address": "安徽省合肥市…",
+    }
+    # 单字误匹配已消除
+    assert _fill_value_for_label("项目名称", profile) == ""  # 旧:误=法人
+    assert _fill_value_for_label("邮政编码", profile) == ""  # 旧:误=地址
+    assert _fill_value_for_label("姓名", profile) == ""  # 歧义 → 不填
+    # 精确标签 + 扩别名 仍正确
+    assert _fill_value_for_label("法定代表人", profile) == "许明英"
+    assert _fill_value_for_label("单位名称", profile) == "安徽正奇建设有限公司"
+
+
+def test_table_label_value_expanded_aliases() -> None:
+    """扩标签别名:招标各家措辞(企业名称/公司名称/法人代表/住所…)都能对上字段。"""
+    profile = {
+        "company_name": "安徽正奇建设有限公司",
+        "legal_representative": "许明英",
+        "registered_address": "安徽省合肥市…",
+    }
+    for label in ("企业名称", "公司名称", "单位名称", "投标人全称"):
+        assert _table_label_value(label, profile) == "安徽正奇建设有限公司", label
+    assert _table_label_value("法人代表", profile) == "许明英"
+    assert _table_label_value("住所", profile).startswith("安徽省")
+
+
+def test_unfilled_known_fields_flags_recognized_but_empty() -> None:
+    """缺字段显式告警:认得标签但档案无值 → 列出来,别静默留空。"""
+    from docx import Document
+
+    doc = Document()
+    table = doc.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = "投标人名称"
+    table.cell(0, 1).text = ""
+    table.cell(1, 0).text = "开户银行"  # 档案缺 → 应被标记
+    table.cell(1, 1).text = ""
+    table.cell(2, 0).text = "联系电话"  # 档案缺 → 应被标记
+    table.cell(2, 1).text = ""
+    profile = {"company_name": "安徽正奇建设有限公司"}  # 有公司名,缺银行/电话
+
+    missing = dict((label, key) for label, key in unfilled_known_fields(doc, profile))
+    keys = set(missing.values())
+    assert "bank_name" in keys and "contact_phone" in keys
+    assert "company_name" not in keys  # 已填的不算缺
 
 
 def test_table_label_value_broad_key_does_not_overfill() -> None:
@@ -417,8 +469,12 @@ def test_fill_value_for_label_maps_and_skips() -> None:
         "legal_representative": "张三",
     }
     assert _fill_value_for_label("投标人：", profile) == "安徽正奇建设有限公司"
-    assert _fill_value_for_label("址：", profile) == "合肥市某路1号"  # 地 址 → '址：'
-    assert _fill_value_for_label("名：", profile) == "张三"  # 姓 名 → '名：'
+    # 整标签照填(改走统一稳健映射后,用全称而非单字短键)
+    assert _fill_value_for_label("注册地址：", profile) == "合肥市某路1号"
+    assert _fill_value_for_label("法定代表人：", profile) == "张三"
+    # 单字短键已废:'址'/'名' 单独出现太歧义(项目名称/邮政编码会被乱配)→ 不填
+    assert _fill_value_for_label("址：", profile) == ""
+    assert _fill_value_for_label("名：", profile) == ""
     # Segmented / unmapped blanks stay empty (editable but not auto-filled).
     assert _fill_value_for_label("成立时间：", profile) == ""
     assert _fill_value_for_label("别：", profile) == ""  # 性别
