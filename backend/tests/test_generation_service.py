@@ -299,3 +299,40 @@ def test_append_prose_falls_back_to_plaintext_when_styled_render_fails(
     text = "\n".join(p.text for p in Document(base).paragraphs)
     assert "投标人基本情况表" in text  # 原格式章保留
     assert "本公司承诺响应全部商务条款" in text  # 合规正文未丢
+
+
+def test_append_prose_fallback_still_inserts_knowledge_images(
+    tmp_path, monkeypatch
+) -> None:
+    """用户实测"插图没插":旧版样式渲染崩→纯文本兜底把 {{knowledge_image}} 吞成一行死 token。
+    现在兜底也必须解析插图——证件/业绩扫描是资格审查硬内容,不能退化成 token 文字。"""
+    from io import BytesIO
+
+    from docx.oxml.ns import qn
+    from PIL import Image
+
+    from utils import docx_exporter
+
+    base = tmp_path / "commercial.docx"
+    Document().save(base)
+
+    def boom(*_a, **_k):
+        raise KeyError("no style with name 'Heading 1'")
+
+    monkeypatch.setattr(docx_exporter, "_render_markdown_body", boom)  # 逼走纯文本兜底
+
+    buf = BytesIO()
+    Image.new("RGB", (40, 40), (200, 30, 30)).save(buf, "PNG")
+    png = buf.getvalue()
+    monkeypatch.setattr(generation_service, "_resolve_knowledge_image", lambda _d: png)
+
+    generation_service._append_prose_to_docx(
+        base,
+        '## 资格证明材料\n\n{{knowledge_image:document_id=187 caption="营业执照" width_cm=14}}\n',
+    )
+    doc = Document(base)
+    drawings = len(doc.element.findall(".//" + qn("w:drawing")))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert drawings >= 1  # 图真插进去了(兜底也插图)
+    assert "{{knowledge_image" not in text  # 没残留死 token
+    assert "营业执照" in text  # caption 在
