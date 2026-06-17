@@ -181,7 +181,7 @@ def build_project_conformance_report(
     pm_requirement = derive_pm_requirement(requirements) if requirements else None
     selected_pm = (row.get("selected_personnel") or {}).get("project_manager")
 
-    return build_conformance_report(
+    report = build_conformance_report(
         project_id=project_id,
         spec=spec,
         profile=profile,
@@ -189,3 +189,16 @@ def build_project_conformance_report(
         selected_pm=selected_pm,
         available_cert_types=_available_cert_types(),
     )
+    # 追加:招标第三章「评标办法」的真实评审标准(逐条带条款号),让审查以招标明文标准为准,
+    # 而非只靠写死的通用规则。best-effort —— 抽不到/失败时沿用上面的基础报告,绝不阻断。
+    try:
+        from services.review_method_service import (
+            build_review_method,
+            review_method_to_requirements,
+        )
+
+        review_method = build_review_method(row.get("tender_text") or "", complete=complete)
+        report.items.extend(review_method_to_requirements(review_method))
+    except Exception:
+        logger.warning("追加招标评审标准失败,沿用基础核对报告", exc_info=True)
+    return report
