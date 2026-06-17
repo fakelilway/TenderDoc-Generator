@@ -53,7 +53,7 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
         return {
             "id": 7,
             "status": "uploaded",
-            "tender_file_path": "projects/7/tender/sample.txt",
+            "tender_file_path": "projects/7/tender/sample.pdf",
         }
 
     monkeypatch.setattr("api.main.project_service.create_project", fake_create_project)
@@ -61,20 +61,20 @@ def test_create_project_uploads_tender(monkeypatch) -> None:
     response = client.post(
         "/api/project/create",
         data={"name": "测试项目", "template_id": "3"},
-        files={"tender_file": ("sample.txt", b"hello tender", "text/plain")},
+        files={"tender_file": ("sample.pdf", b"hello tender", "application/pdf")},
     )
 
     assert response.status_code == 200
     assert response.json() == {
         "project_id": 7,
         "status": "uploaded",
-        "tender_file_path": "projects/7/tender/sample.txt",
+        "tender_file_path": "projects/7/tender/sample.pdf",
     }
     assert captured == {
         "name": "测试项目",
         "file_bytes": b"hello tender",
-        "filename": "sample.txt",
-        "content_type": "text/plain",
+        "filename": "sample.pdf",
+        "content_type": "application/pdf",
         "owner_user_id": 1,
         "template_id": 3,
     }

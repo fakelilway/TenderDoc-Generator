@@ -25,12 +25,7 @@ _RE_PAGE_NUM = re.compile(r"\n\s*\d{1,3}\s*\n")
 _RE_UNDERSCORE = re.compile(r"_{3,}")
 
 from schemas.tender import TenderRequirements
-from services.format_skeleton_service import (
-    extract_format_pages,
-    assign_page_volumes,
-)
 from agents.form_filler_agent import (
-    fill_page_template,
     FillResult,
     generate_missing_checklist,
 )
@@ -263,20 +258,8 @@ def generate_v2_bid_package(
             logger.warning("附表云转换失败 — 技术卷不含附表", exc_info=True)
             built_appendix_docx = None
 
-    # ── Phase 1: Extract format pages (skip if using original format DOCX) ──
-    if original_format_docx_available:
-        # Original format (OOXML copy or PDF images) is pixel-perfect.
-        # Skip text-based format extraction — only need prose content.
-        all_pages: dict = {"commercial": [], "technical": [], "pricing": []}
-    else:
-        all_pages = extract_format_pages(tender_text)
-        if not all_pages.get("commercial"):
-            raise ValueError("V2 生成失败：未能从招标文件提取格式章节。请确认格式章节存在。")
-
-    classified = assign_page_volumes(all_pages["commercial"], requirements)
-
-    # ── Phase 2: Fill form templates (skip in original format mode) ──
-
+    # 福昕原格式模式:格式页直接照抄招标 DOCX,无需文本提取/正则填表。下列容器恒空,
+    # 下游装配/审查据此跳过"文本格式页"渲染、只审 prose 正文(v1 文本重建/正则填表路径已删)。
     filled_pages: dict[str, list[tuple[str, str, str]]] = {
         "commercial": [],
         "technical": [],
@@ -284,20 +267,6 @@ def generate_v2_bid_package(
     }
     fill_results: list[FillResult] = []
     page_pairs: list[tuple[str, str]] = []
-
-    if not original_format_docx_available:
-        for vol in ("commercial", "technical", "pricing"):
-            for page in classified.get(vol, []):
-                if page.raw_template:
-                    result = fill_page_template(
-                        page.raw_template, combined_profile, page.title
-                    )
-                    filled_pages[vol].append(
-                        (page.title, page.raw_template, result.filled_template)
-                    )
-                    fill_results.append(result)
-                    if page.page_type != "prose_section":
-                        page_pairs.append((page.title, page.raw_template))
 
     # ── Phase 3: Write prose content ──
     tech_content = ""
@@ -364,25 +333,14 @@ def generate_v2_bid_package(
         combined = "\n\n".join(all_results)
         return result, combined
 
-    if not original_format_docx_available and classified.get("technical"):
-        for page in classified["technical"]:
-            if page.page_type == "prose_section" or "施工" in page.title:
-                tech_sections = confirmed_sections or _collect_technical_sections(
-                    requirements
-                )
-                if not tech_sections:
-                    tech_sections = [{"title": page.title}]
-                prose_results, tech_content = _call_content_writer(tech_sections)
-                break
-    elif original_format_docx_available:
-        tech_sections = confirmed_sections or _collect_technical_sections(requirements)
-        try:
-            prose_results, tech_content = _call_content_writer(tech_sections)
-        except Exception as exc:
-            logger.error("Content writer failed in original format mode", exc_info=True)
-            raise ValueError(
-                "V2 生成失败：施工方案正文生成失败。系统不会输出占位正文，请检查 LLM 配置、" "招标文件文本或知识库资料后重新生成。"
-            ) from exc
+    tech_sections = confirmed_sections or _collect_technical_sections(requirements)
+    try:
+        prose_results, tech_content = _call_content_writer(tech_sections)
+    except Exception as exc:
+        logger.error("Content writer failed", exc_info=True)
+        raise ValueError(
+            "V2 生成失败：施工方案正文生成失败。系统不会输出占位正文，请检查 LLM 配置、" "招标文件文本或知识库资料后重新生成。"
+        ) from exc
 
     # ── Phase 4: Assemble markdown per volume ──
 

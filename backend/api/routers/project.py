@@ -6,6 +6,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    HTTPException,
     Query,
     UploadFile,
 )
@@ -74,11 +75,19 @@ async def create_project(
     template_id: int | None = Form(None),
     current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> ProjectCreateResponse:
+    # 招标文件只收 PDF/Word:真实招标文件均为此两种,系统按原格式(福昕)照抄;
+    # 不再支持 .txt/.md/.图片 招标(已删的 v1 文本重建/正则填表路径才需要那些)。
+    filename = (tender_file.filename or "").strip()
+    if not filename.lower().endswith((".pdf", ".docx")):
+        raise HTTPException(
+            status_code=400,
+            detail="招标文件仅支持 PDF 或 Word(.pdf / .docx)。请上传原始招标文件。",
+        )
     try:
         project = project_service.create_project(
             name=name,
             file_bytes=await tender_file.read(),
-            filename=tender_file.filename or "tender.txt",
+            filename=filename or "tender.pdf",
             content_type=tender_file.content_type,
             owner_user_id=current_user.id,
             template_id=template_id,
