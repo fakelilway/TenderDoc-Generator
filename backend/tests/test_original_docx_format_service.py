@@ -660,3 +660,31 @@ def test_fill_inline_blanks_does_not_overwrite_existing_value() -> None:
         p.add_run(t)
     assert _fill_inline_labeled_blanks(doc, {"工期": "45日历天"}) == 0
     assert "90日历天" in doc.paragraphs[0].text  # 原值保留,不被覆盖
+
+
+def test_fill_inline_blanks_fills_signature_names_only() -> None:
+    """投标函签署块:投标人/法定代表人 印姓名,但（盖单位章）/（签字）文字保留(不代盖代签)。"""
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    p = doc.add_paragraph()
+    for t in ["投标人：", " ", "\t", "（盖单位章）", "法定代表人：", " ", "\t", "（签字）"]:
+        p.add_run(t)
+    n = _fill_inline_labeled_blanks(
+        doc, {"company_name": "安徽正奇建设有限公司", "legal_representative": "许明英"}
+    )
+    txt = doc.paragraphs[0].text
+    assert n == 2
+    assert "投标人： 安徽正奇建设有限公司（盖单位章）" in txt
+    assert "法定代表人： 许明英（签字）" in txt
+    assert "（盖单位章）" in txt and "（签字）" in txt  # 盖章/签字位仍在,只印了名
+
+
+def test_fill_inline_blanks_skips_委托代理人_ambiguous() -> None:
+    """法定代表人或委托代理人:谁签不定 → 不自动填(endswith 不命中 法定代表人)。"""
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    p = doc.add_paragraph()
+    for t in ["法定代表人或委托代理人：", "\t", "（签字）"]:
+        p.add_run(t)
+    assert _fill_inline_labeled_blanks(doc, {"legal_representative": "许明英"}) == 0
+    assert "\t" in doc.paragraphs[0].text  # 留空待人工
