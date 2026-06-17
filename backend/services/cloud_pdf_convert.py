@@ -171,6 +171,7 @@ def convert_format_pages_via_cloud(
         _fill_personnel_table,
         _find_format_page_range_in_pdf,
         _replace_known_fields,
+        _strip_seal_images,
     )
 
     client_id, secret = _foxit_credentials()
@@ -197,6 +198,8 @@ def convert_format_pages_via_cloud(
     _replace_known_fields(doc, profile or {})
     _fill_known_table_cells(doc, profile or {})
     _fill_personnel_table(doc, profile or {})
+    # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
+    _strip_seal_images(doc)
     doc.save(str(output_path))
     return str(output_path)
 
