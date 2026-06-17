@@ -688,3 +688,28 @@ def test_fill_inline_blanks_skips_委托代理人_ambiguous() -> None:
         p.add_run(t)
     assert _fill_inline_labeled_blanks(doc, {"legal_representative": "许明英"}) == 0
     assert "\t" in doc.paragraphs[0].text  # 留空待人工
+
+
+def test_fill_inline_blanks_run_split_independent() -> None:
+    """不依赖 run 边界:福昕/pdf2docx 把"标签：\t"切成一个 run 还是几个 run 都能填。"""
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    prof = {"工期": "90日历天", "company_name": "正奇建设"}
+    for label, name, runs in [
+        ("同run", "工期", ["工期：\t日历天"]),
+        ("冒号tab同run", "工期", ["工期", "：\t", "日历天"]),
+        ("投标人同run", "投标人", ["投标人：\t（盖单位章）"]),
+    ]:
+        doc = Document(); p = doc.add_paragraph()
+        for t in runs: p.add_run(t)
+        n = _fill_inline_labeled_blanks(doc, prof)
+        assert n == 1, f"{label} 应填1处, 实际{n}"
+        assert "\t" not in doc.paragraphs[0].text, f"{label} tab未被填"
+    # 多字段跨混合 run 切分,一段填 3 处
+    doc = Document(); p = doc.add_paragraph()
+    for t in ["工程质量：\t，安全目标：", "\t", "，工期：\t日历天。"]:
+        p.add_run(t)
+    n = _fill_inline_labeled_blanks(
+        doc, {"质量": "合格", "安全": "无事故", "工期": "90日历天"}
+    )
+    assert n == 3
+    assert doc.paragraphs[0].text == "工程质量：合格，安全目标：无事故，工期：90日历天。"
