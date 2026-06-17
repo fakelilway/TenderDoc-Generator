@@ -90,14 +90,43 @@ def test_table_label_value_maps_known_and_skips_others() -> None:
         "legal_representative": "许明英",
         "registered_capital": "10060万元人民币",
     }
+    profile["project_manager_name"] = "江舟"
     assert _table_label_value("投标人名称", profile) == "安徽正奇建设有限公司"
     assert _table_label_value("统一社会信用代码", profile) == "91340100578516708N"
     assert _table_label_value("注册资本", profile) == "10060万元人民币"
+    assert _table_label_value("项目经理", profile) == "江舟"
+    assert _table_label_value("项目经理姓名", profile) == "江舟"
     # 另一个人 / 日期 / 无对应字段 → 不填
     assert _table_label_value("技术负责人", profile) == ""
     assert _table_label_value("成立时间", profile) == ""
     assert _table_label_value("员工总人数：", profile) == ""
     assert _table_label_value("随便什么标题", profile) == ""
+
+
+def test_table_label_value_broad_key_does_not_overfill() -> None:
+    """回归(实测 122 商务卷):宽泛主体词("投标人"/"项目经理")含在标签里 ≠ 就该填它的
+    名字。子字段标签必须留空待人工,绝不能拿公司名/项目经理名瞎填(废标级错误)。"""
+    profile = {
+        "company_name": "安徽正奇建设有限公司",
+        "credit_code": "91340100578516708N",
+        "project_manager_name": "江舟",
+    }
+    # ❌ 原来全被"投标人"/"项目经理"子串命中、瞎填成公司名或"江舟"
+    for wrong in (
+        "投标人响应资质", "投标人资格业绩", "投标人加分业绩", "投标人荣誉",
+        "项目经理身份证号码", "项目经理证书名称", "项目经理证书编号", "项目经理荣誉",
+    ):
+        assert _table_label_value(wrong, profile) == "", wrong
+    # ✓ "要名字"的复合标签仍正确填(联合体牵头人=投标人本身)
+    assert (
+        _table_label_value("独立投标人或联合体牵头人名称", profile)
+        == "安徽正奇建设有限公司"
+    )
+    # ✓ 最长匹配:具体字段胜过宽泛"投标人",信用代码不再被填成公司名
+    assert (
+        _table_label_value("独立投标人或联合体牵头人统一社会信用代码", profile)
+        == "91340100578516708N"
+    )
 
 
 def test_fill_known_table_cells_fills_adjacent_empty_only() -> None:

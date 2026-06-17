@@ -404,6 +404,18 @@ _TABLE_SUBLABELS = frozenset(
 )
 _TABLE_BLANK_RE = re.compile(r"^[\s_＿]*$")
 
+# 宽泛"主体"键:标签里**含**它 ≠ 就该填它的名字。"投标人响应资质 / 项目经理身份证
+# 号码 / …荣誉 / …业绩"含主体词但问的是别的字段——绝不能拿公司名/项目经理名去填(实测
+# 122 商务卷正栽在这:项目经理身份证号被填成"江舟"、牵头人信用代码被填成公司名)。仅当
+# 标签是"要名字"(键本身,或键+名称/姓名等名字尾巴)时才填,否则留空待人工。
+_BROAD_ENTITY_KEYS = frozenset({"投标人", "项目经理", "注册建造师"})
+_NAME_TAILS = frozenset({"名称", "姓名", "名", "全称", "单位名称"})
+# 判定"是否只剩名字尾巴"前,先剥掉这些主体周围的修饰词/装饰。
+_ENTITY_MODIFIERS = (
+    "独立", "或联合体", "联合体", "牵头人", "或", "单位", "本",
+    "盖章", "公章", "签字", "（", "）", "(", ")",
+)
+
 
 def _table_label_value(label: str, profile: dict[str, Any]) -> str:
     norm = (
@@ -411,10 +423,20 @@ def _table_label_value(label: str, profile: dict[str, Any]) -> str:
     )
     if not norm or any(skip in norm for skip in _TABLE_FILL_SKIP):
         return ""
-    for key, profile_key in _TABLE_FILL_LABELS:
-        if key in norm:
-            return str(profile.get(profile_key, "") or "").strip()
-    return ""
+    # 取所有命中键里**最长(最具体)**的:让"统一社会信用代码"胜过宽泛的"投标人",
+    # 修复原来 first-in-list-order 误配(如"…牵头人统一社会信用代码"被当成投标人名称)。
+    matches = [(key, pkey) for key, pkey in _TABLE_FILL_LABELS if key in norm]
+    if not matches:
+        return ""
+    key, profile_key = max(matches, key=lambda kp: len(kp[0]))
+    # 宽泛主体键防误填:只有"要名字"的标签才填名字。
+    if key in _BROAD_ENTITY_KEYS:
+        remainder = norm.replace(key, "", 1)
+        for modifier in _ENTITY_MODIFIERS:
+            remainder = remainder.replace(modifier, "")
+        if remainder and remainder not in _NAME_TAILS:
+            return ""
+    return str(profile.get(profile_key, "") or "").strip()
 
 
 def _set_cell_value(cell: Any, value: str) -> None:
