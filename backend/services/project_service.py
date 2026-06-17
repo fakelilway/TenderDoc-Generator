@@ -86,6 +86,11 @@ from services.project.strategy import (
     build_project_response_matrix,
     build_project_score_prediction,
 )
+from services.project.personnel import (
+    get_selected_personnel,
+    recommend_project_personnel,
+    save_selected_project_manager,
+)
 from services.project.delivery import (
     _DELIVERY_FORMATS,
     _DELIVERY_VOLUME_LABELS,

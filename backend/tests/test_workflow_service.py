@@ -490,3 +490,31 @@ def test_persist_state_serializes_trace_event_datetimes(monkeypatch) -> None:
 
     assert dumped_payloads
     assert "created_at" in dumped_payloads[0]
+
+
+def test_apply_selected_project_manager_overrides_default() -> None:
+    """本项目选派的项目经理覆盖档案里写死的单个默认项目经理(M-人员名册 Unit4)。"""
+    from services import workflow_service
+
+    profile = {"project_manager_name": "潜在项目经理人选", "project_manager_cert": "占位"}
+    project = {
+        "selected_personnel": {
+            "project_manager": {
+                "name": "江舟",
+                "builder_certs": [
+                    {"level": "一级建造师", "specialty": "公路工程", "cert_no": "皖1342006"}
+                ],
+            }
+        }
+    }
+    out = workflow_service._apply_selected_project_manager(profile, project)
+    assert out["project_manager_name"] == "江舟"
+    assert out["project_manager_cert"] == "皖1342006"
+
+    # 未选派 → 原样不动
+    assert (
+        workflow_service._apply_selected_project_manager(profile, {})[
+            "project_manager_name"
+        ]
+        == "潜在项目经理人选"
+    )
