@@ -85,6 +85,7 @@ def index_uploaded_knowledge(
     tags: list[str] | None = None,
     ingestion_mode: str | None = None,
     project_id: int | None = None,
+    extra_metadata: dict | None = None,
 ) -> dict[str, object]:
     if not file_bytes:
         raise ValueError("Uploaded knowledge file is empty")
@@ -155,6 +156,9 @@ def index_uploaded_knowledge(
         # 冗余进 metadata —— 检索按 metadata->>'project_id' 过滤(走 GIN、免 JOIN),
         # 把"本项目材料 ∪ 全局库"喂给技术卷,而全局库视图仍只看 project_id IS NULL。
         metadata = {**metadata, "project_id": project_id}
+    if extra_metadata:
+        # ② 本项目插入图等:target_section/caption 等自定义字段(供生成时按节插图)。
+        metadata = {**metadata, **{k: v for k, v in extra_metadata.items() if v is not None}}
 
     chunks = [
         KnowledgeChunk(
@@ -771,6 +775,39 @@ def list_project_materials(
         }
         for row in rows
     ]
+
+
+def list_project_insert_images(project_id: int) -> list[dict[str, object]]:
+    """② 本项目用于插入文档的图片(航拍图/本项目图纸):image_insertable + 本项目范围。
+
+    返回 ``[{document_id, file_name, target_section, caption}]``,供生成时按 target_section
+    把图插到技术卷对应节(见 v2_generation_service._inject_project_images)。
+    """
+    with _connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, file_name, metadata_json
+                FROM documents
+                WHERE project_id = %s
+                  AND coalesce(metadata_json->>'image_insertable', '') = 'true'
+                ORDER BY created_at, id
+                """,
+                (project_id,),
+            )
+            rows = cursor.fetchall()
+    images: list[dict[str, object]] = []
+    for doc_id, file_name, metadata in rows:
+        metadata = metadata or {}
+        images.append(
+            {
+                "document_id": int(doc_id),
+                "file_name": file_name,
+                "target_section": metadata.get("target_section", ""),
+                "caption": metadata.get("caption", "") or file_name,
+            }
+        )
+    return images
 
 
 def delete_project_material(project_id: int, document_id: int) -> None:

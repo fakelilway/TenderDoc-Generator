@@ -212,6 +212,10 @@ def test_retrieve_for_outline_treats_rag_as_material_not_structure(monkeypatch) 
     # top_k widened to 16 / 6-per-section so the evidence pack carries scored material.
 
     monkeypatch.setattr(workflow_service.retriever, "retrieve", fake_retrieve)
+    # 隔离 ① 施组语料检索(本测试只验通用查询):无施组命中 → 走原路径。
+    monkeypatch.setattr(
+        workflow_service.retriever, "retrieve_filtered", lambda *a, **k: []
+    )
 
     chunks = workflow_service._retrieve_for_outline(
         TenderRequirements.model_validate(PARSED_JSON),
@@ -518,3 +522,45 @@ def test_apply_selected_project_manager_overrides_default() -> None:
         ]
         == "潜在项目经理人选"
     )
+
+
+def test_derive_project_specialty_from_scope() -> None:
+    from types import SimpleNamespace
+
+    def req(name, scope=""):
+        return SimpleNamespace(project_name=name, tender_scope=scope, qualification_list=[])
+
+    assert workflow_service._derive_project_specialty(req("某县公路路面改造工程")) == "公路工程"
+    assert workflow_service._derive_project_specialty(req("某市政污水管网工程")) == "市政公用工程"
+    assert workflow_service._derive_project_specialty(req("某大桥工程", "桥梁涵洞")) == "桥涵工程"
+    # 无明确专业关键词 → 不强行归类(检索退到任意专业施组)
+    assert workflow_service._derive_project_specialty(req("某综合楼装修")) == ""
+
+
+def test_retrieve_for_outline_grounds_with_construction_plans(monkeypatch) -> None:
+    """① 施组语料命中时,每节= 同类施组(前)+ 通用证据(后),给技术卷写法接地。"""
+    monkeypatch.setattr(
+        workflow_service.retriever,
+        "retrieve",
+        lambda query, top_k=9, project_id=None: [
+            RetrievalResult(50, 5, "通用证据片段", {}, 0.2, 0.8)
+        ],
+    )
+    # 施组语料检索返回一条公司同类施工方案
+    monkeypatch.setattr(
+        workflow_service.retriever,
+        "retrieve_filtered",
+        lambda *a, **k: [
+            RetrievalResult(
+                9, 9, "公司公路工程施工方案片段", {"document_category": "施工方案"}, 0.1, 0.9
+            )
+        ],
+    )
+    chunks = workflow_service._retrieve_for_outline(
+        TenderRequirements.model_validate({**PARSED_JSON, "project_name": "某公路工程"}),
+        [BidSectionOutline(title="第一章、总体施工组织布置及规划", focus_points=[])],
+    )
+    section = chunks["第一章、总体施工组织布置及规划"]
+    # 施组语料排在最前(写法接地优先),通用证据在后
+    assert section[0].content == "公司公路工程施工方案片段"
+    assert any(c.content == "通用证据片段" for c in section)

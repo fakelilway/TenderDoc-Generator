@@ -75,8 +75,16 @@ def build_node_fill_prompt(
         if not isinstance(chunk, dict):
             continue
         content = str(chunk.get("content", "") or chunk.get("snippet", "")).strip()
-        if content:
-            snippets.append(redact_pii(content)[:700])
+        if not content:
+            continue
+        # 区分"公司同类施工方案"(参照写法/工艺/深度)与一般证据素材,提示 LLM 别照搬施组数据。
+        meta = chunk.get("metadata") or {}
+        label = (
+            "【公司同类施工方案·仅参照写法/工艺/深度】"
+            if meta.get("document_category") == "施工方案"
+            else "【素材】"
+        )
+        snippets.append(f"{label}\n{redact_pii(content)[:700]}")
 
     score_block = _format_requirement_items(score_items)
     invalid_block = _format_requirement_items(invalid_items)
@@ -104,7 +112,7 @@ def build_node_fill_prompt(
 - 安全目标：{safety or '见招标文件'}
 - 招标范围：{scope or '见招标文件'}
 
-## 知识库参考
+## 知识库参考（含公司同类工程历史施工方案,供参照写法/工艺/深度,严禁照搬其数据）
 {chr(10).join(snippets) if snippets else '（未匹配到相关知识片段）'}
 {guidance_block}
 ## 本节点须正面响应的评分点
@@ -126,6 +134,9 @@ def build_node_fill_prompt(
 3. 列表型内容可用 Markdown 表格，表格应有实际字段和值；无依据的值留"________"。
 4. 不写"人工确认点""待补充""TODO""AI生成"等元话语。
 5. 不编造金额、人名、证号、日期；知识库只作素材，不得改变招标文件结构。
+   标【公司同类施工方案】的片段:**只参照其写法、工艺步骤、措施条理与深度**,工程参数
+   (项目名、地点、规模、工期、数据)一律以本项目招标为准,**严禁照搬历史项目的具体数值/
+   地名/项目名**。
 6. 逐条正面响应上述评分点，给出对应的、可量化的工程措施与验收标准，不要泛泛而谈。
 7. 确保不触发上述废标项；涉及承诺事项用确定性表述明确承诺。{length_rule}
 

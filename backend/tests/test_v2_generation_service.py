@@ -712,3 +712,30 @@ def test_enrich_commercial_fills_project_manager_from_profile() -> None:
     )
     assert "李明" in enriched  # project_manager_name 被正确取出
     assert "皖一级建造师A123456" in enriched  # project_manager_cert
+
+
+def test_inject_project_images_targets_section_and_appendix(monkeypatch) -> None:
+    """② 本项目插入图:按 target_section 插到对应节;无目标/未匹配的进末尾"本项目附图"。"""
+    from services import v2_generation_service as v2
+    from services import knowledge_service
+
+    monkeypatch.setattr(
+        knowledge_service,
+        "list_project_insert_images",
+        lambda pid: [
+            {"document_id": 11, "file_name": "航拍图.jpg", "target_section": "施工总平面", "caption": "本项目航拍图"},
+            {"document_id": 12, "file_name": "区位图.jpg", "target_section": "", "caption": "区位图"},
+        ],
+    )
+    md = "## 一、工程概况\n\n概况。\n\n## 二、施工总平面布置\n\n平面。\n"
+    out = v2._inject_project_images(md, project_id=700)
+
+    # 航拍图插进"施工总平面布置"节(target 是其子串)
+    assert "{{knowledge_image:document_id=11" in out
+    plane_block = out.split("## 二、施工总平面布置")[1].split("##")[0]
+    assert "document_id=11" in plane_block
+    # 区位图无目标 → 末尾"本项目附图"
+    assert "## 本项目附图" in out
+    assert "document_id=12" in out.split("## 本项目附图")[1]
+    # 无 project_id → 原样返回
+    assert v2._inject_project_images(md, None) == md

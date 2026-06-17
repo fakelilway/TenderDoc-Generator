@@ -169,6 +169,7 @@ def generate_v2_bid_package(
     original_format_docx_available: bool = False,
     tender_bytes: bytes | None = None,
     confirmed_technical_outline: list[dict] | None = None,
+    project_id: int | None = None,
 ) -> V2BidPackage:
     """V2 generation: extract → fill → write → audit.
 
@@ -489,6 +490,9 @@ def generate_v2_bid_package(
         notes_md = _build_audit_notes(requirements)
     else:
         notes_md = ""
+
+    # ② 本项目定制插入图(航拍图/本项目图纸):按 target_section 插到技术卷对应节。
+    technical_md = _inject_project_images(technical_md, project_id)
 
     # ── Phase 5: Audit ──
     filled_page_pairs = []
@@ -969,6 +973,56 @@ def _kb_qualification_tables_markdown() -> str:
         + "\n".join(parts)
         + "\n"
     )
+
+
+def _inject_project_images(technical_md: str, project_id: int | None) -> str:
+    """② 本项目定制插入图(航拍图/本项目图纸):按 ``target_section`` 把项目图片插到技术卷
+    对应节末尾;未指定或未匹配到节的统一收到末尾"本项目附图"。靠现成 ``{{knowledge_image}}``
+    渲染器插入(下游 _render_markdown_body 从 MinIO 取图)。
+    """
+    if not project_id or not technical_md.strip():
+        return technical_md
+    try:
+        from services.knowledge_service import list_project_insert_images
+
+        images = list_project_insert_images(project_id)
+    except Exception:
+        return technical_md
+    if not images:
+        return technical_md
+
+    def _marker(image: dict) -> str:
+        caption = str(image.get("caption") or "").replace('"', "")
+        return (
+            f'\n\n{{{{knowledge_image:document_id={image["document_id"]} '
+            f'caption="{caption}" width_cm=14}}}}\n'
+        )
+
+    used: set[int] = set()
+    parts = re.split(r"(?m)^(##\s.+)$", technical_md)
+    rebuilt = [parts[0]]
+    idx = 1
+    while idx < len(parts):
+        heading = parts[idx]
+        body = parts[idx + 1] if idx + 1 < len(parts) else ""
+        title = heading.lstrip("#").strip()
+        block = heading + body
+        for image in images:
+            target = str(image.get("target_section") or "").strip()
+            doc_id = image["document_id"]
+            if target and doc_id not in used and (target in title or title in target):
+                block += _marker(image)
+                used.add(doc_id)
+        rebuilt.append(block)
+        idx += 2
+    result = "".join(rebuilt)
+
+    leftover = [img for img in images if img["document_id"] not in used]
+    if leftover:
+        result = result.rstrip() + "\n\n## 本项目附图\n"
+        for image in leftover:
+            result += _marker(image)
+    return result
 
 
 def _qualification_evidence_markdown(limit: int = 6) -> str:

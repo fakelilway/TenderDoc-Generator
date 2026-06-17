@@ -18,6 +18,10 @@ export function ProjectMaterialPanel({ projectId }: { projectId: number }) {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // ② 插入图:目标章节 + 说明
+  const [imgSection, setImgSection] = useState("");
+  const [imgCaption, setImgCaption] = useState("");
+  const imgInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -33,6 +37,33 @@ export function ProjectMaterialPanel({ projectId }: { projectId: number }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const handleImage = useCallback(
+    async (files: FileList | null) => {
+      if (!files?.length) {
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        for (const file of Array.from(files)) {
+          await uploadProjectMaterial(projectId, file, {
+            targetSection: imgSection.trim(),
+            caption: imgCaption.trim()
+          });
+        }
+        await refresh();
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        setBusy(false);
+        if (imgInputRef.current) {
+          imgInputRef.current.value = "";
+        }
+      }
+    },
+    [projectId, refresh, imgSection, imgCaption]
+  );
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
@@ -113,6 +144,39 @@ export function ProjectMaterialPanel({ projectId }: { projectId: number }) {
           onChange={(event) => void handleFiles(event.target.files)}
         />
       </label>
+
+      <div className="mt-2 rounded-[16px] border border-[#007aff]/20 bg-[#007aff]/[0.04] p-3">
+        <p className="text-[11px] font-medium text-[#007aff]">
+          本项目插入图(航拍图 / 图纸 → 自动插到技术卷指定章节)
+        </p>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={imgSection}
+            onChange={(event) => setImgSection(event.target.value)}
+            placeholder="插到哪一节(如:施工总平面布置;留空进末尾「本项目附图」)"
+            className="flex-1 rounded-[12px] border border-black/[0.1] bg-white px-3 py-1.5 text-xs text-[#1d1d1f] placeholder:text-[#b0b0b5]"
+          />
+          <input
+            value={imgCaption}
+            onChange={(event) => setImgCaption(event.target.value)}
+            placeholder="图说明(可选)"
+            className="rounded-[12px] border border-black/[0.1] bg-white px-3 py-1.5 text-xs text-[#1d1d1f] placeholder:text-[#b0b0b5] sm:w-28"
+          />
+        </div>
+        <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-dashed border-[#007aff]/30 bg-white/70 px-3 py-2 text-xs text-[#007aff] transition hover:bg-white">
+          <UploadCloud className="h-3.5 w-3.5" />
+          选择图片上传(JPG / PNG,可多选)
+          <input
+            ref={imgInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            disabled={busy}
+            onChange={(event) => void handleImage(event.target.files)}
+          />
+        </label>
+      </div>
 
       {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
 
