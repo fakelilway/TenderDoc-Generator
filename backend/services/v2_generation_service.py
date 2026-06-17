@@ -201,7 +201,7 @@ def generate_v2_bid_package(
     # 法人性别/年龄(从法人身份证 OCR 推导)→ 填法定代表人身份证明表的 性别/年龄 栏。
     combined_profile.update(_legal_rep_pii(str(combined_profile.get("legal_representative", ""))))
 
-    # ── Phase 0: Build original format DOCX if PDF ──
+    # ── Phase 0: 招标商务格式章 PDF → 福昕云转可编辑 Word(唯一路径,无降级) ──
     built_format_docx: str | None = None
     built_appendix_docx: str | None = None
     if original_format_docx_available and tender_bytes:
@@ -210,60 +210,26 @@ def generate_v2_bid_package(
         tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
         tmp_path = tmp.name
         tmp.close()
-        from services.original_docx_format_service import (
-            build_original_format_docx_from_pdf,
-            build_original_format_docx_from_pdf_editable,
-            build_original_format_docx_from_pdf_with_fields,
-        )
 
-        # Primary: 定位格式章页范围 → pdf2docx 转**可编辑 Word**(真实段落/表格) +
-        # 自动填公司档案(含基本情况表表格)。满足标书员三点:保真(WPS级)、可编辑、已填。
-        # Fallback 1: 整页截图 + 下划线烧录(像素级保真但不可编辑)——转换失败/退化时。
-        # Fallback 2: 纯整页截图。全部失败才硬报错。
-        # 最上层:福昕云转换(开关 CLOUD_PDF_CONVERT=foxit;真·可编辑+保真+自动填)。
-        # 未开启或失败则下沉到 pdf2docx 可编辑 → 整页图+域 → 纯整页图。
-        if str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() == "foxit":
-            try:
-                from services.cloud_pdf_convert import convert_format_pages_via_cloud
-
-                built_format_docx = convert_format_pages_via_cloud(
-                    tender_bytes, tmp_path, profile=combined_profile
-                )
-            except Exception:
-                logger.warning(
-                    "云转换(福昕)失败 — 下沉 pdf2docx 可编辑路径", exc_info=True
-                )
-
-        try:
-            if built_format_docx is None:
-                built_format_docx = build_original_format_docx_from_pdf_editable(
-                    tender_bytes, tmp_path, profile=combined_profile
-                )
-        except Exception:
-            logger.warning(
-                "Editable (pdf2docx) format build failed — falling back to page-image+fields",
-                exc_info=True,
+        # 唯一路径:福昕云转换(定位"投标文件格式"商务区页 → 福昕转可编辑 Word + 自动填公司
+        # 档案)。已删 pdf2docx 可编辑 / 整页图+域烧录 / 纯整页截图 三档备胎——福昕失败即硬报错,
+        # 绝不降级出不可编辑/近似稿(避免再迷糊"到底走哪条")。
+        if str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() != "foxit":
+            raise ValueError(
+                "PDF 招标格式转换仅支持福昕云:请在 .env 配置 CLOUD_PDF_CONVERT=foxit 及 "
+                "FOXIT_CLOUD_CLIENT_ID / FOXIT_CLOUD_SECRET 后重试。"
             )
-            try:
-                built_format_docx = build_original_format_docx_from_pdf_with_fields(
-                    tender_bytes, tmp_path, profile=combined_profile
-                )
-            except Exception:
-                logger.warning(
-                    "Image+fields format build failed — falling back to plain page-image",
-                    exc_info=True,
-                )
-                try:
-                    built_format_docx = build_original_format_docx_from_pdf(
-                        tender_bytes, tmp_path, profile=combined_profile
-                    )
-                except Exception:
-                    logger.error(
-                        "PDF format conversion failed (all paths)", exc_info=True
-                    )
-                    raise ValueError(
-                        "PDF 招标文件原格式复制失败，系统不会回退生成近似格式文件。"
-                    )
+        try:
+            from services.cloud_pdf_convert import convert_format_pages_via_cloud
+
+            built_format_docx = convert_format_pages_via_cloud(
+                tender_bytes, tmp_path, profile=combined_profile
+            )
+        except Exception as exc:
+            logger.error("福昕云转换失败(无降级路径)", exc_info=True)
+            raise ValueError(
+                f"PDF 招标文件原格式复制失败:福昕云转换出错,系统不回退近似格式。({exc})"
+            ) from exc
 
     # Content-level audit of the copied format chapter. The PDF path bypasses
     # the page-based format audit (filled_pages stays empty in original mode), so

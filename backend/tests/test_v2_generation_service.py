@@ -499,33 +499,6 @@ def test_v2_original_format_fails_when_content_writer_fails(monkeypatch) -> None
         )
 
 
-def test_v2_raises_when_pdf_original_format_copy_fails(monkeypatch) -> None:
-    requirements = TenderRequirements(project_name="测试项目")
-
-    def fail_copy(*_args, **_kwargs):
-        raise RuntimeError("boom")
-
-    # Both the image+fields primary and the plain page-image fallback fail → hard error.
-    monkeypatch.setattr(
-        "services.original_docx_format_service.build_original_format_docx_from_pdf_with_fields",
-        fail_copy,
-    )
-    monkeypatch.setattr(
-        "services.original_docx_format_service.build_original_format_docx_from_pdf",
-        fail_copy,
-    )
-
-    with pytest.raises(ValueError, match="PDF 招标文件原格式复制失败"):
-        v2_generation_service.generate_v2_bid_package(
-            requirements,
-            {},
-            company_name="安徽正奇建设有限公司",
-            tender_text="第八章 投标文件格式",
-            original_format_docx_available=True,
-            tender_bytes=b"not a pdf",
-        )
-
-
 def test_v2_does_not_turn_bid_letters_into_generic_tables(monkeypatch) -> None:
     requirements = TenderRequirements(project_name="测试项目")
 
