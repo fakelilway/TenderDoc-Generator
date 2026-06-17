@@ -161,7 +161,8 @@ def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
     quality = str(profile.get("质量") or profile.get("quality_standard") or "")
     safety = str(profile.get("安全") or profile.get("safety_target") or "")
     deadline = str(profile.get("投标有效期") or profile.get("投标截止时间") or profile.get("bid_deadline") or "")
-    return {
+    legal_rep = str(profile.get("legal_representative") or "")
+    mapping = {
         "（招标人）": tenderer,
         "（招标人名称）": tenderer,
         "受益人（招标人）名称": tenderer,
@@ -180,6 +181,12 @@ def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
         "（投标截止时间）": deadline,
         "（开标时间）": deadline,
     }
+    if legal_rep:
+        # 授权委托书正文"本人（姓名）系…的法定代表人"——这里的（姓名）即法人,可填。
+        # 仅锚定"本人"前缀,绝不全局替换（姓名）(人员表每行（姓名）不能都填成法人)。
+        mapping["本人（姓名）"] = f"本人{legal_rep}"
+        mapping["本人 （姓名）"] = f"本人 {legal_rep}"
+    return mapping
 
 
 def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
@@ -648,19 +655,117 @@ _INLINE_LABELS: tuple[tuple[str, str], ...] = (
     ("工期", "工期"),
     ("项目名称", "项目名称"),
     ("工程名称", "项目名称"),
-    # 投标函签署块的姓名/名称(只印文字,（盖章）/（签字）仍人工)。
+    # 正文表单(非签署块)里的可填名称/地址:法定代表人身份证明"投标人名称："等。
+    # ⚠️已移除裸"投标人"/"法定代表人":它们只出现在签署块（盖单位章）/（签字）行,
+    # 必须留人工盖章签字(用户明确要求,撤 c274972)。法人名走"姓名："语境特判 +
+    # 基本情况表的表格路径,不在这里印到签字位。
     ("投标人名称", "company_name"),
-    ("投标人", "company_name"),
-    ("法定代表人", "legal_representative"),
+    ("企业名称", "company_name"),
+    ("公司名称", "company_name"),
+    ("单位名称", "company_name"),
+    ("投标人", "company_name"),  # 正文表单"投 标 人："(法代身份证明等);签署块由签字/盖章守卫挡住
+    ("单位性质", "company_type"),
+    ("企业性质", "company_type"),
+    ("注册地址", "registered_address"),
+    ("通讯地址", "registered_address"),
+    ("联系地址", "registered_address"),
+    ("住所", "registered_address"),
+    ("地址", "registered_address"),  # 裸"地 址："(最长匹配保证 注册地址>地址,不抢具体标签)
 )
 _INLINE_DELIMS = "，,。.；;、\n\r"
 # 模板里"标签：__单位"已带单位时,去掉值里重复的尾随单位(工期：90日历天日历天 → 90日历天)。
 _INLINE_UNITS = ("日历天", "个月", "万元", "天", "元", "%")
 
+# 紧跟槽位的签字/盖章标记 → 该槽永远留人工(撤 c274972 代签代盖)。这条单一规则同时
+# 满足:①签署块不印名 ②正文表单(无此标记)照填。
+_SIGN_MARKERS = (
+    "（签字）", "(签字)", "（签 字）", "（签名）",
+    "（盖单位章）", "(盖单位章)", "（盖章）", "(盖章)", "（盖公章）",
+    "（签章）", "(签章)", "（公章）", "(公章)",
+)
+# 正文表单里成组出现的同级小标签:判定"标签：[空]下一个标签："→当前槽为空、可填。
+_FORM_SIBLING_LABELS = (
+    "投标人名称", "法定代表人", "姓名", "性别", "年龄", "职务", "职称",
+    "电话", "传真", "邮政编码", "邮编", "地址", "住所", "联系人",
+    "身份证号码", "身份证号",
+)
+# 槽位留白字符(空格/制表符/下划线/省略号/点线)。冒号后由这些组成的一段=待填槽。
+_SLOT_CHARS = frozenset(" 　\t_＿…‥.．·・‧․-－—–")
 
-def _inline_value_for(seg: str, profile: dict[str, Any]) -> str:
-    """seg=冒号前刚累计的文字;其结尾是已知内联标签且档案有值 → 返回值,否则 ""。"""
+
+def _looks_like_next_label(s: str) -> bool:
+    """s 开头是否为"同级小标签 + 冒号"(如 性别：)——用于判定前一个槽为空、可填。"""
+    for lbl in _FORM_SIBLING_LABELS:
+        if s.startswith(lbl):
+            rest = s[len(lbl):].lstrip(" 　")
+            if rest[:1] in ("：", ":"):
+                return True
+    return False
+
+
+def _iter_fillable_with_idproof(document: Any, track_idproof: bool):
+    """按文档体顺序产出 (段落, 是否处于"法定代表人身份证明"章节)。含表格单元格段落。
+
+    该章节里"姓名：性别：…职务："身份声明块的 姓名/性别/年龄=法人、可填;章节外(尤其人员表)
+    绝不填,避免歧义误填(实测 122 卷"姓名"被误填法人)。以含"法定代表人身份证明"的短标题行为
+    界,遇下一章节标题(协议书/保函/声明/资格审查)或 25 段/表后收口。
+    **不跨遍历比对元素身份**——lxml 每次遍历新建代理、id() 不稳,故 section flag 随本遍历当场
+    算出(否则段落版偶中、表格版必失效)。track_idproof=False(无法人名)时一律产出 False。
+    """
+    from docx.oxml.ns import qn as _qn
+    from docx.table import Table as _Table
+    from docx.text.paragraph import Paragraph as _Para
+
+    inside = False
+    count = 0
+    for child in document.element.body.iterchildren():
+        if child.tag == _qn("w:p"):
+            p = _Para(child, document)
+            if track_idproof:
+                t = p.text.strip()
+                if "法定代表人身份证明" in t and len(t) < 40:
+                    inside, count = True, 0
+                    yield p, True
+                    continue
+                if inside:
+                    count += 1
+                    if count > 25 or (
+                        re.match(r"^[一二三四五六七八九（(]", t)
+                        and any(w in t for w in ("协议书", "投标保", "声明函", "资格审查"))
+                    ):
+                        inside = False
+            yield p, inside
+        elif child.tag == _qn("w:tbl"):
+            if track_idproof and inside:
+                count += 1
+            for row in _Table(child, document).rows:
+                for cell in row.cells:
+                    for cp in cell.paragraphs:
+                        yield cp, inside
+
+
+def _inline_value_for(
+    seg: str,
+    profile: dict[str, Any],
+    para_text: str = "",
+    id_proof_context: bool = False,
+) -> str:
+    """seg=冒号前刚累计的文字;其结尾是已知内联标签且档案有值 → 返回值,否则 ""。
+
+    特例:正文"姓名："仅在法定代表人身份证明语境(本段含"的法定代表人",或处于身份证明
+    章节的身份声明块)才填法人名,避免把人员表/其他人的"姓名"误填成法人。
+    """
     norm = seg.replace(" ", "").replace("　", "")
+    if norm.endswith("姓名") and (id_proof_context or "的法定代表人" in para_text):
+        return str(profile.get("legal_representative", "") or "").strip()
+    # 法定代表人身份证明表的 性别/年龄(从法人身份证 OCR 推导,见 v2._legal_rep_pii)。
+    # 职务无据可填 → 不在此返回,留人工。仅在身份证明语境(章节归属 或 同段含"的法定
+    # 代表人")填,避免误填人员表。
+    _idp = id_proof_context or "的法定代表人" in para_text
+    if _idp and norm.endswith("性别"):
+        return str(profile.get("法人性别", "") or "").strip()
+    if _idp and norm.endswith("年龄"):
+        return str(profile.get("法人年龄", "") or "").strip()
     best_label = ""
     for label, _key in _INLINE_LABELS:
         if norm.endswith(label) and len(label) > len(best_label):
@@ -680,19 +785,25 @@ def _iter_fillable_paragraphs(document: Any):
 
 
 def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
-    """填 "标签：<tab>" 这类段落内联空(投标函工程质量/安全目标/工期)。返回填入数。
+    """填 "标签：<槽位>" 这类段落内联空(投标函工程质量/安全/工期、法代身份证明
+    投标人名称/姓名 等)。返回填入数。
 
-    **不依赖 run 边界**:把整段拼成全文 + 记每个字符归属哪个 run,在全文上找 "标签：[空白]*\\t",
-    再把那个 tab 字符在它所属 run 里替换成值。这样无论福昕/pdf2docx 把"标签：\\t"切成一个 run
-    还是几个 run 都能填。标签须紧贴冒号、跨分隔符作废;只动 tab 字符、不覆盖已有内容;单位去重。
+    **不依赖 run 边界**:把整段拼成全文 + 记每个字符归属哪个 run,在全文上识别
+    "标签：<槽位>"。槽位 = 冒号后的一段留白(tab/下划线/省略号/点线),或空槽(冒号后
+    直接接分隔符/括号/下一个同级小标签)。命中后把该段在所属 run 里替成值。
+    **签字/盖章守卫**:槽位后若紧跟（签字）/（盖单位章）等标记,一律跳过留人工(撤
+    c274972,不代签代盖)。标签须紧贴冒号、跨分隔符作废;只填空槽、绝不覆盖真值;单位去重。
     """
-    if not any(profile.get(key) for _lbl, key in _INLINE_LABELS):
+    has_legal_rep = bool(str(profile.get("legal_representative") or "").strip())
+    has_data = any(profile.get(key) for _lbl, key in _INLINE_LABELS) or has_legal_rep
+    if not has_data:
         return 0
     filled = 0
-    for paragraph in _iter_fillable_paragraphs(document):
+    for paragraph, id_proof_ctx in _iter_fillable_with_idproof(document, has_legal_rep):
         runs = paragraph.runs
         if not runs:
             continue
+        para_text = paragraph.text
         # 全文 + 每字符 (run下标, run内下标)
         chars: list[str] = []
         owner: list[tuple[int, int]] = []
@@ -702,40 +813,70 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                 owner.append((ri, li))
         s = "".join(chars)
         n = len(s)
-        edits: list[tuple[int, int, str]] = []  # (run下标, run内下标, 值) —— tab 字符替成值
+        # (run下标, run内起, run内止, 值):把 run.text[起:止] 替成值(起==止 即插入)
+        edits: list[tuple[int, int, int, str]] = []
         seg = ""
         i = 0
         while i < n:
             ch = s[i]
             if ch in "：:":
-                value = _inline_value_for(seg, profile)
+                value = _inline_value_for(seg, profile, para_text, id_proof_ctx)
                 seg = ""
                 if value:
                     j = i + 1
                     while j < n and s[j] in " 　":  # 跳过冒号后的空格/全角空格
                         j += 1
-                    if j < n and s[j] == "\t":  # 第一个 tab = 填槽
-                        after = s[j + 1 : j + 12].lstrip()
-                        for unit in _INLINE_UNITS:  # 模板已带单位则去重
-                            if after.startswith(unit) and value.endswith(unit):
-                                value = value[: -len(unit)].strip()
-                                break
-                        ri, li = owner[j]
-                        edits.append((ri, li, value))
-                        i = j + 1
+                    k = j
+                    while k < n and s[k] in _SLOT_CHARS:  # 吃掉留白槽(tab/下划线/点线)
+                        k += 1
+                    # 签字/盖章守卫:槽位(含其后留白)紧跟签字/盖章标记 → 留人工
+                    if any(m in s[j : k + 12] for m in _SIGN_MARKERS):
+                        i += 1
                         continue
+                    had_blank = k > j
+                    empty_ok = (
+                        k >= n
+                        or s[k] in _INLINE_DELIMS
+                        or s[k] in "（("
+                        or _looks_like_next_label(s[k:])
+                    )
+                    if not (had_blank or empty_ok):
+                        i += 1
+                        continue  # 槽位后是真实值,不覆盖
+                    after = s[k : k + 14].lstrip()
+                    for unit in _INLINE_UNITS:  # 模板已带单位则去重
+                        if after.startswith(unit) and value.endswith(unit):
+                            value = value[: -len(unit)].strip()
+                            break
+                    if j == k:  # 空槽 → 在 j 处插入值
+                        if j < n:
+                            ri, li = owner[j]
+                        else:
+                            ri, li = len(runs) - 1, len(runs[-1].text)
+                        edits.append((ri, li, li, value))
+                    else:  # 留白槽 → 替换 s[j:k]
+                        rj, lj = owner[j]
+                        rk, lk = owner[k - 1]
+                        if rj == rk:
+                            edits.append((rj, lj, lk + 1, value))
+                        else:  # 跨 run:值进首段,清掉其余留白段
+                            edits.append((rj, lj, len(runs[rj].text), value))
+                            for mid in range(rj + 1, rk):
+                                edits.append((mid, 0, len(runs[mid].text), ""))
+                            edits.append((rk, 0, lk + 1, ""))
+                    filled += 1
+                    i = k
+                    continue
             elif ch in _INLINE_DELIMS:
                 seg = ""
             else:
                 seg += ch
             i += 1
-        # 同一 run 内从后往前替换 tab 字符,避免前面的替换移位后面的下标
-        for ri, li, value in sorted(edits, key=lambda e: (e[0], -e[1])):
+        # 每个 run 从后往前应用,避免前面的替换移位后面的下标
+        for ri, a, b, val in sorted(edits, key=lambda e: (e[0], -e[1])):
             run = runs[ri]
             text = run.text
-            if li < len(text) and text[li] == "\t":
-                run.text = text[:li] + value + text[li + 1 :]
-                filled += 1
+            run.text = text[:a] + val + text[b:]
     return filled
 
 

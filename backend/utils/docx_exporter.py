@@ -314,6 +314,9 @@ def _parse_knowledge_image_marker(line: str) -> dict[str, object] | None:
         "document_id": image_id,
         "caption": str(attrs.get("caption") or "").strip(),
         "width_cm": max(4.0, min(width_cm, 16.0)),
+        # anchor:把该图插到格式章里"含此关键词的章节/表格"之后,而非卷尾附录。
+        # 空=无锚点,走原卷尾追加(兜底)。见 generation_service._place_anchored_images。
+        "anchor": str(attrs.get("anchor") or "").strip(),
     }
 
 

@@ -384,6 +384,196 @@ def _append_prose_plaintext(docx_path: Path, prose_markdown: str) -> None:
     doc.save(str(docx_path))
 
 
+# ── 附件按招标锚点就地落位 ───────────────────────────────────────────────
+# 招标逐表要求"在本表后附相关证明材料"(营业执照→基本情况表后、法人身份证→身份证明后、
+# 业绩→类似项目情况表后)。证据函数给 {{knowledge_image}} 标记带 anchor 关键词,这里在照抄
+# 进来的格式章 DOCX 里找含该关键词的章节,把图就地插在其末尾;找不到则保留标记交原卷尾追加
+# (兜底,绝不丢图)。详见记忆 attachment-placement-rules。
+# anchor → (表头关键词, 段落关键词, 段落排除词)。优先匹配"含表头关键词的表格"(表格不在目录里,
+# 绕开目录误命中);否则匹配"含段落关键词且不含排除词"的段落。关键词都选目录里不会出现、章节/
+# 表格独有的字样(表头'投标人名称'/'投标人情况说明'、附件行'法定代表人身份证复印件')。
+# 覆盖多家招标的不同措辞(萧县/长丰…):同一锚点给多个候选关键词,往通用靠。
+_ANCHOR_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = {
+    "基本情况表": (("投标人名称",), ("投标人基本情况表",), ()),
+    "类似项目情况表": (
+        ("业绩序号",),
+        ("近年完成的类似", "类似工程项目情况表", "类似项目情况表", "投标人业绩情况表"),
+        (),
+    ),
+    "信誉情况表": (
+        ("投标人情况说明",),
+        ("投标人的信誉情况", "投标人信誉情况", "信誉情况表"),
+        (),
+    ),
+    # 法人亲签:插在"法定代表人身份证"附件行后(复印件/正反面扫描件…),排除带"代理人"的授权委托书那份。
+    "法定代表人身份证明": (
+        (),
+        ("法定代表人身份证复印件", "法定代表人身份证正反面", "法定代表人身份证扫描"),
+        ("委托代理人", "代理人身份证"),
+    ),
+}
+_SECTION_HEAD_RE = re.compile(
+    r"^[（(]?[一二三四五六七八九十][)）]?[、.，]|^[（(][一二三四五六七八九十][)）]"
+)
+
+
+def _iter_body_blocks(doc):
+    """按文档体顺序产出 (xml元素, 段落或表格对象)。"""
+    from docx.oxml.ns import qn as _qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    for child in doc.element.body.iterchildren():
+        if child.tag == _qn("w:p"):
+            yield child, Paragraph(child, doc)
+        elif child.tag == _qn("w:tbl"):
+            yield child, Table(child, doc)
+
+
+def _block_text(block) -> str:
+    from docx.table import Table
+
+    if isinstance(block, Table):
+        return " ".join(c.text for r in block.rows[:3] for c in r.cells)
+    return block.text
+
+
+def _anchor_section_end_element(doc, anchor: str):
+    """定位 anchor 的插入点(在其后插图);找不到返回 None。
+
+    先按表头关键词找表格(表格不在目录,绕开目录误命中)→ 紧接该表之后;否则按段落关键词
+    (排除词过滤)找段落 → 走到该节末尾元素之后(跨过表单/表格,停在下一节标题前)。
+    """
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    tbl_kw, para_kw, excl = _ANCHOR_SPECS.get(anchor, ((), (anchor,), ()))
+    blocks = list(_iter_body_blocks(doc))
+
+    # 1) 表格优先:含表头关键词的表 → 紧接该表之后
+    for el, blk in blocks:
+        if isinstance(blk, Table) and tbl_kw and any(k in _block_text(blk) for k in tbl_kw):
+            return el
+
+    # 2) 段落:含关键词、不含排除词 → 该节末尾元素之后
+    start = None
+    for idx, (_el, blk) in enumerate(blocks):
+        if not isinstance(blk, Paragraph):
+            continue
+        t = blk.text
+        if not (para_kw and any(k in t for k in para_kw)):
+            continue
+        if excl and any(x in t for x in excl):
+            continue
+        start = idx
+        break
+    if start is None:
+        return None
+    end = start
+    for idx in range(start + 1, min(start + 30, len(blocks))):
+        _el, blk = blocks[idx]
+        if isinstance(blk, Paragraph):
+            t = blk.text.strip()
+            if t and len(t) < 30 and _SECTION_HEAD_RE.match(t):
+                break  # 撞到下一节标题,停在它之前
+        end = idx
+    return blocks[end][0]
+
+
+def _insert_image_after(after_el, doc, document_id, caption, width_cm):
+    """在 after_el 之后插入"图 + 图注"两段,返回最后插入的元素(供同锚点链式续插)。"""
+    from io import BytesIO
+
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+    from docx.oxml import OxmlElement
+    from docx.shared import Cm
+    from docx.text.paragraph import Paragraph
+
+    img = _resolve_knowledge_image(int(document_id))
+    img_el = OxmlElement("w:p")
+    after_el.addnext(img_el)
+    img_p = Paragraph(img_el, doc)
+    img_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    img_p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    if not img:
+        img_p.add_run(f"（图片资料未能插入，请人工补充：{caption}）")
+        return img_el
+    try:
+        pic = img_p.add_run().add_picture(BytesIO(bytes(img)), width=Cm(float(width_cm)))
+        if pic.height > Cm(20):
+            scale = Cm(20) / pic.height
+            pic.width = int(pic.width * scale)
+            pic.height = int(Cm(20))
+    except Exception:
+        img_p.add_run(f"（图片资料未能插入，请人工补充：{caption}）")
+        return img_el
+    last = img_el
+    if caption:
+        cap_el = OxmlElement("w:p")
+        img_el.addnext(cap_el)
+        cap_p = Paragraph(cap_el, doc)
+        cap_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cap_p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        cap_p.add_run(caption)
+        last = cap_el
+    return last
+
+
+def _drop_empty_headings(lines: list[str]) -> str:
+    """丢掉后面没有任何内容的空标题(锚点图被移走后残留的 ## 附录 / ### 营业执照)。"""
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        if line.strip().startswith("#"):
+            has_content = False
+            for j in range(i + 1, len(lines)):
+                t = lines[j].strip()
+                if not t:
+                    continue
+                if t.startswith("#"):
+                    break
+                has_content = True
+                break
+            if not has_content:
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _place_anchored_images(doc, prose_markdown: str) -> str:
+    """把 prose 里带 anchor 的 {{knowledge_image}} 就地插到格式章对应章节后;返回去掉这些标记
+    (及随之变空的标题)后的 prose——剩余无锚点图仍由调用方追加到卷尾。逐图容错,绝不丢图/不崩。
+    """
+    from utils.docx_exporter import _parse_knowledge_image_marker
+
+    kept: list[str] = []
+    cursor: dict[str, object] = {}  # anchor -> 该锚点最后插入的元素(链式续插)
+    placed = 0
+    for line in prose_markdown.splitlines():
+        marker = _parse_knowledge_image_marker(line.strip())
+        if not (marker and marker.get("anchor")):
+            kept.append(line)
+            continue
+        anchor = str(marker["anchor"])
+        try:
+            if anchor not in cursor:
+                el = _anchor_section_end_element(doc, anchor)
+                if el is None:
+                    kept.append(line)  # 锚点没找到 → 留给卷尾兜底
+                    continue
+                cursor[anchor] = el
+            cursor[anchor] = _insert_image_after(
+                cursor[anchor], doc, marker["document_id"],
+                marker.get("caption", ""), marker.get("width_cm", 14.0),
+            )
+            placed += 1
+        except Exception:
+            logger.warning("附件锚点落位单图失败,该图退回卷尾(不丢图)", exc_info=True)
+            kept.append(line)
+    if placed:
+        logger.info("附件锚点落位:就地插入 %d 张(其余无锚点图走卷尾兜底)", placed)
+    return _drop_empty_headings(kept)
+
+
 def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     """Append prose content after format pages in a DOCX.
 
@@ -426,6 +616,10 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
             (s.page_width, s.page_height,
              s.left_margin, s.right_margin, s.top_margin, s.bottom_margin,
              s.header_distance, s.footer_distance) = g
+
+        # 带 anchor 的附件先就地落位到对应章节后(营业执照→基本情况表后…),返回去锚点后的
+        # 剩余 prose;无锚点/锚点没命中的仍走下面的卷尾追加(兜底,绝不丢图)。
+        prose_markdown = _place_anchored_images(doc, prose_markdown)
 
         doc.add_page_break()
         # 传 image_resolver,让附录里的 {{knowledge_image:...}} 标记从 MinIO 取图插入(B)

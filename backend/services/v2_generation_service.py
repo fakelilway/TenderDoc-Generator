@@ -198,6 +198,8 @@ def generate_v2_bid_package(
         "开标时间": str(requirements.bid_deadline or ""),
     }
     combined_profile = {**profile, **project_fields}
+    # 法人性别/年龄(从法人身份证 OCR 推导)→ 填法定代表人身份证明表的 性别/年龄 栏。
+    combined_profile.update(_legal_rep_pii(str(combined_profile.get("legal_representative", ""))))
 
     # ── Phase 0: Build original format DOCX if PDF ──
     built_format_docx: str | None = None
@@ -893,6 +895,14 @@ def _enrich_commercial_markdown(
     if evidence_md:
         parts.append(evidence_md)
 
+    # 法人身份证复印件(正反)→ 法定代表人身份证明 后(招标P120;法人亲签,不附代理人)
+    legal_rep = str(
+        profile.get("legal_representative") or profile.get("法定代表人") or ""
+    ).strip()
+    legal_id_md = _legal_rep_id_evidence_markdown(legal_rep)
+    if legal_id_md:
+        parts.append(legal_id_md)
+
     # 类似业绩 + 主要人员:从知识库台账/人员证书自动汇总成表(C1,附加参考,不动原表)
     kb_tables_md = _kb_qualification_tables_markdown()
     if kb_tables_md:
@@ -1032,14 +1042,16 @@ def _inject_project_images(technical_md: str, project_id: int | None) -> str:
 
 # A2 资格证明材料分组:按真实标书"资格审查"结构成组插**全**公司证件(不止 4 类各 1 张)。
 # (组标题, 该组证件类型, 该组最多插几张)。过期证件已在 list_knowledge_image_references 滤掉。
-_EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int], ...] = (
-    ("营业执照", ("营业执照",), 2),
-    ("企业资质证书", ("资质证书", "施工劳务资质证书"), 16),
-    ("安全生产许可证", ("安全生产许可证",), 2),
-    ("基本账户开户许可证", ("开户许可证",), 2),
-    ("管理体系认证证书", ("体系证书",), 10),
-    ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20),
-    ("专利与工法证书", ("专利证书", "工法证书"), 15),
+# (组标题, 证件类型, 组上限, 落位锚点)。anchor=招标要求该组插在哪张表后:营业执照/资质/安许/
+# 开户/体系→投标人基本情况表后(须知3.5.1);荣誉与信誉→信誉情况表后(3.5.4)。空 anchor=卷尾。
+_EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int, str], ...] = (
+    ("营业执照", ("营业执照",), 2, "基本情况表"),
+    ("企业资质证书", ("资质证书", "施工劳务资质证书"), 16, "基本情况表"),
+    ("安全生产许可证", ("安全生产许可证",), 2, "基本情况表"),
+    ("基本账户开户许可证", ("开户许可证",), 2, "基本情况表"),
+    ("管理体系认证证书", ("体系证书",), 10, "基本情况表"),
+    ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20, "信誉情况表"),
+    ("专利与工法证书", ("专利证书", "工法证书"), 15, "基本情况表"),
 )
 
 
@@ -1067,7 +1079,7 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
 
     blocks: list[str] = []
     seen: set[int] = set()
-    for title, cert_types, group_cap in _EVIDENCE_GROUPS:
+    for title, cert_types, group_cap, anchor in _EVIDENCE_GROUPS:
         group_refs: list[dict] = []
         for cert_type in cert_types:
             group_refs.extend(by_type.get(cert_type, []))
@@ -1088,7 +1100,7 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
                 caption = title
             emitted.append(
                 f'\n{{{{knowledge_image:document_id={doc_id} '
-                f'caption="{caption}" width_cm=14}}}}\n'
+                f'anchor="{anchor}" caption="{caption}" width_cm=14}}}}\n'
             )
         if emitted:
             blocks.append(f"\n### {title}\n")
@@ -1101,6 +1113,97 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
     return (
         "\n<!-- tdg:pagebreak -->\n"
         "\n## 附录：资格证明材料（系统按知识库自动插入，请人工核验/补充）\n"
+        + "".join(blocks)
+    )
+
+
+def _legal_rep_pii(legal_rep_name: str) -> dict[str, str]:
+    """从法人身份证 OCR 取身份证号,推导 法人性别/法人年龄/法人出生。无则返回 {}。
+
+    填法定代表人身份证明表的 性别/年龄 栏(职务无据可填、留人工)。身份证号第17位奇男偶女、
+    7-14位为出生 YYYYMMDD。仅推导、不外泄到正文之外。
+    """
+    import datetime
+
+    name = (legal_rep_name or "").strip()
+    if not name:
+        return {}
+    try:
+        from rag.vector_store import _connect
+
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT kc.content FROM knowledge_chunks kc "
+                "JOIN documents d ON kc.document_id = d.id "
+                "WHERE d.metadata_json->>'owner_name' = %s "
+                "AND d.metadata_json->>'certificate_type' LIKE %s LIMIT 30",
+                (name, "%身份证%"),
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return {}
+    today = datetime.date.today()
+    for (content,) in rows:
+        m = re.search(
+            r"(?<![\dXx])(\d{6})(\d{4})(\d{2})(\d{2})(\d{2})(\d)([\dXx])(?![\dXx])",
+            content or "",
+        )
+        if not m:
+            continue
+        try:
+            y, mo, da = int(m.group(2)), int(m.group(3)), int(m.group(4))
+            if not (1900 < y <= today.year and 1 <= mo <= 12 and 1 <= da <= 31):
+                continue
+            gender = "男" if int(m.group(6)) % 2 == 1 else "女"
+            age = today.year - y - ((today.month, today.day) < (mo, da))
+            return {
+                "法人性别": gender,
+                "法人年龄": str(age),
+                "法人出生": f"{y:04d}-{mo:02d}-{da:02d}",
+                "法人身份证号": "".join(m.groups()),
+            }
+        except (ValueError, IndexError):
+            continue
+    return {}
+
+
+def _legal_rep_id_evidence_markdown(legal_rep_name: str) -> str:
+    """法人身份证复印件(正反)→ 法定代表人身份证明 后(招标 P120 硬要求)。
+
+    法人亲签路线:只附法定代表人本人身份证(不附委托代理人,本项目未指定代理人)。
+    按 owner_name=法人 + 证件类型含'身份证'精确取,正反取前2张,无则返回空。
+    """
+    name = (legal_rep_name or "").strip()
+    if not name:
+        return ""
+    try:
+        from services.knowledge_service import list_knowledge_image_references
+
+        refs = list_knowledge_image_references("", limit=5000)
+    except Exception:
+        return ""
+    cards = [
+        r
+        for r in refs
+        if str(r.get("owner_name") or "").strip() == name
+        and "身份证" in str(r.get("certificate_type") or "")
+        and str(r.get("image_insertable")) not in ("False", "false", "0", "None")
+    ]
+    blocks: list[str] = []
+    for i, r in enumerate(cards[:2], 1):
+        doc_id = int(r.get("document_id", 0) or 0)
+        if doc_id <= 0:
+            continue
+        cap = f"法定代表人（{name}）身份证" + (f"（{i}）" if len(cards) > 1 else "")
+        blocks.append(
+            f'\n{{{{knowledge_image:document_id={doc_id} '
+            f'anchor="法定代表人身份证明" caption="{cap}" width_cm=12}}}}\n'
+        )
+    if not blocks:
+        return ""
+    return (
+        "\n<!-- tdg:pagebreak -->\n"
+        "\n## 附录：法定代表人身份证明材料（系统自动插入，请人工核验）\n"
         + "".join(blocks)
     )
 
@@ -1157,7 +1260,7 @@ def _build_performance_evidence_md(
                 cap = f"{title}-{etype}" + (f"（{j}）" if len(imgs) > 1 else "")
                 seg.append(
                     f'\n{{{{knowledge_image:document_id={doc_id} '
-                    f'caption="{cap}" width_cm=14}}}}\n'
+                    f'anchor="类似项目情况表" caption="{cap}" width_cm=14}}}}\n'
                 )
                 any_img = True
         if any_img:

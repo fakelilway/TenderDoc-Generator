@@ -662,8 +662,8 @@ def test_fill_inline_blanks_does_not_overwrite_existing_value() -> None:
     assert "90日历天" in doc.paragraphs[0].text  # 原值保留,不被覆盖
 
 
-def test_fill_inline_blanks_fills_signature_names_only() -> None:
-    """投标函签署块:投标人/法定代表人 印姓名,但（盖单位章）/（签字）文字保留(不代盖代签)。"""
+def test_fill_inline_blanks_leaves_signature_block_blank() -> None:
+    """撤 c274972:签署块（盖单位章）/（签字）行不代填名/代盖代签,槽位留人工。"""
     from services.original_docx_format_service import _fill_inline_labeled_blanks
     doc = Document()
     p = doc.add_paragraph()
@@ -673,10 +673,11 @@ def test_fill_inline_blanks_fills_signature_names_only() -> None:
         doc, {"company_name": "安徽正奇建设有限公司", "legal_representative": "许明英"}
     )
     txt = doc.paragraphs[0].text
-    assert n == 2
-    assert "投标人： 安徽正奇建设有限公司（盖单位章）" in txt
-    assert "法定代表人： 许明英（签字）" in txt
-    assert "（盖单位章）" in txt and "（签字）" in txt  # 盖章/签字位仍在,只印了名
+    assert n == 0
+    assert "安徽正奇建设有限公司" not in txt  # 不印到盖章位
+    assert "许明英" not in txt  # 不印到签字位
+    assert "\t" in txt  # 槽位留空待人工
+    assert "（盖单位章）" in txt and "（签字）" in txt
 
 
 def test_fill_inline_blanks_skips_委托代理人_ambiguous() -> None:
@@ -697,13 +698,17 @@ def test_fill_inline_blanks_run_split_independent() -> None:
     for label, name, runs in [
         ("同run", "工期", ["工期：\t日历天"]),
         ("冒号tab同run", "工期", ["工期", "：\t", "日历天"]),
-        ("投标人同run", "投标人", ["投标人：\t（盖单位章）"]),
+        ("投标人名称同run", "投标人名称", ["投标人名称：\t，"]),  # 正文表单名称位:可填
     ]:
         doc = Document(); p = doc.add_paragraph()
         for t in runs: p.add_run(t)
         n = _fill_inline_labeled_blanks(doc, prof)
         assert n == 1, f"{label} 应填1处, 实际{n}"
         assert "\t" not in doc.paragraphs[0].text, f"{label} tab未被填"
+    # 签署块的"投标人：\t（盖单位章）"是盖章位 → 留人工,不填(撤 c274972)
+    doc = Document(); p = doc.add_paragraph(); p.add_run("投标人：\t（盖单位章）")
+    assert _fill_inline_labeled_blanks(doc, prof) == 0
+    assert "\t" in doc.paragraphs[0].text
     # 多字段跨混合 run 切分,一段填 3 处
     doc = Document(); p = doc.add_paragraph()
     for t in ["工程质量：\t，安全目标：", "\t", "，工期：\t日历天。"]:
@@ -713,3 +718,53 @@ def test_fill_inline_blanks_run_split_independent() -> None:
     )
     assert n == 3
     assert doc.paragraphs[0].text == "工程质量：合格，安全目标：无事故，工期：90日历天。"
+
+
+def test_fill_inline_blanks_fills_id_proof_form() -> None:
+    """法定代表人身份证明:投标人名称空槽→公司名;'姓名：'空槽→法人(因含'的法定代表人'
+    语境);'性别：'等 PII 留空。复现用户截图(screenshot 2)的真实排版。"""
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    doc.add_paragraph().add_run("投标人名称：")  # 空槽,接段末
+    p2 = doc.add_paragraph()
+    p2.add_run("姓名：性别：")  # 姓名空槽,紧跟同级小标签 性别：
+    p2.add_run("\t年龄：\t职务：\t系（投标人名称）的法定代表人。")
+    prof = {"company_name": "安徽正奇建设有限公司", "legal_representative": "许明英"}
+    _fill_inline_labeled_blanks(doc, prof)
+    assert doc.paragraphs[0].text == "投标人名称：安徽正奇建设有限公司"
+    t2 = doc.paragraphs[1].text
+    assert "姓名：许明英" in t2  # 法人名填进姓名位
+    assert "性别：\t" in t2  # PII 留空待人工
+    assert t2.count("许明英") == 1  # 法人名只出现一次(不漏填到职务/年龄位)
+
+
+def test_fill_inline_blanks_姓名_without_id_proof_context_is_skipped() -> None:
+    """普通'姓名：'(无'的法定代表人'语境,如人员表)绝不填法人名——防 122 卷歧义误填。"""
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = Document()
+    doc.add_paragraph().add_run("姓名：性别：")
+    assert _fill_inline_labeled_blanks(
+        doc, {"legal_representative": "许明英", "company_name": "正奇"}
+    ) == 0
+    assert "许明英" not in doc.paragraphs[0].text
+
+
+def test_known_replacements_fills_本人姓名_in_poa() -> None:
+    """授权委托书'本人（姓名）系…的法定代表人'→ 填法人名;但只锚定'本人'前缀。"""
+    from services.original_docx_format_service import _known_replacements
+    repl = _known_replacements({"legal_representative": "许明英"})
+    assert repl.get("本人（姓名）") == "本人许明英"
+    assert "（姓名）" not in repl  # 不全局替换 → 人员表每行（姓名）安全
+
+
+def test_inline_value_性别年龄_only_in_id_proof_context() -> None:
+    """法定代表人身份证明的 性别/年龄(来自法人身份证OCR)仅在身份证明语境填,防误填人员表。"""
+    from services.original_docx_format_service import _inline_value_for
+    prof = {"法人性别": "女", "法人年龄": "50"}
+    assert _inline_value_for("性别", prof, id_proof_context=True) == "女"
+    assert _inline_value_for("年龄", prof, id_proof_context=True) == "50"
+    # 非身份证明语境(如人员表)绝不填
+    assert _inline_value_for("性别", prof, id_proof_context=False) == ""
+    assert _inline_value_for("年龄", prof, id_proof_context=False) == ""
+    # 职务无据 → 任何语境都不填(留人工)
+    assert _inline_value_for("职务", prof, id_proof_context=True) == ""
