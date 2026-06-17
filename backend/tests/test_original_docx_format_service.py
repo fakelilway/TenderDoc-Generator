@@ -9,6 +9,7 @@ from services.original_docx_format_service import (
     PDF_PAGE_MARKER_PREFIX,
     _drop_spurious_stream_tables,
     _fill_known_table_cells,
+    _is_blank_or_placeholder,
     _fill_value_for_label,
     _looks_like_next_chapter_page,
     _looks_like_other_volume_start,
@@ -525,3 +526,58 @@ def test_fill_personnel_table_noop_without_pm() -> None:
     table.cell(1, 5).text = "证号"
     assert _fill_personnel_table(doc, {}) is False
     assert table.cell(2, 1).text.strip() == ""
+
+
+# ── #8 占位填空:省略号/点线签字线该当"空"来填,但绝不覆盖真值/孤立短横/句号 ──────
+def test_is_blank_or_placeholder_treats_fill_lines_as_blank() -> None:
+    # 真·空 / 下划线 / 全角空格 / 制表符:占位,单个即算
+    for blank in ["", "   ", "_____", "＿＿＿", "　", "\t", "…", "‥"]:
+        assert _is_blank_or_placeholder(blank) is True, blank
+    # 点线/破折号签字线:连续≥2 才算占位(实测产物里的真实漏填形状)
+    for leader in ["……", "....", "．．．", "- - -", "————", "··········"]:
+        assert _is_blank_or_placeholder(leader) is True, leader
+
+
+def test_is_blank_or_placeholder_never_eats_real_values() -> None:
+    # 真值绝不能被判空(否则会被公司档案值覆盖)
+    for real in [
+        "安徽正奇建设集团有限公司", "江舟", "0551-65650939",
+        "2022.03", "5.4m", "0-50分", "1.1.4.5", "91340000X",
+    ]:
+        assert _is_blank_or_placeholder(real) is False, real
+    # 孤立单个 短横/点/间隔号 = 人工填的"无/不适用",不判空
+    for nil in ["—", "-", "－", "·", "．", "/"]:
+        assert _is_blank_or_placeholder(nil) is False, nil
+    # 句号(及句号串)是真标点,永不判空
+    for dot in ["。", "。。。", "以上。"]:
+        assert _is_blank_or_placeholder(dot) is False, dot
+
+
+def test_fill_known_table_cells_fills_ellipsis_placeholder() -> None:
+    # 核心 bug:值格是省略号/点线占位(福昕产物实测存在 U+2026),旧 _TABLE_BLANK_RE
+    # 只认下划线 → 判为非空 → 跳过留空。现应识别为占位并填入。
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "投标人名称"
+    table.cell(0, 1).text = "…"  # 省略号占位
+    table.cell(1, 0).text = "统一社会信用代码"
+    table.cell(1, 1).text = "________"  # 下划线占位(旧逻辑也能填)
+
+    filled = _fill_known_table_cells(
+        doc, {"company_name": "安徽正奇建设有限公司", "credit_code": "91X"}
+    )
+    assert table.cell(0, 1).text == "安徽正奇建设有限公司"
+    assert table.cell(1, 1).text == "91X"
+    assert filled == 2
+
+
+def test_fill_known_table_cells_keeps_nil_dash_answer() -> None:
+    # 值格是人工填的"—"(无/不适用)→ 不是占位,绝不覆盖
+    doc = Document()
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "投标人名称"
+    table.cell(0, 1).text = "—"
+
+    filled = _fill_known_table_cells(doc, {"company_name": "安徽正奇建设有限公司"})
+    assert table.cell(0, 1).text == "—"  # 真答案保留
+    assert filled == 0

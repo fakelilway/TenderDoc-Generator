@@ -416,7 +416,34 @@ _TABLE_FILL_SKIP = (
 _TABLE_SUBLABELS = frozenset(
     {"姓名", "职称", "级别", "证号", "证书名称", "专业", "养老保险", "电话"}
 )
-_TABLE_BLANK_RE = re.compile(r"^[\s_＿]*$")
+# 留白/占位字符集。整格仅由这些组成 → 视为"空、该填"(下划线/省略号/点线签字线)。
+# 关键取舍(经对抗验证):
+#   · 空白/下划线/省略号 单个即算占位(它们从不作真实值用);
+#   · 点线/破折号家族(. － — · 等)易与"无/不适用/小数/序号"混淆,要求连续≥2 才算占位,
+#     孤立单个不判空(中文表里单格 "—"/"-" 常是人工填的"无");
+#   · 句号 。(U+3002)永不判空(真标点,误判会覆盖真值);
+#   · 含任何汉字/数字/字母 → 非空(绝不覆盖真值)。
+_BLANK_SOLO_RE = re.compile(r"^[\s　_＿…‥]+$")
+_BLANK_LEADER_CHARS = ".．·・‧․-－—–"
+_BLANK_LEADER_RE = re.compile(
+    rf"^[\s　_＿…‥{re.escape(_BLANK_LEADER_CHARS)}]+$"
+)
+
+
+def _is_blank_or_placeholder(text: str) -> bool:
+    """整格仅由留白/占位字符组成 → 视为"空、该填"。详见 _BLANK_* 注释。"""
+    s = (text or "").strip()
+    if not s:
+        return True
+    if "。" in s:  # 句号是真标点,绝不当占位(防覆盖"…以上。"这类真内容)
+        return False
+    if _BLANK_SOLO_RE.match(s):
+        return True
+    if _BLANK_LEADER_RE.match(s):
+        # 点线/破折号至少出现 2 个才算占位线,挡住孤立 "—"/"-"/"·"=「无/不适用」
+        leader_count = sum(s.count(ch) for ch in _BLANK_LEADER_CHARS)
+        return leader_count >= 2
+    return False
 
 # 宽泛"主体"键:标签里**含**它 ≠ 就该填它的名字。"投标人响应资质 / 项目经理身份证
 # 号码 / …荣誉 / …业绩"含主体词但问的是别的字段——绝不能拿公司名/项目经理名去填(实测
@@ -581,11 +608,13 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
                     if target._tc is cells[i]._tc:
                         continue  # 同一个合并单元格(含碎标签所在格)
                     text = target.text.strip()
-                    if text and _table_label_value(text, profile):
+                    if not _is_blank_or_placeholder(text) and _table_label_value(
+                        text, profile
+                    ):
                         break  # 右邻又是个已知标签,本标签不填
                     if text in _TABLE_SUBLABELS:
                         continue  # 子标签(姓名/职称等),跳过去找它后面的值格
-                    if _TABLE_BLANK_RE.match(text):
+                    if _is_blank_or_placeholder(text):
                         _set_cell_value(target, value)
                         filled += 1
                     break
@@ -638,15 +667,15 @@ def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
                 continue
 
             name_cell = table.cell(data_r, col_name)
-            if not _TABLE_BLANK_RE.match(name_cell.text.strip()):
+            if not _is_blank_or_placeholder(name_cell.text.strip()):
                 continue  # 第一行已有人,留给人工
             _set_cell_value(name_cell, pm_name)
             role_cell = table.cell(data_r, col_role)
-            if _TABLE_BLANK_RE.match(role_cell.text.strip()):
+            if _is_blank_or_placeholder(role_cell.text.strip()):
                 _set_cell_value(role_cell, "项目经理")
             if col_cert is not None and pm_cert:
                 cert_cell = table.cell(data_r, col_cert)
-                if _TABLE_BLANK_RE.match(cert_cell.text.strip()):
+                if _is_blank_or_placeholder(cert_cell.text.strip()):
                     _set_cell_value(cert_cell, pm_cert)
             return True
         except Exception:

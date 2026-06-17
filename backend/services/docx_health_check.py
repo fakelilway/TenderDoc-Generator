@@ -98,8 +98,9 @@ _ACCEPTABLE_FONTS = {
     "Calibri",
 }
 
-# 空 cell 判定：纯下划线占位也视为"空"。
-_UNDERSCORE_ONLY_RE = re.compile(r"^[_＿\s]*$")
+# 空 cell 判定:复用填表器的统一占位谓词(下划线/省略号/点线签字线都算"空"),
+# 避免体检口径与填表口径漂移导致"填了体检仍报空"或假阴性"健康"。
+from services.original_docx_format_service import _is_blank_or_placeholder
 
 # 必填字段的字段名 -> 表格 label 关键词列表。
 _REQUIRED_FIELD_LABELS: dict[str, tuple[str, ...]] = {
@@ -144,8 +145,8 @@ _HARD_BLOCK_CAP = 40.0
 
 
 def _is_blank_cell(text: str) -> bool:
-    """空 cell：完全空白，或只剩下划线/空白占位。"""
-    return bool(_UNDERSCORE_ONLY_RE.match(text or ""))
+    """空 cell:完全空白,或只剩下划线/省略号/点线等占位(与填表器同口径)。"""
+    return _is_blank_or_placeholder(text or "")
 
 
 def _collect(document) -> dict[str, Any]:
