@@ -76,6 +76,7 @@ def build_original_format_docx(
             body.remove(child)
 
     _replace_known_fields(target, profile or {})
+    _strip_seal_images(target)  # 清招标原件带进来的招标人/代理红章(投标人章须人工手盖)
     target.save(str(path))
     return str(path)
 
@@ -342,6 +343,7 @@ def build_original_format_docx_from_pdf_editable(
         _replace_known_fields(doc, profile or {})
         _fill_known_table_cells(doc, profile or {})
         _fill_personnel_table(doc, profile or {})  # 项目管理机构人员表填项目经理行
+        _strip_seal_images(doc)  # 清招标原件带进来的招标人/代理红章
         doc.save(str(path))
         return str(path)
     finally:
@@ -597,6 +599,74 @@ def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
         except Exception:
             continue
     return False
+
+
+def _image_is_seal(blob: bytes) -> bool:
+    """True if the image is a red ink seal (公章/印章).
+
+    印章=红印泥,整图红像素占比高(实测招标人/代理公章 22%~30%);证件扫描、附表
+    线框图、页面截图近 0%(黑字白底,即便角上有小红章也 <2%)。阈值 5% 干净区分。
+    """
+    from io import BytesIO
+
+    try:
+        from PIL import Image
+
+        im = Image.open(BytesIO(blob)).convert("RGBA")
+    except Exception:
+        return False
+    w, h = im.size
+    if w * h == 0:
+        return False
+    if w * h > 14400:  # 大图抽样提速,不影响占比估计
+        im = im.resize((min(w, 120), min(h, 120)))
+    pixels = list(im.getdata())
+    red = sum(
+        1
+        for r, g, b, a in pixels
+        if a > 40 and r > 110 and r - g > 40 and r - b > 40
+    )
+    return bool(pixels) and red / len(pixels) > 0.05
+
+
+def _strip_seal_images(document: Any) -> int:
+    """删除从招标原件复制进来的红色印章图(招标人/代理公章)。
+
+    投标文件不该带招标人/代理的章,投标人自己的章必须人工手盖 → 任何自动出现的印章
+    都要清掉。在**格式章构建阶段**调用(此时还没追加资格证明附录,故绝不会误删证件
+    扫描件)。判据见 :func:`_image_is_seal`(整图红占比)。返回删除的图章引用数。
+    """
+    seal_rids = set()
+    for rid, part in document.part.related_parts.items():
+        if "image" not in (getattr(part, "content_type", "") or ""):
+            continue
+        blob = getattr(part, "blob", b"")
+        if blob and _image_is_seal(blob):
+            seal_rids.add(rid)
+    if not seal_rids:
+        return 0
+
+    removed = 0
+    blip_tag, embed_attr = qn("a:blip"), qn("r:embed")
+    try:
+        vml_tag, vml_id = qn("v:imagedata"), qn("r:id")
+    except Exception:  # pragma: no cover - 'v' 命名空间缺失时退化为只处理 drawing
+        vml_tag = vml_id = None
+    for container in (qn("w:drawing"), qn("w:pict")):
+        for element in list(document.element.iter(container)):
+            rid = next(
+                (b.get(embed_attr) for b in element.iter(blip_tag)), None
+            )
+            if rid is None and vml_tag is not None:
+                rid = next(
+                    (img.get(vml_id) for img in element.iter(vml_tag)), None
+                )
+            if rid in seal_rids:
+                parent = element.getparent()
+                if parent is not None:
+                    parent.remove(element)
+                    removed += 1
+    return removed
 
 
 def _table_has_real_borders(table: Any) -> bool:

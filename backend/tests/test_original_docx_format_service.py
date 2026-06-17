@@ -103,6 +103,56 @@ def test_table_label_value_maps_known_and_skips_others() -> None:
     assert _table_label_value("随便什么标题", profile) == ""
 
 
+def _solid_png(rgb: tuple[int, int, int], size: tuple[int, int] = (80, 80)) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.new("RGBA", size, (*rgb, 255))
+    buffer = BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def test_image_is_seal_detects_red_stamp_only() -> None:
+    from services.original_docx_format_service import _image_is_seal
+
+    assert _image_is_seal(_solid_png((220, 20, 20))) is True  # 红章
+    assert _image_is_seal(_solid_png((250, 250, 250))) is False  # 白底
+    assert _image_is_seal(_solid_png((15, 15, 15))) is False  # 黑字
+    assert _image_is_seal(_solid_png((20, 40, 200))) is False  # 蓝线附表图
+
+
+def test_strip_seal_images_removes_seals_keeps_rest() -> None:
+    """回归(实测真招标商务卷):福昕把招标人/代理红章照搬进来,乱盖一片;只删红章,
+    保留文字、表格、非章图(附表线框/页面图)。"""
+    from io import BytesIO
+
+    from docx import Document
+    from docx.shared import Cm
+
+    from services.original_docx_format_service import _strip_seal_images
+
+    doc = Document()
+    doc.add_paragraph("投标人：（盖单位章）")
+    doc.add_paragraph().add_run().add_picture(
+        BytesIO(_solid_png((220, 20, 20))), width=Cm(3)
+    )  # 红章
+    doc.add_paragraph("附表二 分项工程进度率计划")
+    doc.add_paragraph().add_run().add_picture(
+        BytesIO(_solid_png((20, 40, 200))), width=Cm(3)
+    )  # 蓝线附表图(非章)
+
+    before = len(doc.element.findall(".//" + qn("w:drawing")))
+    removed = _strip_seal_images(doc)
+    after = len(doc.element.findall(".//" + qn("w:drawing")))
+
+    assert removed == 1
+    assert before - after == 1  # 只删了红章,蓝图还在
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "盖单位章" in text and "附表二" in text  # 文字完整
+
+
 def test_table_label_value_broad_key_does_not_overfill() -> None:
     """回归(实测 122 商务卷):宽泛主体词("投标人"/"项目经理")含在标签里 ≠ 就该填它的
     名字。子字段标签必须留空待人工,绝不能拿公司名/项目经理名瞎填(废标级错误)。"""
