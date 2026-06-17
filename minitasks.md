@@ -60,7 +60,7 @@ flowchart LR
 
 | 编号 | 状态 | 内容 | 验收标准 |
 |------|------|------|----------|
-| M23 | 🔧 | 本项目专用技术材料库 | 每个项目上传同类施工组织设计参考（可提取文字），`project_id` 隔离喂技术卷 RAG（不污染全局库）。**这是 M12 里"技术文本素材"的正确落地方式、技术卷实质的下一个瓶颈**——全局库零技术方案文本，需用户提供真实施工组织设计文本 |
+| M23 | 🔬 | 本项目专用技术材料库 | **引擎已建并 push（main `988f02d`）**：入库 `store_knowledge_chunks(project_id=)` 写 documents 真列 + 冗余进 chunk metadata；检索 `retrieve_filtered(project_id=)` 三态隔离（仅全局 / 项目∪全局 / chunk_ids 绕过）；`_retrieve_for_outline` 串 project_id；端点 POST/GET/DELETE `/api/project/{id}/material`（authorized_project 鉴权）；前端「技术大纲」页 `ProjectMaterialPanel` 上传/列表/删除。门禁 340+14。**剩待用户提供真实施工组织设计样本做端到端验证**（传入后生成的技术卷是否真的引用了素材、少编） |
 
 ## 下一步该做什么（按优先级）
 
