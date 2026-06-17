@@ -14,6 +14,9 @@ import type {
   KnowledgeSelectionResponse,
   KnowledgeSearchResponse,
   KnowledgeUploadResponse,
+  PersonnelMember,
+  PMRecommendationResponse,
+  PMSelectionResponse,
   LoginResponse,
   LogoutResponse,
   ParsedConfirmationResponse,
@@ -379,6 +382,23 @@ export function uploadProjectMaterial(
 export function listProjectMaterials(projectId: number) {
   return requestJson<KnowledgeDocumentListResponse>(
     `/api/project/${projectId}/material`
+  );
+}
+
+// M-人员名册:项目经理选派
+export function getPersonnelRecommendations(projectId: number) {
+  return requestJson<PMRecommendationResponse>(
+    `/api/project/${projectId}/personnel/recommendations`
+  );
+}
+
+export function savePersonnelSelection(
+  projectId: number,
+  member: PersonnelMember | null
+) {
+  return requestJson<PMSelectionResponse>(
+    `/api/project/${projectId}/personnel`,
+    { method: "PUT", body: JSON.stringify({ project_manager: member }) }
   );
 }
 

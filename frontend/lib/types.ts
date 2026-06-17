@@ -576,3 +576,50 @@ export type CompanyProfileResponse = {
   profile: CompanyProfile;
   updated_at: string | null;
 };
+
+// M-人员名册:本项目项目经理选派(按招标要求从公司名册推荐)
+export type BuilderCert = {
+  level: string;
+  specialty: string;
+  cert_no: string;
+  valid_to: string;
+};
+
+export type PersonnelMember = {
+  name: string;
+  id_number: string;
+  builder_certs: BuilderCert[];
+  safety_cert_classes: string[];
+  safety_cert_no: string;
+  title: string;
+  title_specialty: string;
+  eight_roles: string[];
+  special_works: string[];
+  source: string;
+};
+
+export type PMRequirement = {
+  builder_level: string;
+  builder_specialty: string;
+  requires_safety_b: boolean;
+  note: string;
+};
+
+export type PMRecommendation = {
+  member: PersonnelMember;
+  score: number;
+  matched: string[];
+  gaps: string[];
+};
+
+export type PMRecommendationResponse = {
+  project_id: number;
+  requirement: PMRequirement;
+  recommendations: PMRecommendation[];
+  selected: PersonnelMember | null;
+};
+
+export type PMSelectionResponse = {
+  project_id: number;
+  selected: { project_manager?: PersonnelMember | null };
+};
