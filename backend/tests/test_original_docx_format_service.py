@@ -581,3 +581,36 @@ def test_fill_known_table_cells_keeps_nil_dash_answer() -> None:
     filled = _fill_known_table_cells(doc, {"company_name": "安徽正奇建设有限公司"})
     assert table.cell(0, 1).text == "—"  # 真答案保留
     assert filled == 0
+
+
+# ── #9 接入可推导字段:项目名称/工期 从招标解析(combined_profile 中文键)填进商务卷 ──
+def test_table_label_value_fills_project_derived_fields() -> None:
+    # combined_profile 里项目级字段是中文键(v2_generation_service.project_fields)
+    combined = {
+        "company_name": "安徽正奇建设有限公司",
+        "项目名称": "XX县2025年农村公路提质改造联网路工程",
+        "工期": "90日历天",
+        "project_manager_name": "江舟",
+    }
+    assert _table_label_value("项目名称", combined) == combined["项目名称"]
+    assert _table_label_value("工程名称", combined) == combined["项目名称"]
+    assert _table_label_value("计划工期", combined) == "90日历天"
+    assert _table_label_value("工期", combined) == "90日历天"
+    # 关键防撞:"项目名称"不得把"项目经理"格抢成项目名(仍填项目经理名)
+    assert _table_label_value("项目经理", combined) == "江舟"
+    assert _table_label_value("项目经理姓名", combined) == "江舟"
+
+
+def test_fill_known_table_cells_fills_project_name_and_duration() -> None:
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "项目名称"
+    table.cell(0, 1).text = "…"  # 占位
+    table.cell(1, 0).text = "计划工期"  # (1,1) 空
+
+    filled = _fill_known_table_cells(
+        doc, {"项目名称": "XX路网工程", "工期": "90日历天"}
+    )
+    assert table.cell(0, 1).text == "XX路网工程"
+    assert table.cell(1, 1).text == "90日历天"
+    assert filled == 2
