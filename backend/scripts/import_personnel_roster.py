@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.personnel_roster_service import (  # noqa: E402
+    dedupe_roster,
     kb_builder_candidates,
     merge_kb_builders,
     parse_roster_xlsx,
@@ -64,6 +65,9 @@ def main() -> None:
     members = parse_roster_xlsx(args.xlsx)
     if not args.no_kb:
         members = merge_kb_builders(members, kb_builder_candidates())
+    before = len(members)
+    members = dedupe_roster(members)  # 合并 OCR 脏名拆出来的同一人
+    print(f"脏名去重:{before} → {len(members)} 人")
     _summarize(members)
     if args.save:
         save_personnel_roster(members)

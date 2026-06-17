@@ -252,6 +252,71 @@ def merge_kb_builders(
     return members
 
 
+def _absorb(host: PersonnelMember, other: PersonnelMember) -> None:
+    """把脏名变体 other 的证书并进真人 host(去重)。"""
+    seen = {(c.level, c.specialty) for c in host.builder_certs}
+    for cert in other.builder_certs:
+        if (cert.level, cert.specialty) not in seen:
+            host.builder_certs.append(cert)
+            seen.add((cert.level, cert.specialty))
+    for cls in other.safety_cert_classes:
+        if cls not in host.safety_cert_classes:
+            host.safety_cert_classes.append(cls)
+    host.safety_cert_no = host.safety_cert_no or other.safety_cert_no
+    if not host.title and other.title:
+        host.title, host.title_specialty = other.title, other.title_specialty
+    host.eight_roles = sorted(set(host.eight_roles) | set(other.eight_roles))
+    host.special_works = sorted(set(host.special_works) | set(other.special_works))
+    host.id_number = host.id_number or other.id_number
+    sources = host.source + other.source
+    if "台账" in sources and "知识库" in sources:
+        host.source = "台账+知识库"
+
+
+def dedupe_roster(members: list[PersonnelMember]) -> list[PersonnelMember]:
+    """合并 OCR 脏名拆出来的同一人。
+
+    脏名特征=真名(2~3字)+1个垃圾尾字(执/返/照/市/退/签…)。两条保守规则,只动 ≥4 字的
+    长名(中文真名极少 4 字),不碰 2↔3 字以免误并真人:
+    1. 长名(≥4字)的某个 ≥2字前缀正好是已存在的更短真名 → 脏变体,并入(康白华执→康白华)。
+    2. ≥2 个 ≥4字 名共享同一(去末字)前缀 → 都是该前缀真名的脏变体,归并(夏冬梅照/签→夏冬梅)。
+    """
+    ordered = sorted(members, key=lambda m: (len(m.name), m.name))
+    kept: list[PersonnelMember] = []
+    for member in ordered:
+        host = None
+        if len(member.name) >= 4:
+            for candidate in kept:
+                if (
+                    2 <= len(candidate.name) < len(member.name)
+                    and member.name.startswith(candidate.name)
+                ):
+                    host = candidate
+                    break
+        if host is not None:
+            _absorb(host, member)
+        else:
+            kept.append(member)
+
+    # 规则2:同(去末字)前缀的多个长脏名 → 归到该前缀真名
+    from collections import defaultdict
+
+    buckets: dict[str, list[PersonnelMember]] = defaultdict(list)
+    for member in list(kept):
+        if len(member.name) >= 4:
+            buckets[member.name[:-1]].append(member)
+    for prefix, group in buckets.items():
+        if len(group) >= 2 and len(prefix) >= 2:
+            host = group[0]
+            host.name = prefix
+            for member in group[1:]:
+                _absorb(host, member)
+                kept.remove(member)
+
+    kept.sort(key=lambda m: (not m.is_pm_candidate, m.name))
+    return kept
+
+
 def get_personnel_roster() -> dict[str, Any]:
     """返回保存的名册(list[PersonnelMember dict]) + 更新时间;空库不报错。"""
     with get_db_connection() as conn:

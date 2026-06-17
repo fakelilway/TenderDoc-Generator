@@ -86,3 +86,35 @@ def test_merge_kb_builders_supplements_and_adds() -> None:
     assert merged["许明英"].source == "台账+知识库"  # 用 KB 补证
     assert merged["周明明"].source == "知识库"  # 台账没这人 → 新增
     assert merged["周明明"].builder_specialties == ["公路工程"]
+
+
+def test_dedupe_roster_merges_dirty_name_variants() -> None:
+    """OCR 脏名拆出的同一人合并:康白华执/返→康白华、夏冬梅照/签→夏冬梅;真人不误并。"""
+    from services.personnel_roster_service import dedupe_roster
+
+    def cert():
+        return [BuilderCert(level="二级建造师", specialty="公路工程")]
+
+    members = [
+        PersonnelMember(name="康白华", builder_certs=cert(), source="台账+知识库"),
+        PersonnelMember(name="康白华执", builder_certs=cert(), source="知识库"),
+        PersonnelMember(name="康白华返", builder_certs=cert(), source="知识库"),
+        PersonnelMember(name="夏冬梅照", builder_certs=cert(), source="知识库"),
+        PersonnelMember(name="夏冬梅签", builder_certs=cert(), source="知识库"),
+        PersonnelMember(
+            name="江舟",
+            builder_certs=[BuilderCert(level="一级建造师", specialty="公路工程")],
+            source="台账",
+        ),
+    ]
+    out = {m.name for m in dedupe_roster(members)}
+    assert out == {"康白华", "夏冬梅", "江舟"}
+
+    # 真人不误并:王俊(2字) vs 王俊明(3字)各自保留(规则只动 ≥4 字脏名)
+    pair = dedupe_roster(
+        [
+            PersonnelMember(name="王俊", builder_certs=cert()),
+            PersonnelMember(name="王俊明", builder_certs=cert()),
+        ]
+    )
+    assert {m.name for m in pair} == {"王俊", "王俊明"}
