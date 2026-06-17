@@ -711,7 +711,68 @@ def _retrieve_for_outline(
         shared_chunks = retriever.retrieve(query, top_k=16, project_id=project_id)
     except Exception:
         shared_chunks = []
+
+    # ① 公司历史施工方案语料(公司级×接地):给技术卷"写法/深度"接地,按本项目专业优先。
+    plan_chunks = _retrieve_construction_plans(requirements, query)
+    if plan_chunks:
+        plan_ids = {chunk.chunk_id for chunk in plan_chunks}
+        general = [chunk for chunk in shared_chunks if chunk.chunk_id not in plan_ids]
+        # 每节 = 同类施组写作语料(前4)+ 通用证据(前4)。
+        merged = plan_chunks[:4] + general[:4]
+        return {section.title: merged for section in outline}
     return {section.title: shared_chunks[:6] for section in outline}
+
+
+# 本项目专业关键词 → 规范专业(与施组语料的 specialty 标签对齐),用于检索同专业施组。
+_PROJECT_SPECIALTY_KEYWORDS = (
+    (("公路", "路面", "路基", "沥青", "路桥", "国道", "省道", "县道"), "公路工程"),
+    (("市政", "管网", "给排水", "污水", "雨水", "管线", "道路照明"), "市政公用工程"),
+    (("桥", "涵", "梁"), "桥涵工程"),
+    (("电力", "电缆", "配电", "供电"), "电力工程"),
+    (("绿化", "园林", "景观"), "绿化工程"),
+)
+
+
+def _derive_project_specialty(requirements) -> str:
+    """从招标(项目名/范围/资格条款)粗推本项目专业,用于优先检索同专业历史施组。"""
+    text = (
+        f"{getattr(requirements, 'project_name', '')} "
+        f"{getattr(requirements, 'tender_scope', '')} "
+        + " ".join(
+            f"{getattr(item, 'title', '')}{getattr(item, 'description', '')}"
+            for item in (getattr(requirements, "qualification_list", []) or [])
+        )
+    )
+    for keywords, specialty in _PROJECT_SPECIALTY_KEYWORDS:
+        if any(keyword in text for keyword in keywords):
+            return specialty
+    return ""
+
+
+def _retrieve_construction_plans(requirements, base_query):
+    """检索公司历史施工方案语料(同专业优先,任意专业补足)。全局可复用,不带 project_id。"""
+    specialty = _derive_project_specialty(requirements)
+    plan_query = (
+        f"{specialty} 施工方案 施工工艺 技术措施 质量保证措施 安全文明施工 "
+        f"{base_query[:200]}"
+    )
+    chunks: list = []
+    seen: set = set()
+    try:
+        # 先同专业,再任意专业补足 → 同专业排前(推不出专业时只取任意专业)。
+        for spec in ([specialty, None] if specialty else [None]):
+            for chunk in retriever.retrieve_filtered(
+                plan_query,
+                top_k=8,
+                document_category="施工方案",
+                specialty=spec or None,
+            ):
+                if chunk.chunk_id not in seen:
+                    seen.add(chunk.chunk_id)
+                    chunks.append(chunk)
+    except Exception:
+        return []
+    return chunks
 
 
 _SECTION_KEYWORD_SPLIT_RE = re.compile(r"[\s、，。；：/（）()【】\[\]:;,.\-—]+")
