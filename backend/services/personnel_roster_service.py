@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -175,6 +176,78 @@ def parse_roster_xlsx(xlsx_path: str | Path) -> list[PersonnelMember]:
     workbook.close()
     # 按"是否项目经理候选 + 姓名"稳定排序,候选靠前
     members = list({id(m): m for m in [*by_id.values(), *by_name.values()]}.values())
+    members.sort(key=lambda m: (not m.is_pm_candidate, m.name))
+    return members
+
+
+_BUILDER_LEVELS = {"一级建造师证": "一级建造师", "二级建造师证": "二级建造师"}
+_KNOWN_SPECIALTIES = (
+    "公路", "市政", "建筑", "机电", "水利", "铁路", "港口", "通信", "矿业", "机场",
+)
+
+
+def _clean_name(name: str) -> str:
+    # 知识库 owner_name 偶有文件名残渣(尾部"照/_2"等);轻清洗,接受少量噪声。
+    name = _text(name)
+    name = re.sub(r"[_\-\s]?\d+$", "", name)  # 去尾部 _2 / -1
+    return name.strip()
+
+
+def kb_builder_candidates() -> dict[str, list[BuilderCert]]:
+    """从知识库人员证件抽建造师候选(姓名 → 建造师证列表)。
+
+    知识库是历年全量(含离职/过期/重复),证书等级在 certificate_type,专业编码在文件名
+    结构 ``…_X级建造师证_<专业>_…``。按姓名聚合,去重 (等级,专业)。
+    """
+    spec_re = re.compile(r"建造师证_([^_]+)")
+    candidates: dict[str, set[tuple[str, str]]] = {}
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT d.metadata_json->>'owner_name' AS name,
+                       d.metadata_json->>'certificate_type' AS cert_type,
+                       d.file_name
+                FROM documents d
+                WHERE d.project_id IS NULL
+                  AND d.metadata_json->>'owner_name' <> ''
+                  AND (d.file_name ILIKE '%建造师%'
+                       OR d.metadata_json->>'certificate_type' ILIKE '%建造师%')
+                """
+            )
+            rows = cursor.fetchall()
+    for name, cert_type, file_name in rows:
+        name = _clean_name(name)
+        level = _BUILDER_LEVELS.get(_text(cert_type), "")
+        if not name or not level:
+            continue
+        match = spec_re.search(_text(file_name))
+        specialty = match.group(1) if match else ""
+        if specialty == "通用" or not any(k in specialty for k in _KNOWN_SPECIALTIES):
+            specialty = ""  # 通用/无法识别 → 留空(匹配时按"未注明专业"处理)
+        candidates.setdefault(name, set()).add((level, specialty))
+    return {
+        name: [BuilderCert(level=lv, specialty=sp) for lv, sp in sorted(pairs)]
+        for name, pairs in candidates.items()
+    }
+
+
+def merge_kb_builders(
+    members: list[PersonnelMember], kb_candidates: dict[str, list[BuilderCert]]
+) -> list[PersonnelMember]:
+    """把知识库建造师候选并入名册:台账已有的人优先用台账(更干净),台账没有的人新增
+    (标 source=知识库,提示用户其可能离职/过期/需核验)。返回合并后的名册。"""
+    by_name = {m.name: m for m in members}
+    for name, certs in kb_candidates.items():
+        existing = by_name.get(name)
+        if existing is None:
+            members.append(
+                PersonnelMember(name=name, builder_certs=certs, source="知识库")
+            )
+        elif not existing.builder_certs:
+            # 台账里这人无建造师证 → 用知识库补,标双来源。
+            existing.builder_certs = certs
+            existing.source = "台账+知识库"
     members.sort(key=lambda m: (not m.is_pm_candidate, m.name))
     return members
 
