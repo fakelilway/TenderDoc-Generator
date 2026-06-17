@@ -249,6 +249,8 @@ def run_bid_workflow(
     except Exception:
         logger.warning("Company profile unavailable; generating without it")
         company_profile = None
+    # 本项目选派的项目经理覆盖档案里的单个默认项目经理(M-人员名册)。
+    company_profile = _apply_selected_project_manager(company_profile, project)
 
     generation_mode = "unknown"
     audit_summary = ""
@@ -651,6 +653,27 @@ def _outline_from_project(
     if outline_json:
         return [BidSectionOutline.model_validate(item) for item in outline_json]
     return build_bid_outline(requirements, bid_template)
+
+
+def _apply_selected_project_manager(company_profile, project):
+    """用本项目选派的项目经理覆盖档案里写死的单个默认项目经理。
+
+    选派存在 ``projects.selected_personnel.project_manager``(名册里的一条)。覆盖
+    ``project_manager_name``/``project_manager_cert``,下游商务卷填充(投标人基本情况表、
+    项目管理机构人员组成表)即自动用选定人选。未选派则原样返回。
+    """
+    selected = (project.get("selected_personnel") or {}).get("project_manager")
+    if not selected or not selected.get("name"):
+        return company_profile
+    profile = dict(company_profile or {})
+    profile["project_manager_name"] = selected["name"]
+    builder_certs = selected.get("builder_certs") or []
+    if builder_certs:
+        primary = builder_certs[0]
+        cert_no = str(primary.get("cert_no") or "").strip()
+        if cert_no:
+            profile["project_manager_cert"] = cert_no
+    return profile
 
 
 def _retrieve_for_outline(

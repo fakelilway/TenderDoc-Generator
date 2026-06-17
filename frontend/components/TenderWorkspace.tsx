@@ -30,6 +30,7 @@ import {
 import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
 import { ProjectMaterialPanel } from "@/components/ProjectMaterialPanel";
+import { PersonnelPanel } from "@/components/PersonnelPanel";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
 import { RiskPanel } from "@/components/RiskPanel";
@@ -1568,6 +1569,9 @@ export function TenderWorkspace({
               ) : null}
               {centerTab === "outline" ? (
                 <div className="space-y-4">
+                  {projectId != null ? (
+                    <PersonnelPanel projectId={projectId} />
+                  ) : null}
                   {projectId != null ? (
                     <ProjectMaterialPanel projectId={projectId} />
                   ) : null}

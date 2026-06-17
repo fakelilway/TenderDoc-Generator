@@ -124,6 +124,7 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     bid_outline_json,
                     document_outline_json,
                     selected_chunk_ids,
+                    selected_personnel,
                     edited_markdown,
                     final_checklist_json,
                     final_versions_json,

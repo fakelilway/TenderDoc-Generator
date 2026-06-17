@@ -18,6 +18,11 @@ from schemas.knowledge import (
     KnowledgeDocumentSummary,
     KnowledgeUploadResponse,
 )
+from schemas.personnel import (
+    PMRecommendationResponse,
+    PMSelectionRequest,
+    PMSelectionResponse,
+)
 from schemas.project import (
     ProjectCreateResponse,
     ProjectDeleteResponse,
@@ -294,6 +299,62 @@ def delete_project_material(
         _raise_http_error(error)
 
     return KnowledgeDeleteResponse(ok=True)
+
+
+@router.get(
+    "/api/project/{project_id}/personnel/recommendations",
+    response_model=PMRecommendationResponse,
+)
+def get_project_personnel_recommendations(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> PMRecommendationResponse:
+    """派生招标项目经理要求 + 从公司名册推荐匹配候选(按等级+专业排序)。"""
+    try:
+        result = project_service.recommend_project_personnel(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return PMRecommendationResponse(**result)
+
+
+@router.get(
+    "/api/project/{project_id}/personnel",
+    response_model=PMSelectionResponse,
+)
+def get_project_personnel_selection(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> PMSelectionResponse:
+    try:
+        result = project_service.get_selected_personnel(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return PMSelectionResponse(**result)
+
+
+@router.put(
+    "/api/project/{project_id}/personnel",
+    response_model=PMSelectionResponse,
+)
+def save_project_personnel_selection(
+    project_id: int,
+    request: PMSelectionRequest,
+    _project: int = Depends(authorized_project),
+) -> PMSelectionResponse:
+    """选定/清空本项目项目经理。member=None 清空。"""
+    try:
+        member = (
+            request.project_manager.model_dump()
+            if request.project_manager is not None
+            else None
+        )
+        result = project_service.save_selected_project_manager(project_id, member)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return PMSelectionResponse(**result)
 
 
 @router.patch("/api/project/{project_id}/draft", response_model=DraftMarkdownResponse)
