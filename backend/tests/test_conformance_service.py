@@ -105,3 +105,70 @@ def test_build_report_aggregates_and_flags_blocking() -> None:
     # 资质不达标 → 有废标级阻断
     assert report.has_blocking is True
     assert any(w.field == "企业资质" for w in report.warnings)
+
+
+# ── 证件有效期(#6):选派项目经理的建造师证过期=废标级、临近=预警 ────────────
+from datetime import date as _date
+
+
+def _pm(valid_to: str, *, level="一级建造师", specialty="公路工程") -> dict:
+    return {
+        "name": "江舟",
+        "builder_certs": [{"level": level, "specialty": specialty, "valid_to": valid_to}],
+    }
+
+
+def test_parse_valid_to_handles_chinese_and_range_and_year_only() -> None:
+    assert cs._parse_valid_to("2023至2028") == "2028-12-31"  # 只有年→当年末
+    assert cs._parse_valid_to("2028年5月15日") == "2028-05-15"
+    assert cs._parse_valid_to("2023-12-28至2028-12-28") == "2028-12-28"
+    assert cs._parse_valid_to("2028.5") == "2028-05-28"  # 只有年月→该月28
+    assert cs._parse_valid_to("长期") == ""  # 抠不出日期
+
+
+def test_pm_cert_expired_is_blocking() -> None:
+    today = _date(2026, 6, 17)
+    r = cs.check_pm_cert_expiry(_pm("2025年1月1日"), today)
+    assert r.status == "不符合" and r.action == "告警"
+    assert "已过期" in r.note and "废标" in r.note
+
+
+def test_pm_cert_expiring_soon_warns() -> None:
+    today = _date(2026, 6, 17)
+    r = cs.check_pm_cert_expiry(_pm("2026年8月1日"), today)  # 45天后到期(<90)
+    assert r.status == "缺料" and r.action == "告警"
+    assert "到期" in r.note
+
+
+def test_pm_cert_valid_passes() -> None:
+    today = _date(2026, 6, 17)
+    r = cs.check_pm_cert_expiry(_pm("2023至2030"), today)
+    assert r.status == "符合" and r.action == "留空"
+
+
+def test_pm_cert_no_validity_info_is_manual() -> None:
+    today = _date(2026, 6, 17)
+    r = cs.check_pm_cert_expiry(_pm("长期"), today)
+    assert r.status == "待人工"
+    assert "无有效期信息" in r.our_value
+
+
+def test_pm_cert_expiry_skipped_when_unselected_or_no_certs() -> None:
+    today = _date(2026, 6, 17)
+    assert cs.check_pm_cert_expiry(None, today) is None
+    assert cs.check_pm_cert_expiry({"name": "江舟", "builder_certs": []}, today) is None
+
+
+def test_build_report_includes_pm_expiry_item_when_pm_selected() -> None:
+    today = _date(2026, 6, 17)
+    report = cs.build_conformance_report(
+        project_id=1,
+        spec=_spec(),
+        profile=PROFILE,
+        pm_requirement=SimpleNamespace(builder_level="一级建造师", builder_specialty="公路工程"),
+        selected_pm=_pm("2025年1月1日"),
+        today=today,
+    )
+    fields = [i.field for i in report.items]
+    assert "项目经理证件有效期" in fields
+    assert report.has_blocking  # 过期证件 → 废标级阻断
