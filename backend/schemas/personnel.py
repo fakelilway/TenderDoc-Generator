@@ -45,3 +45,21 @@ class PersonnelMember(BaseModel):
     @property
     def builder_levels(self) -> list[str]:
         return sorted({c.level for c in self.builder_certs if c.level})
+
+
+class PMRequirement(BaseModel):
+    """从招标资格条款里解析出的项目经理硬性要求(供推荐匹配)。"""
+
+    builder_level: str = ""  # 一级建造师 / 二级建造师 / "" = 不限
+    builder_specialty: str = ""  # 公路工程 / 市政公用工程 / "" = 不限
+    requires_safety_b: bool = False  # 是否要求安全生产考核B证
+    note: str = ""  # 原文摘录,供人工核对
+
+
+class PMRecommendation(BaseModel):
+    """一个被推荐的项目经理候选 + 匹配说明。"""
+
+    member: PersonnelMember
+    score: float
+    matched: list[str] = []  # 命中点:如 ["等级达标:一级建造师", "专业匹配:公路工程"]
+    gaps: list[str] = []  # 缺口:如 ["缺安全B证", "专业待核验"]
