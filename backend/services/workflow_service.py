@@ -196,29 +196,6 @@ def run_bid_workflow(
     retrieved_by_section = _retrieve_for_outline(
         requirements, outline, state.selected_chunk_ids, project_id=project_id
     )
-    knowledge_images = _knowledge_images_for_requirements(requirements)
-    selected_references = (
-        get_knowledge_references(state.selected_chunk_ids)
-        if state.selected_chunk_ids
-        else []
-    )
-    from services import bid_plan_service, evidence_pack_service
-
-    template_profile = _template_profile_for_project(project_id)
-    evidence_pack = evidence_pack_service.build_evidence_pack(
-        requirements,
-        selected_references=selected_references,
-        image_references=knowledge_images,
-        retrieved_results=retrieved_by_section,
-    )
-    bid_plan = bid_plan_service.build_bid_plan(
-        requirements,
-        template_profile=template_profile,
-        evidence_pack=evidence_pack,
-        document_outline=state.document_outline,
-    )
-    state.evidence_pack = evidence_pack.model_dump(mode="json")
-    state.bid_plan = bid_plan.model_dump(mode="json")
     state.rag_references = [
         {
             "section_title": title,
@@ -239,8 +216,8 @@ def run_bid_workflow(
         "generate",
         "running",
         (
-            f"RAG 检索完成，匹配到 {retrieved_count} 个知识片段；"
-            f"证据包包含 {sum(evidence_pack.counts().values())} 项资料，开始生成 Markdown 初稿。"
+            f"RAG 检索完成，匹配到 {retrieved_count} 个知识片段，"
+            "开始生成 Markdown 初稿。"
         ),
         project_status="generating",
     )
@@ -861,29 +838,6 @@ def _distribute_selected_chunks(selected_results, outline):
         title: [selected_results[index] for index in indices]
         for title, indices in assigned.items()
     }
-
-
-def _knowledge_images_for_requirements(
-    requirements: TenderRequirements,
-) -> list[dict[str, object]]:
-    from services import knowledge_service
-
-    try:
-        return knowledge_service.list_knowledge_image_references(
-            generation_service._image_reference_query(requirements),
-            limit=12,
-        )
-    except Exception:
-        return []
-
-
-def _template_profile_for_project(project_id: int):
-    from services import template_service
-
-    try:
-        return template_service.template_profile_for_project(project_id)
-    except Exception:
-        return None
 
 
 def _load_and_persist_tender_text(project: dict) -> str:

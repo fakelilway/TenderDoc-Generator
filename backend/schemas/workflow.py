@@ -26,8 +26,6 @@ class WorkflowState(BaseModel):
     document_outline: list[dict[str, Any]] = Field(default_factory=list)
     selected_chunk_ids: list[int] = Field(default_factory=list)
     rag_references: list[dict[str, Any]] = Field(default_factory=list)
-    evidence_pack: dict[str, Any] | None = None
-    bid_plan: dict[str, Any] | None = None
     draft_markdown: str = ""
     draft_volumes: dict[str, str] = Field(default_factory=dict)
     v2_format_docx: str | None = None

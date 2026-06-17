@@ -189,8 +189,6 @@ def test_run_bid_workflow_corrects_failures_and_pauses_for_human(monkeypatch) ->
     assert state.draft_volumes["commercial"].startswith("# 商务文件")
     assert 0 <= state.iteration_count <= workflow_service.MAX_CORRECTION_ITERATIONS
     assert state.review_report["fail_count"] == 0
-    assert state.evidence_pack
-    assert state.bid_plan
     event_stages = [event.stage for event in state.trace_events]
     assert event_stages[0] == "generate"
     assert "review" in event_stages
