@@ -74,22 +74,6 @@ SECTION_KEYWORDS = {
 }
 
 
-def load_bid_template(template_path: str | Path | None = None) -> BidTemplate | None:
-    settings = get_settings()
-    raw_path = template_path or getattr(settings, "bid_template_path", "")
-    if not raw_path:
-        return None
-    path = Path(raw_path)
-    if not path.is_absolute():
-        path = BACKEND_DIR / path
-    if not path.exists():
-        return None
-    try:
-        return BidTemplate.model_validate_json(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
 def _sections_from_tender_scan(
     requirements: TenderRequirements,
 ) -> list[BidSectionOutline]:

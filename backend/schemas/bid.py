@@ -27,10 +27,3 @@ class BidDocumentOutlineSection(BaseModel):
     manual_image_slots: list[ManualImageSlot] = Field(default_factory=list)
     children: list["BidDocumentOutlineSection"] = Field(default_factory=list)
 
-
-class BidGenerationResult(BaseModel):
-    outline: list[BidSectionOutline]
-    markdown: str
-    generated_markdown_path: str
-    generated_docx_path: str
-    quality_report: dict[str, float | int]

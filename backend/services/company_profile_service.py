@@ -71,14 +71,3 @@ def save_company_profile(data: dict[str, Any]) -> dict[str, Any]:
             conn.commit()
     return get_company_profile()
 
-
-def company_profile_prompt_block(profile: dict[str, Any] | None) -> str:
-    """Render the profile as prompt lines; empty fields are omitted."""
-    if not profile:
-        return ""
-    lines = [
-        f"- {label}：{str(profile.get(key, '') or '').strip()}"
-        for key, label in COMPANY_PROFILE_FIELD_LABELS.items()
-        if str(profile.get(key, "") or "").strip()
-    ]
-    return "\n".join(lines)

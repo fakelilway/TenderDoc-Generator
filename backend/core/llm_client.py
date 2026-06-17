@@ -158,9 +158,3 @@ def resolve_llm_config(
         )
     raise error_cls("OPENROUTER_API_KEY or DEEPSEEK_API_KEY is required")
 
-
-def build_client(api_key: str, base_url: str, *, timeout: float | None = None) -> OpenAI:
-    """Construct an OpenAI-compatible client, passing ``timeout`` only when set."""
-    if timeout is not None:
-        return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
-    return OpenAI(api_key=api_key, base_url=base_url)

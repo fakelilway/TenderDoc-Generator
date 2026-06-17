@@ -289,10 +289,6 @@ def _fetch_template_row(template_id: int) -> dict[str, Any]:
     return dict(row)
 
 
-def get_template(template_id: int) -> dict[str, Any]:
-    return _template_summary(_fetch_template_row(template_id))
-
-
 def update_template(
     template_id: int,
     name: str | None = None,
