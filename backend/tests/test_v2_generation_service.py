@@ -739,3 +739,36 @@ def test_inject_project_images_targets_section_and_appendix(monkeypatch) -> None
     assert "document_id=12" in out.split("## 本项目附图")[1]
     # 无 project_id → 原样返回
     assert v2._inject_project_images(md, None) == md
+
+
+def test_qualification_evidence_groups_all_company_certs(monkeypatch) -> None:
+    """A2:资格证明材料成组插**全**公司证件——分组/组上限/去重/排除人员证件/specialty进caption。"""
+    import re
+
+    from services import knowledge_service, v2_generation_service
+
+    refs = (
+        [{"document_id": 1, "document_category": "公司证件",
+          "certificate_type": "营业执照", "specialty": ""}]
+        + [{"document_id": 1, "document_category": "公司证件",  # 重复 doc_id
+            "certificate_type": "营业执照", "specialty": ""}]
+        + [{"document_id": 100 + i, "document_category": "公司证件",
+            "certificate_type": "资质证书", "specialty": f"专业{i}"} for i in range(20)]
+        + [{"document_id": 9, "document_category": "公司证件",
+            "certificate_type": "安全生产许可证", "specialty": ""}]
+        + [{"document_id": 500, "document_category": "人员证件",  # 非公司证件,不选
+            "certificate_type": "二级建造师证", "specialty": ""}]
+    )
+    monkeypatch.setattr(
+        knowledge_service, "list_knowledge_image_references", lambda *a, **k: list(refs)
+    )
+    md = v2_generation_service._qualification_evidence_markdown()
+    ids = re.findall(r"document_id=(\d+)", md)
+
+    assert "1" in ids and "9" in ids            # 营业执照/安许选中
+    assert "500" not in ids                     # 人员证件不选
+    assert ids.count("1") == 1                  # doc_id 去重
+    qual = [i for i in ids if 100 <= int(i) <= 119]
+    assert len(qual) == 16                       # 资质证书组上限 16(20里取16)
+    assert "### 企业资质证书" in md and "### 营业执照" in md
+    assert "资质证书（专业0）" in md             # specialty 进 caption
