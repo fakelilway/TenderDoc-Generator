@@ -30,20 +30,6 @@ TOC_LINE_RE = re.compile(
 )
 
 
-def parse_bid_template_pdf(
-    file_path: str | Path,
-    template_name: str = "",
-) -> BidTemplate:
-    path = Path(file_path)
-    reader = PdfReader(str(path))
-    pages = [page.extract_text() or "" for page in reader.pages]
-    return parse_bid_template_pages(
-        pages,
-        source_file=path.name,
-        template_name=template_name or path.stem,
-    )
-
-
 def parse_bid_template_bytes(
     file_bytes: bytes,
     source_file: str = "",
@@ -55,59 +41,6 @@ def parse_bid_template_bytes(
         pages,
         source_file=source_file,
         template_name=template_name or Path(source_file).stem,
-    )
-
-
-def parse_bid_template_pages(
-    pages: list[str],
-    source_file: str = "",
-    template_name: str = "",
-) -> BidTemplate:
-    page_count = len(pages)
-    cover_text = _cover_page_text(pages[:3])
-    main_sections = _extract_main_sections(pages)
-    construction_start = _section_start(main_sections, "五、施工组织设计") or 0
-    construction_offset = construction_start if construction_start else 0
-    toc_window = _construction_toc_window(pages, construction_start)
-    construction_sections = _extract_toc_sections(
-        toc_window,
-        pages,
-        construction_offset=construction_offset,
-        section_type="construction_design",
-    )
-    appendix_sections = [
-        section
-        for section in construction_sections
-        if section.title.startswith("附表")
-    ]
-    construction_sections = [
-        section
-        for section in construction_sections
-        if not section.title.startswith("附表")
-    ]
-    fixed_form_sections = [
-        section
-        for section in main_sections
-        if section.section_type in {"fixed_form", "qualification", "declaration"}
-    ]
-
-    return BidTemplate(
-        template_name=template_name or "bid-template",
-        source_file=source_file,
-        page_count=page_count,
-        project_name=_extract_project_name(cover_text),
-        company_name=_extract_company_name(cover_text),
-        envelope_type=_extract_envelope_type(cover_text),
-        document_type=_extract_document_type(cover_text),
-        main_sections=main_sections,
-        construction_design_sections=construction_sections,
-        appendix_sections=appendix_sections,
-        fixed_form_sections=fixed_form_sections,
-        notes=[
-            "Page numbers are 1-based PDF page numbers.",
-            "Construction design TOC page labels are converted to PDF page numbers when possible.",
-            "Use this JSON as a structural reference; company-specific names, people, certificates, prices, and dates must still come from user-approved materials.",
-        ],
     )
 
 
