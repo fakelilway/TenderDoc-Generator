@@ -23,6 +23,7 @@ from schemas.personnel import (
     PMSelectionRequest,
     PMSelectionResponse,
 )
+from schemas.tender_spec import ConformanceReportResponse
 from schemas.project import (
     ProjectCreateResponse,
     ProjectDeleteResponse,
@@ -380,6 +381,31 @@ def save_project_personnel_selection(
         _raise_http_error(error)
 
     return PMSelectionResponse(**result)
+
+
+@router.get(
+    "/api/project/{project_id}/conformance",
+    response_model=ConformanceReportResponse,
+)
+def get_project_conformance(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> ConformanceReportResponse:
+    """逐空核对报告:读懂招标→每个空"找要求→核对我方→符合填/不符合告警"。"""
+    from services import tender_spec_service
+
+    try:
+        report = tender_spec_service.build_project_conformance_report(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return ConformanceReportResponse(
+        project_id=report.project_id,
+        items=report.items,
+        has_blocking=report.has_blocking,
+        warning_count=len(report.warnings),
+        pending_count=len(report.pending_manual),
+    )
 
 
 @router.patch("/api/project/{project_id}/draft", response_model=DraftMarkdownResponse)
