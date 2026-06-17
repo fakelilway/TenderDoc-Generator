@@ -62,7 +62,16 @@ def store_knowledge_chunks(
     chunks: list[KnowledgeChunk],
     embedder: EmbedTexts = embed_texts,
     metadata: dict | None = None,
+    project_id: int | None = None,
 ) -> dict[str, object]:
+    """Persist a document + its embedded chunks.
+
+    ``project_id`` is ``None`` for the global knowledge base (the default). For
+    M23 per-project technical material it is the owning project id, which writes
+    the real ``documents.project_id`` column (so the material cascade-deletes with
+    the project). Retrieval isolation rides on the denormalized ``metadata`` key
+    that callers set, not on this column — see ``retrieve_filtered``.
+    """
     embeddings = embedder([chunk.content for chunk in chunks]) if chunks else []
     if chunks and len(embeddings) != len(chunks):
         raise ValueError("Embedding count does not match chunk count")
@@ -75,10 +84,10 @@ def store_knowledge_chunks(
                 """
                 INSERT INTO documents
                     (project_id, file_name, file_path, file_type, metadata_json)
-                VALUES (NULL, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (file_name, file_path, file_type, Json(metadata or {})),
+                (project_id, file_name, file_path, file_type, Json(metadata or {})),
             )
             document_id = cursor.fetchone()["id"]
 

@@ -119,6 +119,46 @@ def test_store_knowledge_chunks_allows_evidence_only_document(monkeypatch) -> No
     assert "INSERT INTO documents" in cursor.statements[1][0]
 
 
+def test_store_knowledge_chunks_writes_project_id_for_per_project_material(
+    monkeypatch,
+) -> None:
+    # M23:本项目专用材料把 project_id 写进 documents 真列(随项目级联删),不再硬写 NULL。
+    monkeypatch.setattr(vector_store.settings, "embedding_dimension", 3)
+    cursor = FakeCursor()
+    _patch_store(monkeypatch, cursor)
+
+    vector_store.store_knowledge_chunks(
+        file_name="施组.txt",
+        file_path="knowledge/x.txt",
+        file_type="txt",
+        chunks=[KnowledgeChunk("施工组织设计正文", {"chunk_index": 0})],
+        embedder=lambda texts: [[1.0, 0.0, 0.0] for _text in texts],
+        project_id=77,
+    )
+
+    insert_doc_statement, insert_doc_params = cursor.statements[1]
+    assert "INSERT INTO documents" in insert_doc_statement
+    assert insert_doc_params[0] == 77  # project_id 是 INSERT 的第一个参数
+
+
+def test_store_knowledge_chunks_defaults_project_id_null_for_global(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(vector_store.settings, "embedding_dimension", 3)
+    cursor = FakeCursor()
+    _patch_store(monkeypatch, cursor)
+
+    vector_store.store_knowledge_chunks(
+        file_name="全局.txt",
+        file_path="knowledge/g.txt",
+        file_type="txt",
+        chunks=[KnowledgeChunk("全局资料", {"chunk_index": 0})],
+        embedder=lambda texts: [[1.0, 0.0, 0.0] for _text in texts],
+    )
+
+    assert cursor.statements[1][1][0] is None  # 全局库默认 project_id 为 NULL
+
+
 def test_metadata_index_is_created_once_per_process(monkeypatch) -> None:
     cursor = FakeCursor()
     _patch_store(monkeypatch, cursor)
