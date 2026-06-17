@@ -154,6 +154,46 @@ def _audit_built_format_docx(docx_path: str) -> list[str]:
     return []
 
 
+def _knowledge_chunk_payload(chunk: Any) -> dict[str, Any]:
+    """把检索结果(RetrievalResult / dict / str)规整成写作 prompt 认的载荷。
+
+    必须保留 ``metadata``——generator_prompt 靠 ``metadata['document_category']``
+    才能把公司历史施组片段标成【公司同类施工方案·仅参照写法/工艺/深度】;旧代码
+    只留 content,导致该深度标注永不触发(料即使接通也被当普通素材)。
+    """
+    if isinstance(chunk, dict):
+        content = str(chunk.get("content", "") or chunk.get("snippet", ""))
+        metadata = chunk.get("metadata") or {}
+    elif isinstance(chunk, str):
+        content, metadata = chunk, {}
+    else:
+        content = str(getattr(chunk, "content", chunk) or "")
+        metadata = getattr(chunk, "metadata", {}) or {}
+    return {"content": content, "metadata": metadata}
+
+
+def _flatten_retrieved_chunks(retrieved: dict[str, list] | None) -> list[Any]:
+    """检索结果按"章节标题"归类(见 workflow_service._retrieve_for_outline);
+    汇总各节素材、按 chunk_id 去重成一份共享语料,喂给每个写作节点。
+
+    历史致命 bug:旧代码 ``retrieved.get("technical")`` / ``get("施工组织")`` 取的
+    key 在该字典里永不存在(键是中文章节标题),检索到的公司施组语料被静默丢弃,
+    技术卷退化成 LLM 空写——这正是技术卷偏薄的根因。按 values() 汇总即与键名解耦。
+    """
+    flattened: list[Any] = []
+    seen: set = set()
+    for section_chunks in (retrieved or {}).values():
+        for chunk in section_chunks or []:
+            key = getattr(chunk, "chunk_id", None)
+            if key is None:
+                key = id(chunk)
+            if key in seen:
+                continue
+            seen.add(key)
+            flattened.append(chunk)
+    return flattened
+
+
 def generate_v2_bid_package(
     requirements: TenderRequirements,
     retrieved_chunks_by_section: dict[str, list] | None = None,
@@ -286,14 +326,12 @@ def generate_v2_bid_package(
         concurrently inside ``fill_technical_volume`` (capped by
         ``BID_WRITER_CONCURRENCY``), cutting the volume from ~25 min to ~5-6 min."""
         titles = [s["title"] for s in sections]
-        chunks = retrieved.get("technical", []) or retrieved.get("施工组织", []) or []
+        # FIX(喂料接通):retrieved 按章节标题归类,旧代码取 "technical"/"施工组织"
+        # 这两个永不存在的 key → 公司施组语料被静默丢弃、技术卷沦为 LLM 空写。
+        # 改为汇总去重后喂每个写作节点,并保留 metadata(让"公司同类施工方案"标注生效)。
+        chunks = _flatten_retrieved_chunks(retrieved)
         knowledge_chunks = [
-            {
-                "content": str(c)
-                if isinstance(c, str)
-                else str(getattr(c, "content", c))
-            }
-            for c in chunks[:MAX_KNOWLEDGE_CHUNKS]
+            _knowledge_chunk_payload(c) for c in chunks[:MAX_KNOWLEDGE_CHUNKS]
         ]
         # Distribute scored/废标 criteria across nodes once, so each node only
         # carries the items it should respond to (avoids cross-section bloat).

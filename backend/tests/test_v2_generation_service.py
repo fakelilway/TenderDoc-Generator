@@ -336,3 +336,81 @@ def test_build_performance_evidence_chain_priority_and_caps() -> None:
 def test_performance_evidence_empty_when_no_rows() -> None:
     from services.v2_generation_service import _build_performance_evidence_md
     assert _build_performance_evidence_md([], 6) == ""
+
+
+class _FakeChunk:
+    """模拟 retriever.RetrievalResult(只用到 chunk_id/content/metadata)。"""
+
+    def __init__(self, chunk_id, content, metadata):
+        self.chunk_id = chunk_id
+        self.content = content
+        self.metadata = metadata
+
+
+def test_flatten_retrieved_chunks_recovers_title_keyed_corpus() -> None:
+    """回归(喂料致命 bug):retrieved 按中文章节标题归类,旧代码取
+    'technical'/'施工组织' 永远落空 → 公司施组语料被静默丢弃、技术卷沦为空写。
+    flatten 必须与键名解耦地汇总语料,并按 chunk_id 去重。"""
+    a = _FakeChunk(1, "深基坑支护施工工艺……", {"document_category": "施工方案"})
+    b = _FakeChunk(2, "营业执照", {"document_category": "公司证件"})
+    retrieved = {
+        "工程概况与项目特点分析": [a, b],
+        "主要工程施工方案与技术措施": [a],  # 同片段跨章节重复,须去重
+    }
+
+    flat = v2_generation_service._flatten_retrieved_chunks(retrieved)
+    assert [c.chunk_id for c in flat] == [1, 2]  # 去重 + 保序
+
+    # 坐实历史 bug:旧坏 key 在该字典里永远取不到东西
+    assert retrieved.get("technical") is None
+    assert retrieved.get("施工组织") is None
+
+    # 空/None 安全
+    assert v2_generation_service._flatten_retrieved_chunks({}) == []
+    assert v2_generation_service._flatten_retrieved_chunks(None) == []
+
+
+def test_knowledge_chunk_payload_preserves_metadata() -> None:
+    """回归:写作 prompt 靠 metadata['document_category']=='施工方案' 才会把片段
+    标成【公司同类施工方案】;旧代码只留 content → 深度标注永不触发。"""
+    payload = v2_generation_service._knowledge_chunk_payload(
+        _FakeChunk(9, "钢筋加工与安装……", {"document_category": "施工方案", "specialty": "公路工程"})
+    )
+    assert payload["content"].startswith("钢筋加工")
+    assert payload["metadata"]["document_category"] == "施工方案"
+
+    # dict / str 两种入参也兼容
+    assert v2_generation_service._knowledge_chunk_payload(
+        {"content": "x", "metadata": {"document_category": "施工方案"}}
+    ) == {"content": "x", "metadata": {"document_category": "施工方案"}}
+    assert v2_generation_service._knowledge_chunk_payload("纯文本片段") == {
+        "content": "纯文本片段",
+        "metadata": {},
+    }
+
+
+def test_plan_chunk_reaches_writer_prompt_with_label() -> None:
+    """端到端接线:retrieved(标题归类)→ flatten → payload → 写作 prompt,
+    施工方案语料应被标成【公司同类施工方案】且正文出现在'知识库参考'里,
+    证明料一路没丢、metadata 没被吞——技术卷不再是'未匹配到相关知识片段'。"""
+    from prompts.generator_prompt import build_node_fill_prompt
+
+    retrieved = {
+        "主要工程施工方案与技术措施": [
+            _FakeChunk(1, "路面基层水泥稳定碎石分层摊铺、碾压工艺……", {"document_category": "施工方案"}),
+        ],
+    }
+    chunks = v2_generation_service._flatten_retrieved_chunks(retrieved)
+    payloads = [v2_generation_service._knowledge_chunk_payload(c) for c in chunks]
+
+    messages = build_node_fill_prompt(
+        node_title="主要工程施工方案与技术措施",
+        project_name="某农村公路提质改造工程",
+        requirements={},
+        company_name="安徽正奇建设有限公司",
+        knowledge_chunks=payloads,
+    )
+    user_prompt = messages[-1]["content"]
+    assert "【公司同类施工方案" in user_prompt
+    assert "路面基层水泥稳定碎石" in user_prompt
+    assert "未匹配到相关知识片段" not in user_prompt
