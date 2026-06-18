@@ -446,7 +446,11 @@ def generate_v2_bid_package(
     # original DOCX, but the markdown preview still needs compliance content.
     if original_format_docx_available:
         commercial_md = _enrich_commercial_markdown(
-            commercial_md, requirements, combined_profile, tender_text=tender_text
+            commercial_md,
+            requirements,
+            combined_profile,
+            tender_text=tender_text,
+            project_id=project_id,
         )
         # Remove commercial sections from technical markdown if the LLM
         # over-generated them (资格响应, 投标保证金, 项目管理机构 etc.)
@@ -783,6 +787,7 @@ def _enrich_commercial_markdown(
     requirements: TenderRequirements,
     profile: dict[str, str],
     tender_text: str = "",
+    project_id: int | None = None,
 ) -> str:
     """Add compliance response sections to commercial volume in original format mode.
 
@@ -826,6 +831,18 @@ def _enrich_commercial_markdown(
             profile_value = _match_profile_field(item.title, profile)
             if profile_value:
                 parts.append(f"\n**响应：** {profile_value}\n")
+
+    # 资格符合性 + 投标函三处一致性 硬校验(确定性核对引擎,达标/废标级)。best-effort,
+    # 与上方 LLM 软响应并列:软响应给"怎么写",硬校验给"达标没/有没有废标级"。
+    if project_id is not None:
+        try:
+            from services.tender_spec_service import build_conformance_hardcheck_markdown
+
+            hardcheck_md = build_conformance_hardcheck_markdown(project_id)
+        except Exception:
+            hardcheck_md = ""
+        if hardcheck_md:
+            parts.append(hardcheck_md)
 
     # Bid bond section
     parts.append("\n<!-- tdg:pagebreak -->\n")

@@ -321,6 +321,115 @@ def check_basic_info_attachments(
     )
 
 
+_DURATION_KEYS = ("工期", "计划工期", "工期日历天")
+_VALIDITY_KEYS = ("投标有效期", "有效期")
+
+
+def _normalize_value(s: str) -> str:
+    """归一化用于比对:去掉所有空白(含全角空格)。"""
+    return re.sub(r"\s+", "", str(s or "")).replace("　", "").strip()
+
+
+def _collect_clause_values(clauses: Any, keys: tuple[str, ...]) -> list[tuple[str, str]]:
+    """从 ClauseItem 列表里按 name 关键词抠出 (条款号, 内容)。"""
+    out: list[tuple[str, str]] = []
+    for c in clauses or []:
+        name = str(getattr(c, "name", "") or "")
+        if any(k in name for k in keys):
+            content = str(getattr(c, "content", "") or "").strip()
+            if content:
+                out.append((str(getattr(c, "clause_no", "") or ""), content))
+    return out
+
+
+def _consistency_item(field: str, sources: list[tuple[str, str]]) -> FillRequirement | None:
+    """对一个关键值,比对它在各来源(来源标签, 值)里是否一致。
+
+    无来源→None;单来源→待人工(提示三处须按此填);多来源全一致→符合;有分歧→不一致(告警)。
+    """
+    sources = [(label, v) for label, v in sources if v]
+    if not sources:
+        return None
+    primary = sources[0][1]
+    src_desc = "；".join(f"{label}={v}" for label, v in sources)
+    norm = {_normalize_value(v) for _, v in sources}
+    if len(sources) == 1:
+        return FillRequirement(
+            field=field,
+            source=sources[0][0],
+            required=primary,
+            our_value=primary,
+            status="待人工",
+            action="填",
+            note=f"招标仅一处给出（{src_desc}）；投标函正文/投标函附录/报价三处须按此值填写并保持一致",
+        )
+    if len(norm) == 1:
+        return FillRequirement(
+            field=field,
+            source="；".join(label for label, _ in sources),
+            required=primary,
+            our_value=primary,
+            status="符合",
+            action="填",
+            note=f"招标多处一致（{src_desc}）；投标函正文/附录/报价三处按此填、务必一致",
+        )
+    return FillRequirement(
+        field=field,
+        source="；".join(label for label, _ in sources),
+        required=primary,
+        our_value="（招标各处取值不一致）",
+        status="不一致",
+        action="告警",
+        note=f"招标内部取值不一致：{src_desc}；以投标人须知前附表/正文为准,人工确认后三处统一",
+    )
+
+
+def check_bid_letter_consistency(spec: TenderSpec) -> list[FillRequirement]:
+    """投标函关键值三处一致性核对(工期 / 投标有效期 / 报价)。
+
+    工期、投标有效期:从 spec.duration/bid_validity + 前附表(instructions_table) +
+    投标函附录(contract_appendix) 三处取值交叉比对(需 tender_spec 整本喂才抽得到附录)。
+    报价:外部造价软件 Excel,系统无我方报价值 → 固定标"待人工"提示三处人工核一致。
+    """
+    items: list[FillRequirement] = []
+
+    dur_sources: list[tuple[str, str]] = []
+    if spec.duration:
+        dur_sources.append(("规格·工期", spec.duration))
+    for cno, content in _collect_clause_values(spec.instructions_table, _DURATION_KEYS):
+        dur_sources.append((f"前附表（{cno}）" if cno else "前附表", content))
+    for cno, content in _collect_clause_values(spec.contract_appendix, _DURATION_KEYS):
+        dur_sources.append((f"投标函附录（{cno}）" if cno else "投标函附录", content))
+    dur_item = _consistency_item("工期一致性", dur_sources)
+    if dur_item is not None:
+        items.append(dur_item)
+
+    val_sources: list[tuple[str, str]] = []
+    if spec.bid_validity:
+        val_sources.append(("规格·投标有效期", spec.bid_validity))
+    for cno, content in _collect_clause_values(spec.instructions_table, _VALIDITY_KEYS):
+        val_sources.append((f"前附表（{cno}）" if cno else "前附表", content))
+    for cno, content in _collect_clause_values(spec.contract_appendix, _VALIDITY_KEYS):
+        val_sources.append((f"投标函附录（{cno}）" if cno else "投标函附录", content))
+    val_item = _consistency_item("投标有效期一致性", val_sources)
+    if val_item is not None:
+        items.append(val_item)
+
+    # 报价:外部 Excel,系统无我方报价值 → 固定待人工(避免假阳性废标判定)。
+    items.append(
+        FillRequirement(
+            field="投标报价一致性",
+            source="投标函/投标函附录/报价表",
+            required="三处报价金额(大小写)须完全一致",
+            our_value="（报价由外部造价软件 Excel 维护,系统无值）",
+            status="待人工",
+            action="告警",
+            note="人工核对:投标函报价、投标函附录签约合同价、报价汇总表三处大小写金额完全一致;不一致=废标级",
+        )
+    )
+    return items
+
+
 def build_conformance_report(
     project_id: int,
     spec: TenderSpec,
@@ -347,4 +456,43 @@ def build_conformance_report(
     items.append(
         check_basic_info_attachments(spec, available_cert_types or set())
     )
+    # 投标函关键值三处一致性(工期/投标有效期/报价)。
+    items.extend(check_bid_letter_consistency(spec))
     return ConformanceReport(project_id=project_id, items=items)
+
+
+_STATUS_MARK = {
+    "不符合": "🛑 废标级",
+    "缺料": "⚠️ 缺料",
+    "不一致": "⚠️ 不一致",
+    "待人工": "🔶 待人工",
+    "符合": "✅ 符合",
+    "一致": "✅ 一致",
+}
+
+
+def render_conformance_markdown(report: ConformanceReport) -> str:
+    """把核对报告渲染成商务卷用的 markdown(标题+废标级预警+核对表)。空报告→""。"""
+    if not report.items:
+        return ""
+    parts: list[str] = [
+        "\n<!-- tdg:pagebreak -->\n",
+        "\n## 附录：资格符合性与投标函一致性核对（系统硬校验·确定性判定，非招标格式原文）\n",
+        "\n> 本表由系统按招标资格条件/前附表/投标函附录确定性核对生成，"
+        "区别于上方 AI 商务响应；🛑 为废标级，必须出标前处理。\n",
+    ]
+    blocking = [i for i in report.items if i.status == "不符合"]
+    if blocking:
+        parts.append("\n> 🛑 **废标级预警，出标前必须处理：**\n")
+        for i in blocking:
+            parts.append(
+                f"> - {i.field}：招标要求「{i.required}」，我方「{i.our_value}」。{i.note}\n"
+            )
+    parts.append("\n| 核对项 | 出处 | 招标要求 | 我方/取值 | 判定 | 处置 | 备注 |\n")
+    parts.append("| --- | --- | --- | --- | --- | --- | --- |\n")
+    for i in report.items:
+        mark = _STATUS_MARK.get(i.status, i.status)
+        cells = [i.field, i.source, i.required, i.our_value, mark, i.action, i.note]
+        cells = [str(c or "").replace("|", "／").replace("\n", " ").strip() for c in cells]
+        parts.append("| " + " | ".join(cells) + " |\n")
+    return "".join(parts)

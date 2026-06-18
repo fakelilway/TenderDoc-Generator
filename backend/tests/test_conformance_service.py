@@ -1,6 +1,12 @@
 from types import SimpleNamespace
 
-from schemas.tender_spec import CertRequirement, TenderSpec
+from schemas.tender_spec import (
+    CertRequirement,
+    ClauseItem,
+    ConformanceReport,
+    FillRequirement,
+    TenderSpec,
+)
 from services import conformance_service as cs
 
 
@@ -101,7 +107,10 @@ def test_build_report_aggregates_and_flags_blocking() -> None:
         available_cert_types={"营业执照", "资质证书"},
     )
     fields = {i.field for i in report.items}
-    assert fields == {"工期", "企业资质", "项目经理", "投标人基本情况表附件"}
+    assert fields == {
+        "工期", "企业资质", "项目经理", "投标人基本情况表附件",
+        "工期一致性", "投标报价一致性",  # 新增:投标函三处一致性(工期单源→待人工、报价→待人工)
+    }
     # 资质不达标 → 有废标级阻断
     assert report.has_blocking is True
     assert any(w.field == "企业资质" for w in report.warnings)
@@ -172,3 +181,75 @@ def test_build_report_includes_pm_expiry_item_when_pm_selected() -> None:
     fields = [i.field for i in report.items]
     assert "项目经理证件有效期" in fields
     assert report.has_blocking  # 过期证件 → 废标级阻断
+
+
+def test_bid_letter_consistency_consistent_and_pricing_pending() -> None:
+    # 工期三处一致(含带空格归一)+ 投标有效期两处一致
+    spec = _spec(
+        duration="90日历天",
+        bid_validity="自投标截止之日起90日",
+        instructions_table=[
+            ClauseItem(clause_no="1.3.2", name="计划工期", content="90日历天"),
+            ClauseItem(clause_no="3.3.1", name="投标有效期", content="自投标截止之日起90日"),
+        ],
+        contract_appendix=[ClauseItem(name="工期", content="90 日历天")],  # 带空格,归一后一致
+    )
+    by_field = {i.field: i for i in cs.check_bid_letter_consistency(spec)}
+    assert by_field["工期一致性"].status == "符合"
+    assert by_field["投标有效期一致性"].status == "符合"
+    # 报价无源(外部Excel)→ 固定待人工
+    assert by_field["投标报价一致性"].status == "待人工"
+
+
+def test_bid_letter_consistency_flags_internal_mismatch() -> None:
+    # 招标内部工期不一致(前附表90 vs 附录100)→ 不一致 + 告警(进 warnings)
+    spec = _spec(
+        duration="90日历天",
+        contract_appendix=[ClauseItem(clause_no="11.1", name="工期", content="100日历天")],
+    )
+    dur = next(i for i in cs.check_bid_letter_consistency(spec) if i.field == "工期一致性")
+    assert dur.status == "不一致"
+    assert dur.action == "告警"
+    report = ConformanceReport(project_id=1, items=[dur])
+    assert dur in report.warnings  # 不一致进预警
+
+
+def test_bid_letter_consistency_single_source_is_pending() -> None:
+    # 只有一处工期来源(附录抽不到)→ 待人工,提示三处按此填
+    spec = _spec(duration="120日历天")
+    dur = next(i for i in cs.check_bid_letter_consistency(spec) if i.field == "工期一致性")
+    assert dur.status == "待人工"
+    assert "三处" in dur.note
+
+
+def test_consistency_wired_into_conformance_report() -> None:
+    report = cs.build_conformance_report(
+        project_id=1, spec=_spec(duration="90日历天"), profile=PROFILE
+    )
+    fields = [i.field for i in report.items]
+    assert "工期一致性" in fields  # 一致性项接进了报告
+    assert "投标报价一致性" in fields
+    assert "工期" in fields  # check_duration 的"填值"项仍在(两者分工不重名)
+
+
+def test_render_conformance_markdown_table_and_blocking() -> None:
+    report = ConformanceReport(
+        project_id=1,
+        items=[
+            FillRequirement(
+                field="企业资质", source="资格审查", required="公路三级以上",
+                our_value="（档案无资质）", status="不符合", action="告警", note="不达标",
+            ),
+            FillRequirement(
+                field="工期一致性", source="前附表", required="90日历天",
+                our_value="90日历天", status="符合", action="填", note="一致",
+            ),
+        ],
+    )
+    md = cs.render_conformance_markdown(report)
+    assert "系统硬校验" in md
+    assert "🛑" in md and "废标级" in md       # 不符合 → 废标级预警
+    assert "| 核对项 | 出处 |" in md            # 表头
+    assert "✅ 符合" in md
+    # 空报告 → 空串
+    assert cs.render_conformance_markdown(ConformanceReport(project_id=1, items=[])) == ""

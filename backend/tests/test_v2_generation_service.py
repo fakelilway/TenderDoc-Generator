@@ -274,6 +274,31 @@ def test_enrich_commercial_uses_llm_response_when_tender_present(monkeypatch) ->
     assert "依据招标文件解析自动生成的资格响应要点" not in enriched
 
 
+def test_enrich_commercial_appends_hardcheck_when_project_id(monkeypatch) -> None:
+    """商务硬校验:有 project_id 时,把核对引擎渲染的硬校验表 append 进商务卷;无则不调。"""
+    from services import tender_spec_service
+
+    monkeypatch.setattr(
+        tender_spec_service,
+        "build_conformance_hardcheck_markdown",
+        lambda pid: (
+            "\n## 附录：资格符合性与投标函一致性核对（系统硬校验）\n\n"
+            "| 核对项 | 判定 |\n| --- | --- |\n| 工期一致性 | ✅ 符合 |\n"
+        ),
+    )
+    requirements = TenderRequirements(project_name="测试项目")
+    enriched = v2_generation_service._enrich_commercial_markdown(
+        "## 商务文件\n", requirements, _PROFILE_FIELDS, project_id=131
+    )
+    assert "系统硬校验" in enriched
+    assert "工期一致性" in enriched
+    # 无 project_id → 不调硬校验
+    enriched_no_pid = v2_generation_service._enrich_commercial_markdown(
+        "## 商务文件\n", requirements, _PROFILE_FIELDS
+    )
+    assert "系统硬校验" not in enriched_no_pid
+
+
 def test_inject_project_images_targets_section_and_appendix(monkeypatch) -> None:
     """② 本项目插入图:按 target_section 插到对应节;无目标/未匹配的进末尾"本项目附图"。"""
     from services import v2_generation_service as v2

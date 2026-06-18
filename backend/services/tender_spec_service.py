@@ -28,8 +28,10 @@ from services.personnel_selection_service import derive_pm_requirement
 
 logger = logging.getLogger(__name__)
 
-# 切片核心字段(工期/资质/附件)集中在投标人须知前附表+资格审查(章节1-3),取前段足够。
-_SPEC_TEXT_CAP = 55000
+# 整本喂(DeepSeek 1M、不计 token):投标函正文/附录(带工期/有效期/报价填空)在第九章
+# 投标文件格式,常在 8 万字处;旧 55000 截断会丢掉它们→投标函三处一致性核对无源数据。
+# 故设高上限喂整本招标,确保前附表+投标函附录都进窗口。
+_SPEC_TEXT_CAP = 200000
 
 Completion = Callable[[list[dict[str, str]]], str]
 
@@ -41,6 +43,7 @@ def _default_complete(messages: list[dict[str, str]]) -> str:
     from core.config import get_settings
     from core.llm_client import chat_completion
 
+    settings = get_settings()
     api_key, base_url, model = _get_llm_client_config()
     client = OpenAI(api_key=api_key, base_url=base_url)
     response = chat_completion(
@@ -48,8 +51,13 @@ def _default_complete(messages: list[dict[str, str]]) -> str:
         model=model,
         messages=messages,
         temperature=0.1,
-        max_tokens=4000,
-        timeout=float(getattr(get_settings(), "parser_llm_timeout_seconds", 60.0)),
+        # 整本招标喂入后规格字段更多(前附表/投标函附录全抽),输出预算调大防 JSON 截断;
+        # 长输入用长超时(非流式长输出等不到返回会超时)。
+        max_tokens=16000,
+        timeout=float(
+            getattr(settings, "bid_long_context_timeout_seconds", 300)
+            or getattr(settings, "parser_llm_timeout_seconds", 60.0)
+        ),
     )
     return response.choices[0].message.content or ""
 
@@ -202,3 +210,23 @@ def build_project_conformance_report(
     except Exception:
         logger.warning("追加招标评审标准失败,沿用基础核对报告", exc_info=True)
     return report
+
+
+def build_conformance_hardcheck_markdown(project_id: int) -> str:
+    """商务卷用:跑确定性核对引擎(资格达标/废标级 + 投标函三处一致性)→渲染成 markdown。
+
+    best-effort:任何环节失败/无数据返回 "",绝不阻断出标(与商务软响应同契约)。
+    内部会读招标抽规格(LLM),与商务软响应是两条独立的招标读取。
+    """
+    try:
+        report = build_project_conformance_report(project_id)
+    except Exception:
+        logger.warning("商务卷硬校验:核对引擎执行失败,跳过(不阻断出标)", exc_info=True)
+        return ""
+    try:
+        from services.conformance_service import render_conformance_markdown
+
+        return render_conformance_markdown(report)
+    except Exception:
+        logger.warning("商务卷硬校验:渲染失败,跳过", exc_info=True)
+        return ""
