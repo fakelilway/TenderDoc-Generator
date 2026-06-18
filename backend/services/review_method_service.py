@@ -23,8 +23,9 @@ from schemas.tender_spec import (
 
 logger = logging.getLogger(__name__)
 
-# 评标办法集中在第三章,40000 字足够覆盖评审表+评分细则+否决条款。
-_REVIEW_TEXT_CAP = 40000
+# 整本喂(DeepSeek 1M、不计 token):评标办法章可能很长(评审表+评分细则+否决条款逐条),
+# 旧 40000 截断会切掉后半;设高上限,确保定位到的评标办法整章都进窗口。
+_REVIEW_TEXT_CAP = 200000
 
 Completion = Callable[[list[dict[str, str]]], str]
 
@@ -36,6 +37,7 @@ def _default_complete(messages: list[dict[str, str]]) -> str:
     from core.config import get_settings
     from core.llm_client import chat_completion
 
+    settings = get_settings()
     api_key, base_url, model = _get_llm_client_config()
     client = OpenAI(api_key=api_key, base_url=base_url)
     response = chat_completion(
@@ -43,9 +45,13 @@ def _default_complete(messages: list[dict[str, str]]) -> str:
         model=model,
         messages=messages,
         temperature=0.1,
-        # 评标办法逐条照抄原文,输出量大;4000 太小会把 JSON 截断成半截导致解析空。
-        max_tokens=8000,
-        timeout=float(getattr(get_settings(), "parser_llm_timeout_seconds", 120.0)),
+        # 评标办法逐条照抄原文,输出量大;整本喂后条目更多,输出预算调大防 JSON 截断
+        # (8000 仍偶被截、靠 salvage 兜底);长输入用长超时。
+        max_tokens=16000,
+        timeout=float(
+            getattr(settings, "bid_long_context_timeout_seconds", 300)
+            or getattr(settings, "parser_llm_timeout_seconds", 120.0)
+        ),
     )
     return response.choices[0].message.content or ""
 
