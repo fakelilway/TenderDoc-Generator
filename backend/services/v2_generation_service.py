@@ -315,6 +315,16 @@ def generate_v2_bid_package(
     # present & substantive; otherwise fall back to tender outline / canonical.
     confirmed_sections = _sections_from_confirmed_outline(confirmed_technical_outline)
 
+    # 工程量清单(第五章 BOQ)→ 分部分项占比,驱动技术卷"按占比定详略"+把工程量喂给对应施工方案。
+    # best-effort:抽不到/失败返回空 TenderBOQ,写作退回原行为(不阻断出标)。
+    try:
+        from services import boq_service
+
+        boq = boq_service.build_boq(tender_text)
+    except Exception:
+        logger.warning("工程量清单抽取异常,技术卷跳过 BOQ 驱动(不阻断)", exc_info=True)
+        boq = None
+
     def _call_content_writer(
         sections: list[dict],
     ) -> tuple[VolumeFillResult | None, str]:
@@ -346,6 +356,19 @@ def generate_v2_bid_package(
             s["title"]: int(s.get("target_chars", 0) or 0) for s in sections
         }
 
+        # BOQ 驱动:每节喂"造价占比总览+本节对应清单项+工程量",并按占比调详略(主导加厚、极小压缩)。
+        boq_by_title: dict[str, str] = {}
+        if boq is not None and not boq.is_empty():
+            from services import boq_service
+
+            for t in titles:
+                brief = boq_service.section_node_brief(boq, t)
+                if brief:
+                    boq_by_title[t] = brief
+                min_chars_by_title[t] = boq_service.adjust_min_chars(
+                    boq, t, min_chars_by_title.get(t, 0)
+                )
+
         result = fill_technical_volume(
             node_titles=titles,
             project_name=requirements.project_name or "投标项目",
@@ -357,6 +380,7 @@ def generate_v2_bid_package(
             invalid_items_by_title=invalid_by_title,
             guidance_by_title=guidance_by_title,
             min_chars_by_title=min_chars_by_title,
+            boq_by_title=boq_by_title,
             max_workers=max(1, int(getattr(settings, "bid_writer_concurrency", 5) or 1)),
         )
 

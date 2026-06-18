@@ -80,6 +80,7 @@ def fill_technical_volume(
     invalid_items_by_title: dict[str, list[dict[str, Any]]] | None = None,
     guidance_by_title: dict[str, str] | None = None,
     min_chars_by_title: dict[str, int] | None = None,
+    boq_by_title: dict[str, str] | None = None,
     max_workers: int = DEFAULT_WRITER_CONCURRENCY,
 ) -> VolumeFillResult:
     """Fill all prose nodes in the technical volume with bounded concurrency.
@@ -106,6 +107,7 @@ def fill_technical_volume(
     invalid_by_title = invalid_items_by_title or {}
     guidance_map = guidance_by_title or {}
     min_chars_map = min_chars_by_title or {}
+    boq_map = boq_by_title or {}
 
     def _fill_node(title: str) -> NodeFillResult:
         # Per-section length budget (canonical outline targets), else the default.
@@ -124,6 +126,7 @@ def fill_technical_volume(
             invalid_items=invalid_by_title.get(title, invalid_items),
             section_guidance=guidance_map.get(title, section_guidance),
             target_chars=target,
+            boq_brief=boq_map.get(title, ""),
         )
         # 每节多次完整尝试:并发下某节偶发 429/超时/空返回,不该拖垮整卷;多数重试即过。
         # 全部尝试都失败才上抛(由调用方聚合、按铁律失败,不输出占位)。

@@ -52,6 +52,7 @@ def build_node_fill_prompt(
     invalid_items: list[dict[str, Any]] | None = None,
     section_guidance: str = "",
     target_chars: int = 0,
+    boq_brief: str = "",
 ) -> list[dict[str, str]]:
     """Focused V2 prompt for filling one construction-plan prose node.
 
@@ -99,6 +100,20 @@ def build_node_fill_prompt(
             f"按上面'必须覆盖的工程要点'逐项写实写细，不灌水、不重复。"
         )
 
+    # 工程量清单(BOQ)简报:全工程造价占比 + 本节对应清单项与工程量,驱动"按占比定详略"。
+    boq_block = ""
+    boq_rule = ""
+    if boq_brief:
+        boq_block = (
+            "\n## 本工程量清单(BOQ)与造价占比——决定本节详略与要引用的工程量\n"
+            f"{boq_brief}\n"
+        )
+        boq_rule = (
+            "\n9. 工程量清单优先:严格按上面【BOQ 与造价占比】写作——主导分部分项重点详写、工艺最细;"
+            "正文须引用清单里的具体工程量(数值+单位);本节无对应清单项的就一句话说明“本工程不涉及”,"
+            "绝不为凑篇幅堆砌无关分部。"
+        )
+
     user_prompt = f"""## 任务
 撰写施工组织设计节点"{node_title}"的正文内容。
 
@@ -115,6 +130,7 @@ def build_node_fill_prompt(
 ## 知识库参考（含公司同类工程历史施工方案,供参照写法/工艺/深度,严禁照搬其数据）
 {chr(10).join(snippets) if snippets else '（未匹配到相关知识片段）'}
 {guidance_block}
+{boq_block}
 ## 本节点须正面响应的评分点
 {score_block or '（本节点无直接对应评分点，按通用施工组织设计深度撰写）'}
 
@@ -138,7 +154,7 @@ def build_node_fill_prompt(
    (项目名、地点、规模、工期、数据)一律以本项目招标为准,**严禁照搬历史项目的具体数值/
    地名/项目名**。
 6. 逐条正面响应上述评分点，给出对应的、可量化的工程措施与验收标准，不要泛泛而谈。
-7. 确保不触发上述废标项；涉及承诺事项用确定性表述明确承诺。{length_rule}
+7. 确保不触发上述废标项；涉及承诺事项用确定性表述明确承诺。{length_rule}{boq_rule}
 
 ## 输出
 直接输出本节点正文。"""

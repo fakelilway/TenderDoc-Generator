@@ -135,3 +135,24 @@ class ConformanceReportResponse(BaseModel):
     has_blocking: bool = False
     warning_count: int = 0
     pending_count: int = 0
+
+
+class BOQCategory(BaseModel):
+    """工程量清单里一个分部分项大类(路基/路面/桥涵…)及其占总造价的比重。"""
+
+    name: str = ""            # 分部分项大类名,如 路基工程 / 路面工程 / 桥涵工程
+    share_pct: float = 0.0    # 占总造价比重(%);金额优先,无金额按工程量规模估
+    key_quantities: str = ""  # 主要清单项与工程量,如 "路基填方12.6万m³、清表3.2万m²"
+    basis: str = ""           # 占比依据:金额 / 工程量估算
+
+
+class TenderBOQ(BaseModel):
+    """招标第五章「工程量清单」结构化摘要——驱动技术卷"按占比定详略"。"""
+
+    total_amount_wan: float = 0.0      # 总造价(万元):招标控制价或清单合计;无则 0
+    categories: list[BOQCategory] = []
+    dominant: list[str] = []           # 主导分部分项(占比高,应重点详写)
+    note: str = ""                     # 占比口径说明(金额/工程量估算)
+
+    def is_empty(self) -> bool:
+        return not self.categories
