@@ -248,6 +248,32 @@ def test_enrich_commercial_fills_project_manager_from_profile() -> None:
     assert "皖一级建造师A123456" in enriched  # project_manager_cert
 
 
+def test_enrich_commercial_uses_llm_response_when_tender_present(monkeypatch) -> None:
+    """商务通读招标:有 tender_text 且 LLM 出响应时,用 LLM 响应、跳过模板浅资格响应。"""
+    from schemas.tender import RequirementItem
+    from services import commercial_response_service
+
+    monkeypatch.setattr(
+        commercial_response_service,
+        "generate_commercial_responses",
+        lambda requirements, tender_text, profile: (
+            "\n## 附录：商务响应（AI 通读招标文件生成）\n\n"
+            "| 招标资格要求 | 我方情况 |\n| --- | --- |\n| 公路三级 | 公路二级，满足 |\n"
+        ),
+    )
+    requirements = TenderRequirements(
+        project_name="测试项目",
+        qualification_list=[RequirementItem(title="施工资质", description="公路三级及以上")],
+    )
+    enriched = v2_generation_service._enrich_commercial_markdown(
+        "## 商务文件\n", requirements, _PROFILE_FIELDS, tender_text="招标全文：公路三级及以上。"
+    )
+    assert "AI 通读招标文件生成" in enriched
+    assert "公路二级，满足" in enriched
+    # 用了 LLM 响应 → 不再走模板浅响应那句
+    assert "依据招标文件解析自动生成的资格响应要点" not in enriched
+
+
 def test_inject_project_images_targets_section_and_appendix(monkeypatch) -> None:
     """② 本项目插入图:按 target_section 插到对应节;无目标/未匹配的进末尾"本项目附图"。"""
     from services import v2_generation_service as v2

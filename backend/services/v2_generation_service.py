@@ -446,7 +446,7 @@ def generate_v2_bid_package(
     # original DOCX, but the markdown preview still needs compliance content.
     if original_format_docx_available:
         commercial_md = _enrich_commercial_markdown(
-            commercial_md, requirements, combined_profile
+            commercial_md, requirements, combined_profile, tender_text=tender_text
         )
         # Remove commercial sections from technical markdown if the LLM
         # over-generated them (资格响应, 投标保证金, 项目管理机构 etc.)
@@ -782,6 +782,7 @@ def _enrich_commercial_markdown(
     commercial_md: str,
     requirements: TenderRequirements,
     profile: dict[str, str],
+    tender_text: str = "",
 ) -> str:
     """Add compliance response sections to commercial volume in original format mode.
 
@@ -797,8 +798,20 @@ def _enrich_commercial_markdown(
 
     parts = [commercial_md.rstrip()]
 
-    # Qualification compliance section
-    if requirements.qualification_list:
+    # 商务通读整本招标 → LLM 生成四块商务响应(资格响应/偏离表/声明承诺/投标函一致性)。
+    # best-effort:无招标全文或 LLM 失败返回 "",回退到下方模板化资格响应要点(原行为)。
+    llm_response_md = ""
+    try:
+        from services.commercial_response_service import generate_commercial_responses
+
+        llm_response_md = generate_commercial_responses(requirements, tender_text, profile)
+    except Exception:
+        llm_response_md = ""
+
+    if llm_response_md:
+        parts.append(llm_response_md)
+    elif requirements.qualification_list:
+        # 回退:LLM 不可用(无招标全文/失败)时,仍给出模板化资格响应要点
         parts.append("\n<!-- tdg:pagebreak -->\n")
         parts.append(
             "\n## 附录：商务响应补充说明（系统自动生成，供编制参考；非招标文件格式原文）\n"
