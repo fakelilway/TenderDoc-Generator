@@ -197,11 +197,17 @@ def list_knowledge_documents(
     limit: int = 50,
     category: str | None = None,
     search: str | None = None,
+    categories: list[str] | None = None,
+    exclude_categories: list[str] | None = None,
 ) -> list[dict[str, object]]:
     """List knowledge-base documents, optionally filtered by category/search.
 
     Filtering is essential now the KB holds thousands of docs: an unfiltered
     "most-recent N" can't surface 公司证件/人员证件 once 业绩 was imported last.
+
+    ``category`` 精确匹配单一类别;``categories`` 是"只看这几类"(IN);
+    ``exclude_categories`` 是"排除这几类"(NOT IN)。后两者用于把公司固定资产
+    (公司证件/人员证件/业绩)归到「公司档案」入口,而「知识库」入口只剩施组语料。
     """
     if limit <= 0:
         raise ValueError("limit must be positive")
@@ -211,6 +217,19 @@ def list_knowledge_documents(
     if category:
         filters.append("documents.metadata_json->>'document_category' = %s")
         params.append(category)
+    if categories:
+        placeholders = ", ".join(["%s"] * len(categories))
+        filters.append(
+            f"documents.metadata_json->>'document_category' IN ({placeholders})"
+        )
+        params.extend(categories)
+    if exclude_categories:
+        placeholders = ", ".join(["%s"] * len(exclude_categories))
+        filters.append(
+            "(documents.metadata_json->>'document_category' IS NULL"
+            f" OR documents.metadata_json->>'document_category' NOT IN ({placeholders}))"
+        )
+        params.extend(exclude_categories)
     if search:
         filters.append(
             "(documents.file_name ILIKE %s"

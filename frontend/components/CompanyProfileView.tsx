@@ -5,6 +5,9 @@ import { Building2, Check, Loader2 } from "lucide-react";
 import { getCompanyProfile, saveCompanyProfile } from "@/lib/api";
 import { getStoredSession } from "@/lib/auth";
 import { ViewShell } from "@/components/ViewShell";
+import { KnowledgePanel } from "@/components/KnowledgePanel";
+import { PerformanceArchivePanel } from "@/components/PerformanceArchivePanel";
+import { CertArchivePanel } from "@/components/CertArchivePanel";
 import type { CompanyProfile } from "@/lib/types";
 
 const emptyProfile: CompanyProfile = {
@@ -23,7 +26,24 @@ const emptyProfile: CompanyProfile = {
   bank_name: "",
   bank_account: "",
   project_manager_name: "",
-  project_manager_cert: ""
+  project_manager_cert: "",
+  postal_code: "",
+  fax: "",
+  email: "",
+  legal_rep_title: "",
+  legal_rep_phone: "",
+  tech_director_name: "",
+  tech_director_title: "",
+  tech_director_phone: "",
+  employee_total: "",
+  project_manager_count: "",
+  senior_title_count: "",
+  mid_title_count: "",
+  junior_title_count: "",
+  technician_count: "",
+  shareholders: "",
+  business_term: "",
+  registered_capital_words: ""
 };
 
 const fieldGroups: Array<{
@@ -64,6 +84,38 @@ const fieldGroups: Array<{
     fields: [
       { key: "project_manager_name", label: "潜在项目经理人选" },
       { key: "project_manager_cert", label: "项目经理建造师证号" }
+    ]
+  },
+  {
+    title: "法定代表人与技术负责人",
+    fields: [
+      { key: "legal_rep_title", label: "法定代表人技术职称" },
+      { key: "legal_rep_phone", label: "法定代表人电话" },
+      { key: "tech_director_name", label: "技术负责人" },
+      { key: "tech_director_title", label: "技术负责人技术职称" },
+      { key: "tech_director_phone", label: "技术负责人电话" }
+    ]
+  },
+  {
+    title: "人员构成",
+    fields: [
+      { key: "employee_total", label: "员工总人数" },
+      { key: "project_manager_count", label: "项目经理/注册建造师人数" },
+      { key: "senior_title_count", label: "高级职称人员数" },
+      { key: "mid_title_count", label: "中级职称人员数" },
+      { key: "junior_title_count", label: "初级职称人员数" },
+      { key: "technician_count", label: "技工人数" }
+    ]
+  },
+  {
+    title: "通讯与股东",
+    fields: [
+      { key: "postal_code", label: "邮政编码" },
+      { key: "fax", label: "传真" },
+      { key: "email", label: "电子邮件" },
+      { key: "business_term", label: "经营期限", wide: true },
+      { key: "registered_capital_words", label: "注册资本(大写)", wide: true },
+      { key: "shareholders", label: "股东及股权比例", wide: true }
     ]
   }
 ];
@@ -117,6 +169,8 @@ export function CompanyProfileView() {
         <p className="rounded-md border border-line bg-white px-4 py-3 text-sm leading-6 text-muted">
           这里填写的企业信息会在生成标书时自动填入投标人基本状况表、投标函落款和资格审查资料，
           避免关键字段留白。信息以人工核实为准，系统不会用 OCR 识别证件图片来填写这些字段。
+          下方「证件 / 人员 / 业绩 资料库」存放公司固定的扫描件（公司证件、人员证件、业绩证明等），
+          每个项目自动复用；「知识库」只保留施工组织设计语料（施工方案）。
           {canEdit ? "" : "（查看模式：编辑需要管理员账户）"}
         </p>
 
@@ -179,6 +233,26 @@ export function CompanyProfileView() {
             </div>
           </>
         )}
+
+        <section className="rounded-lg border border-line bg-white p-4">
+          <h2 className="mb-1 text-sm font-semibold text-ink">业绩档案整理</h2>
+          <p className="mb-3 text-xs leading-5 text-muted">
+            把业绩台账和它的证明扫描件（中标通知书 / 合同 / 交工验收）按项目对上号。
+            ⚠️待确认的扫一眼是否同一项目；📷待认领的从下拉里选对应台账认领；📄缺证明的需补扫描件。
+          </p>
+          <PerformanceArchivePanel />
+        </section>
+
+        <section className="rounded-lg border border-line bg-white p-4">
+          <h2 className="mb-1 text-sm font-semibold text-ink">证件档案整理</h2>
+          <p className="mb-3 text-xs leading-5 text-muted">
+            人员证件按"人"归到一起、公司证件按"证件类型"归到一起。看图 / 改归属 / 合并同一个人 / 改名。
+            身份证正反面、营业执照正副本、多页材料都保留，不会当重复删。
+          </p>
+          <CertArchivePanel />
+        </section>
+
+        <KnowledgePanel scope="company" />
       </div>
     </ViewShell>
   );

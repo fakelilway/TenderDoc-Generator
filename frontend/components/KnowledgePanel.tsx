@@ -53,9 +53,21 @@ function formatDate(value: string) {
 }
 
 const projectTypeOptions = ["公路工程", "市政道路", "桥梁涵洞", "交通安全设施", "养护维修", "改建扩建", "排水管网"];
-const documentCategoryOptions = ["公司证件", "人员证件", "业绩", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
-// 顶部分类标签的主类别(历史标书归"风格案例库",不在知识库里)
-const categoryTabs = ["公司证件", "人员证件", "业绩", "图片资料", "其他资料"];
+const documentCategoryOptions = ["公司证件", "企业证件", "人员证件", "业绩证明", "业绩", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
+
+// 边界只认一条:「知识库」=施工组织设计语料(document_category=施工方案),其余一律归「公司档案」。
+// 用"只留施工方案"而非"排除某几类",避免业绩证明/企业证件/未分类等杂类漏进知识库。
+const CORPUS_CATEGORIES = ["施工方案"];
+// 「知识库」入口:只有施工方案一类,不需要子分类标签
+const corpusCategoryTabs: string[] = [];
+const corpusCategoryOptions = ["施工方案"];
+// 「公司档案」入口:除施工方案外的全部公司固定资料(证件/人员/业绩…)
+const companyCategoryTabs = ["公司证件", "人员证件", "业绩证明", "业绩"];
+const companyCategoryOptions = documentCategoryOptions.filter(
+  (item) => !CORPUS_CATEGORIES.includes(item)
+);
+
+export type KnowledgeScope = "corpus" | "company";
 const volumeOptions = ["商务文件", "资格文件", "技术文件", "报价文件", "附图附表"];
 const specialtyOptions = ["路基", "路面", "桥涵", "交安", "排水", "照明", "绿化", "质量", "安全", "进度", "环保"];
 const ownerTypeOptions = ["公司", "人员", "项目"];
@@ -209,7 +221,11 @@ function MetaSelect({
   );
 }
 
-export function KnowledgePanel() {
+export function KnowledgePanel({ scope = "corpus" }: { scope?: KnowledgeScope } = {}) {
+  const isCompany = scope === "company";
+  const panelTitle = isCompany ? "证件 / 人员 / 业绩 资料库" : "知识库";
+  const categoryTabs = isCompany ? companyCategoryTabs : corpusCategoryTabs;
+  const categoryOptionsForScope = isCompany ? companyCategoryOptions : corpusCategoryOptions;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const session = getStoredSession();
   const isAdmin = session?.role === "admin";
@@ -219,7 +235,9 @@ export function KnowledgePanel() {
   const [file, setFile] = useState<File | null>(null);
   const [projectType, setProjectType] = useState("");
   const [documentType, setDocumentType] = useState("");
-  const [documentCategory, setDocumentCategory] = useState("");
+  // 知识库入口只放施工方案,默认填好类别,避免漏标签导致它错进公司档案
+  const defaultCategory = isCompany ? "" : "施工方案";
+  const [documentCategory, setDocumentCategory] = useState(defaultCategory);
   const [specialty, setSpecialty] = useState("");
   const [volume, setVolume] = useState("");
   const [region, setRegion] = useState("");
@@ -260,9 +278,15 @@ export function KnowledgePanel() {
     }
     setLoadingDocuments(true);
     try {
+      // 选了具体类别就精确筛;选"全部"时按入口范围限定:知识库只看施工方案,
+      // 公司档案则排除施工方案,收下其余全部固定资料。
       const response = await listKnowledgeDocuments({
         category: categoryFilter || undefined,
-        search: submittedSearch || undefined
+        search: submittedSearch || undefined,
+        categories:
+          !categoryFilter && !isCompany ? CORPUS_CATEGORIES : undefined,
+        excludeCategories:
+          !categoryFilter && isCompany ? CORPUS_CATEGORIES : undefined
       });
       setDocuments(response.documents);
       try {
@@ -275,7 +299,7 @@ export function KnowledgePanel() {
     } finally {
       setLoadingDocuments(false);
     }
-  }, [canView, categoryFilter, submittedSearch]);
+  }, [canView, categoryFilter, submittedSearch, isCompany]);
 
   useEffect(() => {
     void refreshDocuments();
@@ -324,7 +348,7 @@ export function KnowledgePanel() {
       setFile(null);
       setProjectType("");
       setDocumentType("");
-      setDocumentCategory("");
+      setDocumentCategory(defaultCategory);
       setSpecialty("");
       setVolume("");
       setRegion("");
@@ -476,7 +500,7 @@ export function KnowledgePanel() {
       <section className="rounded-lg border border-line bg-panel p-4 shadow-panel">
         <div className="mb-4 flex items-center gap-2">
           <Database className="h-4 w-4 text-brand" />
-          <h2 className="text-sm font-semibold text-ink">知识库</h2>
+          <h2 className="text-sm font-semibold text-ink">{panelTitle}</h2>
         </div>
         <div className="rounded-md border border-dashed border-line bg-field px-3 py-4 text-center">
           <LockKeyhole className="mx-auto mb-2 h-5 w-5 text-muted" />
@@ -494,7 +518,7 @@ export function KnowledgePanel() {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Database className="h-4 w-4 text-brand" />
-          <h2 className="text-sm font-semibold text-ink">知识库</h2>
+          <h2 className="text-sm font-semibold text-ink">{panelTitle}</h2>
         </div>
         <span className="rounded-md border border-line bg-field px-2 py-1 text-xs font-medium text-muted">
           {documents.length} 文件 · {totalChunks} 片段
@@ -543,7 +567,9 @@ export function KnowledgePanel() {
               >
                 <UploadCloud className="mb-2 h-6 w-6 text-muted" />
                 <span className="text-sm font-medium text-ink">
-                  上传企业资料(证件 / 人员 / 业绩 / 图片素材)
+                  {isCompany
+                    ? "上传公司固定资料(公司证件 / 人员证件 / 业绩证明)"
+                    : "上传施工组织设计语料(施工方案)"}
                 </span>
                 <span className="mt-1 text-xs text-muted">
                   PDF / DOC / DOCX / TXT / MD / JPG / PNG · 历史标书请放「风格案例库」
@@ -553,7 +579,7 @@ export function KnowledgePanel() {
 
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
-                <MetaSelect value={documentCategory} onChange={setDocumentCategory} placeholder="资料类别(证件/人员/业绩/图片素材)" options={documentCategoryOptions} />
+                <MetaSelect value={documentCategory} onChange={setDocumentCategory} placeholder={isCompany ? "资料类别(公司证件/人员证件/业绩证明)" : "资料类别(施工方案)"} options={categoryOptionsForScope} />
               </div>
               <button
                 type="button"
@@ -658,6 +684,7 @@ export function KnowledgePanel() {
           </div>
         )}
 
+        {!isCompany ? (
         <form className="space-y-2" onSubmit={handleSearch}>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-muted">
@@ -685,6 +712,7 @@ export function KnowledgePanel() {
             </div>
           </label>
         </form>
+        ) : null}
 
         {error ? (
           <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-xs leading-5 text-danger">
@@ -712,7 +740,15 @@ export function KnowledgePanel() {
             {["全部", ...categoryTabs].map((tab) => {
               const value = tab === "全部" ? "" : tab;
               const active = categoryFilter === value;
-              const count = categoryCounts[tab];
+              // "全部"计数按本入口范围统计,不能直接用全库总数(那会混入另一入口的资料)
+              const corpusTotal = CORPUS_CATEGORIES.reduce(
+                (sum, key) => sum + (categoryCounts[key] ?? 0),
+                0
+              );
+              const scopeTotal = isCompany
+                ? (categoryCounts["全部"] ?? 0) - corpusTotal
+                : corpusTotal;
+              const count = tab === "全部" ? scopeTotal : categoryCounts[tab];
               return (
                 <button
                   key={tab}
@@ -968,6 +1004,7 @@ export function KnowledgePanel() {
           </div>
         ) : null}
 
+        {!isCompany ? (
         <div className="space-y-2">
           <p className="text-xs font-semibold text-muted">命中片段</p>
           <div className="max-h-80 space-y-2 overflow-auto">
@@ -998,6 +1035,7 @@ export function KnowledgePanel() {
             )}
           </div>
         </div>
+        ) : null}
       </div>
     </section>
   );

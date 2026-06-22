@@ -14,8 +14,10 @@ from api.deps import _raise_http_error, authorized_project
 from api.routers import (
     admin as admin_router,
     auth as auth_router,
+    cert_archive as cert_archive_router,
     company as company_router,
     knowledge as knowledge_router,
+    performance_archive as performance_archive_router,
     project as project_router,
     templates as templates_router,
 )
@@ -54,6 +56,8 @@ app.include_router(auth_router.router)
 app.include_router(admin_router.router)
 app.include_router(company_router.router)
 app.include_router(knowledge_router.router)
+app.include_router(performance_archive_router.router)
+app.include_router(cert_archive_router.router)
 app.include_router(project_router.router)
 app.include_router(templates_router.router)
 
