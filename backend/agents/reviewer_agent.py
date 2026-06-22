@@ -183,14 +183,18 @@ def _review_with_llm(
     generated_markdown: str,
 ) -> list[ReviewFinding]:
     settings = get_settings()
-    if _has_real_key(settings.openrouter_api_key):
-        api_key = settings.openrouter_api_key
-        base_url = settings.openrouter_base_url
-        model = settings.openrouter_model
-    elif _has_real_key(settings.deepseek_api_key):
+    if _has_real_key(settings.deepseek_api_key):
         api_key = settings.deepseek_api_key
         base_url = settings.deepseek_base_url
         model = settings.deepseek_model
+    elif _has_real_key(settings.volcano_api_key):
+        api_key = settings.volcano_api_key
+        base_url = settings.volcano_base_url
+        model = settings.volcano_model
+    elif _has_real_key(settings.openrouter_api_key):
+        api_key = settings.openrouter_api_key
+        base_url = settings.openrouter_base_url
+        model = settings.openrouter_model
     else:
         return []
 
