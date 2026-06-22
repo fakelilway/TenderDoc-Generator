@@ -1481,6 +1481,9 @@ export function TenderWorkspace({
             onSubmit={handleCreateAndRun}
           />
           {projectId ? (
+            <ProjectBOQPanel projectId={projectId} />
+          ) : null}
+          {projectId ? (
             <StatusRail
               status={status}
               busy={statusBusy}
@@ -1581,9 +1584,6 @@ export function TenderWorkspace({
                   ) : null}
                   {projectId != null ? (
                     <ProjectMaterialPanel projectId={projectId} />
-                  ) : null}
-                  {projectId != null ? (
-                    <ProjectBOQPanel projectId={projectId} />
                   ) : null}
                   <OutlineEditor
                     outline={outline}
