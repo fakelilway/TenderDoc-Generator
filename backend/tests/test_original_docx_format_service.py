@@ -496,8 +496,8 @@ def test_fill_inline_blanks_does_not_overwrite_existing_value() -> None:
     assert "90日历天" in doc.paragraphs[0].text  # 原值保留,不被覆盖
 
 
-def test_fill_inline_blanks_leaves_signature_block_blank() -> None:
-    """撤 c274972:签署块（盖单位章）/（签字）行不代填名/代盖代签,槽位留人工。"""
+def test_fill_inline_blanks_fills_signature_block() -> None:
+    """用户拍板:签署块（盖单位章）/（签字）前打上公司名/法人名,标记原样保留,槽位填掉。"""
     from services.original_docx_format_service import _fill_inline_labeled_blanks
     doc = Document()
     p = doc.add_paragraph()
@@ -507,11 +507,11 @@ def test_fill_inline_blanks_leaves_signature_block_blank() -> None:
         doc, {"company_name": "安徽正奇建设有限公司", "legal_representative": "许明英"}
     )
     txt = doc.paragraphs[0].text
-    assert n == 0
-    assert "安徽正奇建设有限公司" not in txt  # 不印到盖章位
-    assert "许明英" not in txt  # 不印到签字位
-    assert "\t" in txt  # 槽位留空待人工
-    assert "（盖单位章）" in txt and "（签字）" in txt
+    assert n == 2
+    assert "安徽正奇建设有限公司" in txt  # 公司名打在盖章位前
+    assert "许明英" in txt  # 法人名打在签字位前
+    assert "\t" not in txt  # 留白槽被填掉
+    assert "（盖单位章）" in txt and "（签字）" in txt  # 标记原样保留
 
 
 def test_fill_inline_blanks_skips_委托代理人_ambiguous() -> None:
@@ -539,10 +539,12 @@ def test_fill_inline_blanks_run_split_independent() -> None:
         n = _fill_inline_labeled_blanks(doc, prof)
         assert n == 1, f"{label} 应填1处, 实际{n}"
         assert "\t" not in doc.paragraphs[0].text, f"{label} tab未被填"
-    # 签署块的"投标人：\t（盖单位章）"是盖章位 → 留人工,不填(撤 c274972)
+    # 用户拍板:签署块"投标人：\t（盖单位章）"填公司名,标记保留,槽位填掉
     doc = Document(); p = doc.add_paragraph(); p.add_run("投标人：\t（盖单位章）")
-    assert _fill_inline_labeled_blanks(doc, prof) == 0
-    assert "\t" in doc.paragraphs[0].text
+    assert _fill_inline_labeled_blanks(doc, prof) == 1
+    assert "正奇建设" in doc.paragraphs[0].text
+    assert "（盖单位章）" in doc.paragraphs[0].text
+    assert "\t" not in doc.paragraphs[0].text
     # 多字段跨混合 run 切分,一段填 3 处
     doc = Document(); p = doc.add_paragraph()
     for t in ["工程质量：\t，安全目标：", "\t", "，工期：\t日历天。"]:

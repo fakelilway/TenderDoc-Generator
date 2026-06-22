@@ -246,7 +246,7 @@ export function CompanyProfileView() {
         <section className="rounded-lg border border-line bg-white p-4">
           <h2 className="mb-1 text-sm font-semibold text-ink">证件档案整理</h2>
           <p className="mb-3 text-xs leading-5 text-muted">
-            人员证件按"人"归到一起、公司证件按"证件类型"归到一起。看图 / 改归属 / 合并同一个人 / 改名。
+            人员证件按「人」归到一起、公司证件按「证件类型」归到一起。看图 / 改归属 / 合并同一个人 / 改名。
             身份证正反面、营业执照正副本、多页材料都保留，不会当重复删。
           </p>
           <CertArchivePanel />
