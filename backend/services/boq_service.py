@@ -158,9 +158,15 @@ def _to_boq(data: dict[str, Any]) -> TenderBOQ:
     )
 
 
-def build_boq(tender_text: str, *, complete: Completion | None = None) -> TenderBOQ:
-    """抽招标工程量清单 → 分部分项占比结构。抽不到/失败返回空(不阻断生成)。"""
-    text = locate_boq_text(tender_text)
+def build_boq(
+    tender_text: str, *, boq_text: str = "", complete: Completion | None = None
+) -> TenderBOQ:
+    """抽工程量清单 → 分部分项占比结构。
+
+    优先用上传的 ``boq_text``(另册全文,已是纯清单 → 跳过章节定位、占比按真实数量/金额算);
+    没有才从招标正文 locate 第五章。抽不到/失败返回空(不阻断生成)。
+    """
+    text = (boq_text or "").strip()[:_BOQ_TEXT_CAP] or locate_boq_text(tender_text)
     if not text.strip():
         return TenderBOQ()
     try:

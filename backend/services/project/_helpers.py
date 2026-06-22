@@ -114,6 +114,7 @@ def _fetch_project(project_id: int) -> dict[str, Any]:
                     name,
                     tender_file_path,
                     tender_text,
+                    boq_text,
                     parsed_json,
                     generated_markdown_path,
                     generated_docx_path,

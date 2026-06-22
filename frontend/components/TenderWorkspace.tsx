@@ -30,6 +30,7 @@ import {
 import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
 import { ProjectMaterialPanel } from "@/components/ProjectMaterialPanel";
+import { ProjectBOQPanel } from "@/components/ProjectBOQPanel";
 import { PersonnelPanel } from "@/components/PersonnelPanel";
 import { ConformancePanel } from "@/components/ConformancePanel";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
@@ -1580,6 +1581,9 @@ export function TenderWorkspace({
                   ) : null}
                   {projectId != null ? (
                     <ProjectMaterialPanel projectId={projectId} />
+                  ) : null}
+                  {projectId != null ? (
+                    <ProjectBOQPanel projectId={projectId} />
                   ) : null}
                   <OutlineEditor
                     outline={outline}

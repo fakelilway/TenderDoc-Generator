@@ -399,6 +399,36 @@ export function listProjectMaterials(projectId: number) {
   );
 }
 
+// 工程量清单(另册)上传:抽全文存 projects.boq_text,驱动技术卷按真实分部分项占比定详略。
+export interface ProjectBOQResponse {
+  uploaded?: boolean;
+  chars: number;
+  total_amount_wan?: number;
+  dominant?: string[];
+  note?: string;
+  categories?: { name: string; share_pct: number; key_quantities?: string }[];
+  warning?: string;
+}
+
+export function uploadProjectBOQ(projectId: number, file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return requestJson<ProjectBOQResponse>(`/api/project/${projectId}/boq`, {
+    method: "POST",
+    body
+  });
+}
+
+export function getProjectBOQ(projectId: number) {
+  return requestJson<ProjectBOQResponse>(`/api/project/${projectId}/boq`);
+}
+
+export function deleteProjectBOQ(projectId: number) {
+  return requestJson<ProjectBOQResponse>(`/api/project/${projectId}/boq`, {
+    method: "DELETE"
+  });
+}
+
 // M-人员名册:项目经理选派
 export function getPersonnelRecommendations(projectId: number) {
   return requestJson<PMRecommendationResponse>(

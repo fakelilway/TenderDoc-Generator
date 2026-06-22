@@ -205,6 +205,7 @@ def generate_v2_bid_package(
     tender_bytes: bytes | None = None,
     confirmed_technical_outline: list[dict] | None = None,
     project_id: int | None = None,
+    boq_text: str = "",
 ) -> V2BidPackage:
     """V2 generation: extract → fill → write → audit.
 
@@ -320,7 +321,8 @@ def generate_v2_bid_package(
     try:
         from services import boq_service
 
-        boq = boq_service.build_boq(tender_text)
+        # 优先用本项目上传的工程量清单(另册)全文,占比按真实数量/金额算;没传才从招标正文估。
+        boq = boq_service.build_boq(tender_text, boq_text=boq_text)
     except Exception:
         logger.warning("工程量清单抽取异常,技术卷跳过 BOQ 驱动(不阻断)", exc_info=True)
         boq = None

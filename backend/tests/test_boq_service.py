@@ -97,6 +97,20 @@ def test_build_boq_empty_when_no_chapter() -> None:
     assert b.build_boq("没有清单的招标正文").is_empty()
 
 
+def test_build_boq_prefers_uploaded_boq_text_over_tender() -> None:
+    """上传的工程量清单(另册)全文优先于招标正文:有 boq_text 就用它、跳过 locate。"""
+    fake = lambda _m: '{"categories":[{"name":"路基工程","share_pct":80,"key_quantities":"填方60万m³"}]}'
+    boq = b.build_boq(
+        "招标正文里完全没有工程量清单",
+        boq_text="第五章 工程量清单\n路基 填方 60万m³ 综合单价…",
+        complete=fake,
+    )
+    assert boq.dominant == ["路基工程"]
+    assert boq.categories[0].key_quantities == "填方60万m³"
+    # 无 boq_text → 回退招标正文(此处无清单段 → 空)
+    assert b.build_boq("招标正文无清单段", complete=fake).is_empty()
+
+
 def test_boq_brief_reaches_writer_prompt() -> None:
     """端到端接线:BOQ 简报喂进技术卷写作 prompt,出现造价占比块与'按占比详略'规则。"""
     from prompts.generator_prompt import build_node_fill_prompt

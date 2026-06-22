@@ -56,6 +56,8 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS score_prediction_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_matrix_json JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS tender_text TEXT;
+-- 本项目上传的工程量清单(另册,通常PDF)抽出的全文,驱动技术卷按真实分部分项占比定详略
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS boq_text TEXT;
 -- 本项目选派的人员(项目经理等),从公司名册按招标要求选定,填进商务卷人员表
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_personnel JSONB;
 

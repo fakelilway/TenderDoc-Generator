@@ -248,6 +248,7 @@ def run_bid_workflow(
         tender_bytes=tender_bytes,
         confirmed_technical_outline=state.bid_outline,
         project_id=project_id,  # ② 本项目定制插入图按节插入
+        boq_text=project.get("boq_text") or "",  # 本项目上传的工程量清单(另册)→ 真实占比
     )
     state.draft_volumes = v2_pkg.volume_map()
     state.draft_markdown = v2_pkg.combined_markdown

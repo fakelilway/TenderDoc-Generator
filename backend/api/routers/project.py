@@ -336,6 +336,71 @@ def delete_project_material(
     return KnowledgeDeleteResponse(ok=True)
 
 
+@router.post("/api/project/{project_id}/boq")
+async def upload_project_boq(
+    project_id: int,
+    file: UploadFile = File(...),
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """上传本项目工程量清单(另册,通常 PDF):抽全文存起来,并即时解析各分部分项占比预览。
+
+    生成技术卷时优先用这份清单——按真实占比定详略、把真实工程量喂给对应施工方案;
+    没上传则回退"从招标正文估占比"。扫描件 PDF 抽不出文字会提示(暂不支持 OCR)。
+    """
+    try:
+        from services import boq_service
+        from services.project.boq import set_project_boq
+
+        filename = file.filename or "boq.pdf"
+        file_bytes = await file.read()
+        stored = set_project_boq(project_id, file_bytes, filename, file.content_type)
+        text = str(stored.get("text", ""))
+        if not text.strip():
+            return {
+                "chars": 0,
+                "categories": [],
+                "warning": "未从文件抽到文字——可能是扫描件 PDF(暂不支持 OCR)。"
+                "请上传文字版 PDF/Word,或造价软件导出的版本。",
+            }
+        boq = boq_service.build_boq("", boq_text=text)  # 即时解析占比预览(best-effort)
+        return {
+            "chars": int(stored.get("chars", 0)),
+            "total_amount_wan": boq.total_amount_wan,
+            "dominant": boq.dominant,
+            "note": boq.note,
+            "categories": [
+                {"name": c.name, "share_pct": c.share_pct, "key_quantities": c.key_quantities}
+                for c in sorted(boq.categories, key=lambda x: -x.share_pct)
+            ],
+        }
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.get("/api/project/{project_id}/boq")
+def get_project_boq(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """本项目是否已上传工程量清单(另册)。"""
+    from services.project.boq import get_project_boq_chars
+
+    chars = get_project_boq_chars(project_id)
+    return {"uploaded": chars > 0, "chars": chars}
+
+
+@router.delete("/api/project/{project_id}/boq")
+def delete_project_boq(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """删除本项目已上传的工程量清单(另册)。"""
+    from services.project.boq import clear_project_boq
+
+    clear_project_boq(project_id)
+    return {"uploaded": False, "chars": 0}
+
+
 @router.get(
     "/api/project/{project_id}/personnel/recommendations",
     response_model=PMRecommendationResponse,
