@@ -1480,9 +1480,7 @@ export function TenderWorkspace({
             onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
           />
-          {projectId ? (
-            <ProjectBOQPanel projectId={projectId} />
-          ) : null}
+          <ProjectBOQPanel projectId={projectId} />
           {projectId ? (
             <StatusRail
               status={status}
