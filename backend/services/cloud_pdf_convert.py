@@ -167,6 +167,8 @@ def convert_format_pages_via_cloud(
 
     from services.original_docx_format_service import (
         _drop_spurious_stream_tables,
+        _fill_basic_info_subfields,
+        _fill_establish_segmented,
         _fill_inline_labeled_blanks,
         _fill_known_table_cells,
         _fill_personnel_table,
@@ -198,12 +200,25 @@ def convert_format_pages_via_cloud(
     doc = Document(str(output_path))
     _drop_spurious_stream_tables(doc)
     _replace_known_fields(doc, profile or {})
+    _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
     _fill_known_table_cells(doc, profile or {})
-    _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期
+    _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
+    _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
     _fill_personnel_table(doc, profile or {})
     # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
     _strip_seal_images(doc)
     _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
+    # 商务标固定字段收尾:纠正公司名错别字(安徽正气→安徽正奇)+ 核对固定字段一致性。
+    from services.commercial_fixed_fields import (
+        audit_commercial_fixed_fields,
+        enforce_company_name_consistency,
+    )
+
+    corrected = enforce_company_name_consistency(doc)
+    if corrected:
+        logger.warning("商务标公司名错别字已纠正 %d 处(安徽正气→安徽正奇)", corrected)
+    for issue in audit_commercial_fixed_fields(doc):
+        logger.warning("商务标固定字段核对:%s", issue)
     doc.save(str(output_path))
     return str(output_path)
 

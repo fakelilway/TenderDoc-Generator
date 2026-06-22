@@ -863,13 +863,23 @@ def combine_delivery_volumes(
     return "\n".join(parts).strip() + "\n"
 
 
+_VOLUME_LABEL_ALIASES = {
+    "商务": "commercial", "商务文件": "commercial", "商务标": "commercial", "商务卷": "commercial",
+    "技术": "technical", "技术文件": "technical", "技术标": "technical", "技术卷": "technical",
+    "报价": "pricing", "报价文件": "pricing", "价格": "pricing", "价格文件": "pricing", "报价卷": "pricing",
+}
+
+
 def _split_by_markers(markdown_text: str) -> dict[str, str]:
     sections: dict[str, list[str]] = {}
     current: list[str] | None = None
     for line in markdown_text.splitlines():
         match = _VOLUME_MARKER_PATTERN.match(line.strip())
         if match:
-            current = sections.setdefault(match.group(1), [])
+            # AI 可能仿写中文卷标记（技术/商务/报价），归一到标准英文 label，否则内容丢失
+            label = match.group(1).strip()
+            label = _VOLUME_LABEL_ALIASES.get(label, label)
+            current = sections.setdefault(label, [])
             continue
         if current is not None:
             current.append(line)

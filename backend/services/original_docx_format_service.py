@@ -165,6 +165,8 @@ def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
         "(招标人名称)": tenderer,
         "（招标项目名称）": project_name,
         "（项目名称）": project_name,
+        "（标段名称）": project_name,
+        "（标段编号）": str(profile.get("标段编号") or profile.get("section_no") or ""),
         "（投标人名称）": company,
         "（工期）": duration,
         "（计划工期）": duration,
@@ -251,6 +253,8 @@ _TABLE_FILL_LABELS: tuple[tuple[str, str], ...] = (
     ("注册资本", "registered_capital"),
     ("企业资质等级", "qualification_grade"),
     ("资质等级", "qualification_grade"),
+    ("投标人响应资质", "qualification_grade"),
+    ("响应资质", "qualification_grade"),
     ("法定代表人", "legal_representative"),
     ("项目经理", "project_manager_name"),
     ("注册建造师", "project_manager_name"),
@@ -289,11 +293,20 @@ _TABLE_FILL_LABELS: tuple[tuple[str, str], ...] = (
     ("计划工期", "工期"),
     ("总工期", "工期"),
     ("工期", "工期"),
+    # 基本情况表补充字段(配合 company_profile 扩展字段;法人/技术负责人的职称电话走专项)
+    ("邮政编码", "postal_code"),
+    ("传真", "fax"),
+    ("电子邮件", "email"),
+    ("技术负责人", "tech_director_name"),
+    ("高级职称人员", "senior_title_count"),
+    ("中级职称人员", "mid_title_count"),
+    ("初级职称人员", "junior_title_count"),
+    ("技工", "technician_count"),
 )
-# 这些是"另一个人/无对应档案字段"的标签,绝不当作待填项。
+# 这些是"另一个人/需按行归属判断/格内填"的标签,通用"标签→右邻"逻辑绝不当作待填项。
+# 技术职称/员工总人数 由 _fill_basic_info_subfields 专项按行上下文/格内处理(不走通用)。
 _TABLE_FILL_SKIP = (
-    "技术负责人", "项目总工", "技术职称", "员工总人数",
-    "邮政编码", "电子邮件", "传真",
+    "项目总工", "技术职称", "员工总人数",
 )
 # 子标签:行标签与值格之间的小标题(如 法定代表人 | 姓名 | [值]),右扫时跳过去找值格。
 _TABLE_SUBLABELS = frozenset(
@@ -467,6 +480,119 @@ def _row_label_at(
     return "", i
 
 
+# ── 投标人基本情况表 专项填充 ─────────────────────────────────────────────
+# 这张表 9 列、含"法定代表人|姓名|值|技术职称|值|电话|值"多子标签行,通用"标签→右邻"搞不定:
+# ① 法人/技术负责人行的 技术职称/电话 必须按"本行归属"取值(否则通用会把"电话"当公司
+# 联系电话 contact_phone 误填);② "员工总人数："是合并标签格、值要写格内冒号后。
+# 故本函数须在 _fill_known_table_cells **之前**调用,先精确占位,通用逻辑再填其余空格。
+_BASIC_INFO_PERSON_ROWS: dict[str, dict[str, str]] = {
+    "法定代表人": {"技术职称": "legal_rep_title", "电话": "legal_rep_phone"},
+    "技术负责人": {"技术职称": "tech_director_title", "电话": "tech_director_phone"},
+}
+
+
+def _append_to_cell(cell: Any, value: str) -> None:
+    """在单元格已有文本(如"员工总人数：")后追加值,不覆盖标签。"""
+    paras = cell.paragraphs
+    if paras and paras[0].runs:
+        paras[0].runs[-1].text = paras[0].runs[-1].text + value
+    elif paras:
+        paras[0].add_run(value)
+
+
+def _fill_basic_info_subfields(document: Any, profile: dict[str, Any]) -> int:
+    """投标人基本情况表专项:法人/技术负责人行的 技术职称·电话(按行归属),员工总人数(格内)。"""
+    filled = 0
+    for table in document.tables:
+        full = " ".join(c.text for row in table.rows for c in row.cells)
+        if "投标人名称" not in full or "员工总人数" not in full:
+            continue
+        for row in table.rows:
+            cells = row.cells
+            if not cells:
+                continue
+            submap = _BASIC_INFO_PERSON_ROWS.get(cells[0].text.strip())
+            if submap:
+                n = len(cells)
+                for i in range(1, n):
+                    key = submap.get(cells[i].text.strip())
+                    if not key:
+                        continue
+                    val = str(profile.get(key, "") or "").strip()
+                    if not val:
+                        continue
+                    for j in range(i + 1, n):
+                        if cells[j]._tc is cells[i]._tc:
+                            continue
+                        if _is_blank_or_placeholder(cells[j].text.strip()):
+                            _set_cell_value(cells[j], val)
+                            filled += 1
+                        break
+            emp = str(profile.get("employee_total", "") or "").strip()
+            if emp:
+                for cell in cells:
+                    t = cell.text.strip()
+                    if t.startswith("员工总人数") and ("：" in t or ":" in t):
+                        after = t.split("：")[-1].split(":")[-1].strip()
+                        if not after:  # 冒号后还没值才填,避免重复追加
+                            _append_to_cell(cell, emp)
+                            filled += 1
+                        break
+            # 项目经理(或注册建造师)格:基本情况表此处填"人数",覆盖误填的人选名(语义=数量,非人名)
+            pmc = str(profile.get("project_manager_count", "") or "").strip()
+            if pmc:
+                for ci, cell in enumerate(cells):
+                    ct = cell.text.strip()
+                    if ct.startswith("项目经理") and "职称" not in ct:
+                        for j in range(ci + 1, len(cells)):
+                            if cells[j]._tc is cell._tc:
+                                continue
+                            if cells[j].text.strip() in ("其中", "其 中"):
+                                continue
+                            _set_cell_value(cells[j], pmc)
+                            filled += 1
+                            break
+                        break
+    return filled
+
+
+def _fill_establish_segmented(document: Any, profile: dict[str, Any]) -> int:
+    """填"成立时间/日期：__年__月__日"这种分段空(法定代表人身份证明段)。
+
+    establish_date 形如 2011-07-05 → 拆成 年=2011 / 月=7 / 日=5,分别填到"年/月/日"
+    前最近的空槽(制表符/空格)。只动"成立时间/日期"标签之后、首组年月日,避免误填地址等处。
+    """
+    raw = str(profile.get("establish_date", "") or "").strip()
+    m = re.match(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", raw)
+    if not m:
+        return 0
+    parts = {"年": m.group(1), "月": str(int(m.group(2))), "日": str(int(m.group(3)))}
+    filled = 0
+    for para in document.paragraphs:
+        if "成立时间" not in para.text and "成立日期" not in para.text:
+            continue
+        runs = para.runs
+        started = False
+        last_slot = None
+        for i, r in enumerate(runs):
+            t = r.text
+            if not started:
+                if any(k in t for k in ("成立时间", "立时间", "成立日期", "立日期")):
+                    started = True
+                continue
+            stripped = t.strip()
+            if stripped == "":  # 空格/制表符槽
+                last_slot = i
+            elif stripped[0] in parts:  # 命中 年/月/日
+                if last_slot is not None and runs[last_slot].text.strip() == "":
+                    runs[last_slot].text = parts[stripped[0]]
+                    filled += 1
+                last_slot = None
+            else:
+                last_slot = None  # 遇到其它实质文本,断开,避免跨太远误填
+    return filled
+
+
 def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
     """基本情况表式网格自动填:标签格 → 同行右侧第一个空值格。
 
@@ -528,7 +654,9 @@ _INLINE_LABELS: tuple[tuple[str, str], ...] = (
     ("企业名称", "company_name"),
     ("公司名称", "company_name"),
     ("单位名称", "company_name"),
-    ("投标人", "company_name"),  # 正文表单"投 标 人："(法代身份证明等);签署块由签字/盖章守卫挡住
+    ("投标人", "company_name"),  # 正文表单 + 签署块"投标人：__（盖单位章）"都填公司名(名字打前、标记保留)
+    ("法定代表人或其委托代理人", "legal_representative"),
+    ("法定代表人", "legal_representative"),  # 含签署块"法定代表人：__（签字或盖章）",名字打前、标记保留
     ("单位性质", "company_type"),
     ("企业性质", "company_type"),
     ("注册地址", "registered_address"),
@@ -536,6 +664,10 @@ _INLINE_LABELS: tuple[tuple[str, str], ...] = (
     ("联系地址", "registered_address"),
     ("住所", "registered_address"),
     ("地址", "registered_address"),  # 裸"地 址："(最长匹配保证 注册地址>地址,不抢具体标签)
+    ("投标人响应资质", "qualification_grade"),
+    ("响应资质", "qualification_grade"),
+    ("经营期限", "business_term"),
+    ("营业期限", "business_term"),
 )
 _INLINE_DELIMS = "，,。.；;、\n\r"
 # 模板里"标签：__单位"已带单位时,去掉值里重复的尾随单位(工期：90日历天日历天 → 90日历天)。
@@ -588,7 +720,9 @@ def _iter_fillable_with_idproof(document: Any, track_idproof: bool):
             p = _Para(child, document)
             if track_idproof:
                 t = p.text.strip()
-                if "法定代表人身份证明" in t and len(t) < 40:
+                # "授权委托书或法定代表人身份证明"是合并章标题,会把授权委托书段也圈进身份证明
+                # 语境→委托代理人的身份证号/联系方式被误填成法人值。排除它,只认纯身份证明子标题。
+                if "法定代表人身份证明" in t and "授权委托书" not in t and len(t) < 40:
                     inside, count = True, 0
                     yield p, True
                     continue
@@ -631,6 +765,19 @@ def _inline_value_for(
         return str(profile.get("法人性别", "") or "").strip()
     if _idp and norm.endswith("年龄"):
         return str(profile.get("法人年龄", "") or "").strip()
+    # 职务/联系方式/身份证号:OCR 取不到,由固定字段规则供值(见 commercial_fixed_fields)。
+    # 仅在身份证明语境填,避免人员表"职务"列、委托代理人"联系方式/身份证号"被误填成法人值。
+    if _idp and norm.endswith("职务"):
+        return str(profile.get("法人职务", "") or "").strip()
+    if _idp and (
+        norm.endswith("联系方式")
+        or norm.endswith("联系电话")
+        or norm.endswith("手机号码")
+        or norm.endswith("手机号")
+    ):
+        return str(profile.get("法人联系方式", "") or "").strip()
+    if _idp and (norm.endswith("身份证号") or norm.endswith("身份证号码")):
+        return str(profile.get("法人身份证号", "") or "").strip()
     best_label = ""
     for label, _key in _INLINE_LABELS:
         if norm.endswith(label) and len(label) > len(best_label):
@@ -694,10 +841,10 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                     k = j
                     while k < n and s[k] in _SLOT_CHARS:  # 吃掉留白槽(tab/下划线/点线)
                         k += 1
-                    # 签字/盖章守卫:槽位(含其后留白)紧跟签字/盖章标记 → 留人工
-                    if any(m in s[j : k + 12] for m in _SIGN_MARKERS):
-                        i += 1
-                        continue
+                    # 用户拍板(签字盖章块):投标人/法定代表人在「（盖单位章）」「（签字或盖章）」前
+                    # 打上公司名/姓名,标记原样保留——填的是冒号后留白槽 s[j:k],标记在 s[k:] 不动,
+                    # 故不再因签字/盖章标记跳过(区别于曾被否的 c274972"代签代盖":那是把标记替换掉)。
+                    # 日期(年/月/日)无标签映射,仍留空给人工。
                     had_blank = k > j
                     empty_ok = (
                         k >= n

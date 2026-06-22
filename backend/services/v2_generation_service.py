@@ -223,8 +223,15 @@ def generate_v2_bid_package(
     # Build combined profile with project-specific fields from requirements.
     # These must be available BEFORE Phase 0 so the PDF format copy can fill
     # placeholders with Parser-extracted values (质量标准, 安全目标, etc.).
+    import re as _re
+
+    _sec = _re.search(
+        r"(?:招标项目标段编号|标段编号|招标项目编号|项目编号)[：:\s]*([A-Za-z0-9]{4,40})",
+        tender_text or "",
+    )
     project_fields = {
         "招标人": str(requirements.tenderer_name or ""),
+        "标段编号": _sec.group(1) if _sec else "",
         "项目名称": str(requirements.project_name or ""),
         "工期": str(requirements.planned_duration or ""),
         "质量": str(requirements.quality_standard or "符合国家现行工程质量验收标准规范合格标准"),
@@ -236,6 +243,11 @@ def generate_v2_bid_package(
     combined_profile = {**profile, **project_fields}
     # 法人性别/年龄(从法人身份证 OCR 推导)→ 填法定代表人身份证明表的 性别/年龄 栏。
     combined_profile.update(_legal_rep_pii(str(combined_profile.get("legal_representative", ""))))
+    # 商务标固定字段规则(《商务文件固定格式.pdf》定稿)→ 最高优先级覆盖,必须放在
+    # 公司档案/招标 parser/法人 OCR 都装配完之后:固定规则 > 公司档案 > parser > AI。
+    from services.commercial_fixed_fields import apply_fixed_fields
+
+    apply_fixed_fields(combined_profile)
 
     # ── Phase 0: 招标商务格式章 PDF → 福昕云转可编辑 Word(唯一路径,无降级) ──
     built_format_docx: str | None = None

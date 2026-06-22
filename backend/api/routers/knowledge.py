@@ -88,11 +88,23 @@ def list_knowledge_documents(
     limit: int = Query(200, ge=1, le=1000),
     category: str | None = Query(None),
     search: str | None = Query(None),
+    categories: str | None = Query(None),
+    exclude_categories: str | None = Query(None),
     _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
 ) -> KnowledgeDocumentListResponse:
+    def _split(value: str | None) -> list[str] | None:
+        if not value:
+            return None
+        items = [item.strip() for item in value.split(",") if item.strip()]
+        return items or None
+
     try:
         documents = knowledge_service.list_knowledge_documents(
-            limit=limit, category=category, search=search
+            limit=limit,
+            category=category,
+            search=search,
+            categories=_split(categories),
+            exclude_categories=_split(exclude_categories),
         )
     except Exception as error:
         _raise_http_error(error)

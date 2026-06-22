@@ -21,6 +21,9 @@ import type {
   LoginResponse,
   LogoutResponse,
   ParsedConfirmationResponse,
+  PerformanceArchive,
+  PersonArchive,
+  CompanyCertArchive,
   ProjectConfirmResponse,
   ProjectCreateResponse,
   ProjectDeleteResponse,
@@ -606,7 +609,13 @@ export function deleteKnowledgeDocument(documentId: number) {
 }
 
 export function listKnowledgeDocuments(
-  opts: { limit?: number; category?: string; search?: string } = {}
+  opts: {
+    limit?: number;
+    category?: string;
+    search?: string;
+    categories?: string[];
+    excludeCategories?: string[];
+  } = {}
 ) {
   const params = new URLSearchParams();
   params.set("limit", String(opts.limit ?? 200));
@@ -615,6 +624,12 @@ export function listKnowledgeDocuments(
   }
   if (opts.search) {
     params.set("search", opts.search);
+  }
+  if (opts.categories?.length) {
+    params.set("categories", opts.categories.join(","));
+  }
+  if (opts.excludeCategories?.length) {
+    params.set("exclude_categories", opts.excludeCategories.join(","));
   }
   return requestJson<KnowledgeDocumentListResponse>(
     `/api/knowledge/documents?${params.toString()}`
@@ -629,6 +644,65 @@ export function getKnowledgeDocumentPreview(documentId: number) {
   return requestJson<KnowledgeDocumentPreview>(
     `/api/knowledge/documents/${documentId}/preview`
   );
+}
+
+export function getPerformanceArchive() {
+  return requestJson<PerformanceArchive>("/api/performance-archive");
+}
+
+export function reassignPerformanceEvidence(
+  documentIds: number[],
+  targetProject: string
+) {
+  return requestJson<{ ok: boolean; changed: number }>(
+    "/api/performance-archive/reassign",
+    {
+      method: "POST",
+      body: JSON.stringify({ document_ids: documentIds, target_project: targetProject })
+    }
+  );
+}
+
+export function renamePerformanceEvidence(documentId: number, title: string) {
+  return requestJson<{ ok: boolean }>(
+    `/api/performance-archive/evidence/${documentId}`,
+    { method: "PATCH", body: JSON.stringify({ title }) }
+  );
+}
+
+export function getPersonCertArchive() {
+  return requestJson<PersonArchive>("/api/cert-archive/person");
+}
+
+export function getCompanyCertArchive() {
+  return requestJson<CompanyCertArchive>("/api/cert-archive/company");
+}
+
+export function reassignPersonCert(documentIds: number[], targetPerson: string) {
+  return requestJson<{ ok: boolean; changed: number }>(
+    "/api/cert-archive/person/reassign",
+    {
+      method: "POST",
+      body: JSON.stringify({ document_ids: documentIds, target_person: targetPerson })
+    }
+  );
+}
+
+export function retypeCompanyCert(documentIds: number[], targetType: string) {
+  return requestJson<{ ok: boolean; changed: number }>(
+    "/api/cert-archive/company/retype",
+    {
+      method: "POST",
+      body: JSON.stringify({ document_ids: documentIds, target_type: targetType })
+    }
+  );
+}
+
+export function renameCert(documentId: number, title: string) {
+  return requestJson<{ ok: boolean }>(`/api/cert-archive/cert/${documentId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title })
+  });
 }
 
 export function searchKnowledge(

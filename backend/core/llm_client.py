@@ -128,6 +128,14 @@ def resolve_llm_config(
     if settings is None:
         settings = get_settings()
     provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
+    if provider == "volcano":
+        if has_real_key(settings.volcano_api_key):
+            return (
+                settings.volcano_api_key,
+                settings.volcano_base_url,
+                settings.volcano_model,
+            )
+        raise error_cls("VOLCANO_API_KEY is required when BID_LLM_PROVIDER=volcano")
     if provider == "deepseek":
         if has_real_key(settings.deepseek_api_key):
             return (

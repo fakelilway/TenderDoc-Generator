@@ -25,6 +25,24 @@ class CompanyProfile(BaseModel):
     bank_account: str = ""
     project_manager_name: str = ""
     project_manager_cert: str = ""
+    # 投标人基本情况表补充字段(基本情况表/资格审查用)
+    postal_code: str = ""
+    fax: str = ""
+    email: str = ""
+    legal_rep_title: str = ""
+    legal_rep_phone: str = ""
+    tech_director_name: str = ""
+    tech_director_title: str = ""
+    tech_director_phone: str = ""
+    employee_total: str = ""
+    project_manager_count: str = ""
+    senior_title_count: str = ""
+    mid_title_count: str = ""
+    junior_title_count: str = ""
+    technician_count: str = ""
+    shareholders: str = ""
+    business_term: str = ""
+    registered_capital_words: str = ""
 
 
 COMPANY_PROFILE_FIELD_LABELS: dict[str, str] = {
@@ -44,6 +62,23 @@ COMPANY_PROFILE_FIELD_LABELS: dict[str, str] = {
     "bank_account": "银行账号",
     "project_manager_name": "潜在项目经理人选",
     "project_manager_cert": "项目经理建造师证号",
+    "postal_code": "邮政编码",
+    "fax": "传真",
+    "email": "电子邮件",
+    "legal_rep_title": "法定代表人技术职称",
+    "legal_rep_phone": "法定代表人电话",
+    "tech_director_name": "技术负责人",
+    "tech_director_title": "技术负责人技术职称",
+    "tech_director_phone": "技术负责人电话",
+    "employee_total": "员工总人数",
+    "project_manager_count": "项目经理(注册建造师)人数",
+    "senior_title_count": "高级职称人员数",
+    "mid_title_count": "中级职称人员数",
+    "junior_title_count": "初级职称人员数",
+    "technician_count": "技工人数",
+    "shareholders": "股东及股权比例",
+    "business_term": "经营期限",
+    "registered_capital_words": "注册资本(大写)",
 }
 
 

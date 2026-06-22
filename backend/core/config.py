@@ -40,6 +40,11 @@ class Settings(BaseSettings):
         "https://api.deepseek.com", alias="DEEPSEEK_BASE_URL"
     )
     deepseek_model: str = Field("deepseek-v4-pro", alias="DEEPSEEK_MODEL")
+    volcano_api_key: str = Field("", alias="VOLCANO_API_KEY")
+    volcano_base_url: str = Field(
+        "https://ark.cn-beijing.volces.com/api/coding/v3", alias="VOLCANO_BASE_URL"
+    )
+    volcano_model: str = Field("glm-5.2", alias="VOLCANO_MODEL")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(
@@ -52,7 +57,7 @@ class Settings(BaseSettings):
     # 6000 tokens 装不下三卷标书，且 60s 等不到非流式长输出返回——
     # 生成失败时直接报错，由用户修正配置/输入后重试。
     bid_long_context_timeout_seconds: float = Field(
-        300.0, alias="BID_LONG_CONTEXT_TIMEOUT_SECONDS"
+        1200.0, alias="BID_LONG_CONTEXT_TIMEOUT_SECONDS"
     )
     bid_long_context_max_tokens: int = Field(
         100000, alias="BID_LONG_CONTEXT_MAX_TOKENS"

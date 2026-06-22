@@ -570,6 +570,23 @@ export type CompanyProfile = {
   bank_account: string;
   project_manager_name: string;
   project_manager_cert: string;
+  postal_code: string;
+  fax: string;
+  email: string;
+  legal_rep_title: string;
+  legal_rep_phone: string;
+  tech_director_name: string;
+  tech_director_title: string;
+  tech_director_phone: string;
+  employee_total: string;
+  project_manager_count: string;
+  senior_title_count: string;
+  mid_title_count: string;
+  junior_title_count: string;
+  technician_count: string;
+  shareholders: string;
+  business_term: string;
+  registered_capital_words: string;
 };
 
 export type CompanyProfileResponse = {
@@ -641,4 +658,97 @@ export type ConformanceReportResponse = {
   has_blocking: boolean;
   warning_count: number;
   pending_count: number;
+};
+
+// ===== 业绩档案(台账↔证明对号整理) =====
+export type PerformanceEvidenceDoc = {
+  document_id: number;
+  file_name: string;
+  file_path?: string | null;
+  evidence_type: string;
+  evidence_seq: number;
+};
+
+export type PerformanceLedger = {
+  document_id: number;
+  file_name: string;
+  name: string;
+  type?: string;
+  amount?: string;
+  date?: string;
+  year?: string;
+  manager?: string;
+  chief?: string;
+  contract_no?: string;
+};
+
+export type PerformanceMatched = {
+  evidence_project: string;
+  ledger: PerformanceLedger;
+  evidence: Record<string, PerformanceEvidenceDoc[]>;
+  types: Record<string, number>;
+  total: number;
+  score: number;
+  needs_review: boolean;
+  complete_chain: boolean;
+};
+
+export type PerformanceEvidenceOnly = {
+  evidence_project: string;
+  evidence: Record<string, PerformanceEvidenceDoc[]>;
+  types: Record<string, number>;
+  total: number;
+  best_guess: string;
+  best_score: number;
+};
+
+export type PerformanceArchive = {
+  matched: PerformanceMatched[];
+  evidence_only: PerformanceEvidenceOnly[];
+  ledger_only: PerformanceLedger[];
+  ledger_all: PerformanceLedger[];
+  stats: {
+    ledger_total: number;
+    evidence_projects: number;
+    evidence_images: number;
+    matched: number;
+    matched_need_review: number;
+    matched_complete_chain: number;
+    evidence_only: number;
+    ledger_only: number;
+  };
+};
+
+// ===== 证件档案(人员按人归 / 公司按类型归) =====
+export type CertDoc = {
+  document_id: number;
+  file_name: string;
+  file_path?: string | null;
+  cert_type: string;
+};
+
+export type PersonArchiveEntry = {
+  name: string;
+  total: number;
+  types: Record<string, number>;
+  certs: Record<string, CertDoc[]>;
+};
+
+export type PersonArchive = {
+  persons: PersonArchiveEntry[];
+  unassigned: CertDoc[];
+  person_names: string[];
+  stats: { person_count: number; cert_total: number; unassigned: number };
+};
+
+export type CompanyCertGroup = {
+  cert_type: string;
+  docs: CertDoc[];
+  total: number;
+};
+
+export type CompanyCertArchive = {
+  groups: CompanyCertGroup[];
+  cert_types: string[];
+  stats: { type_count: number; cert_total: number };
 };
