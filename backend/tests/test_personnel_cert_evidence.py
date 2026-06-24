@@ -18,9 +18,9 @@ def test_personnel_cert_markdown_emits_idcard_and_certs(monkeypatch) -> None:
     )
     # mock 知识库图片引用:江舟的建造师证/职称证/社保(社保无图)
     refs = [
-        {"document_id": 10, "owner_name": "江舟", "certificate_type": "一级建造师证", "image_insertable": True},
-        {"document_id": 11, "owner_name": "江舟", "certificate_type": "职称证书", "image_insertable": True},
-        {"document_id": 12, "owner_name": "别人", "certificate_type": "一级建造师证", "image_insertable": True},
+        {"document_id": 10, "owner_name": "江舟", "certificate_type": "一级建造师证", "image_insertable": True, "file_type": "jpg"},
+        {"document_id": 11, "owner_name": "江舟", "certificate_type": "职称证书", "image_insertable": True, "file_type": "jpg"},
+        {"document_id": 12, "owner_name": "别人", "certificate_type": "一级建造师证", "image_insertable": True, "file_type": "jpg"},
     ]
     monkeypatch.setattr(
         "services.knowledge_service.list_knowledge_image_references",
@@ -52,8 +52,8 @@ def test_personnel_cert_evidence_combines_pm_and_tech(monkeypatch) -> None:
     monkeypatch.setattr(
         "services.knowledge_service.list_knowledge_image_references",
         lambda *a, **k: [
-            {"document_id": 20, "owner_name": "张经理", "certificate_type": "二级建造师证", "image_insertable": True},
-            {"document_id": 21, "owner_name": "李总工", "certificate_type": "职称证书", "image_insertable": True},
+            {"document_id": 20, "owner_name": "张经理", "certificate_type": "二级建造师证", "image_insertable": True, "file_type": "jpg"},
+            {"document_id": 21, "owner_name": "李总工", "certificate_type": "职称证书", "image_insertable": True, "file_type": "jpg"},
         ],
     )
     md = v2._personnel_cert_evidence_markdown("张经理", "李总工")

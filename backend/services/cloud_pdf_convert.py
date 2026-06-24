@@ -173,10 +173,12 @@ def convert_format_pages_via_cloud(
         _fill_inline_labeled_blanks,
         _fill_known_table_cells,
         _fill_personnel_table,
+        _fill_pm_resume_table,
         _find_format_page_range_in_pdf,
         _log_unfilled_fields,
         _replace_known_fields,
         _strip_seal_images,
+        _strip_tender_page_numbers,
     )
 
     client_id, secret = _foxit_credentials()
@@ -207,8 +209,10 @@ def convert_format_pages_via_cloud(
     _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
     _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
     _fill_personnel_table(doc, profile or {})
+    _fill_pm_resume_table(doc, (profile or {}).get("pm_resume") or {})  # 项目经理简历表
     # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
     _strip_seal_images(doc)
+    _strip_tender_page_numbers(doc)  # 清招标原件页码,标书用自己的页码
     _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
     # 商务标固定字段收尾:纠正公司名错别字(安徽正气→安徽正奇)+ 核对固定字段一致性。
     from services.commercial_fixed_fields import (

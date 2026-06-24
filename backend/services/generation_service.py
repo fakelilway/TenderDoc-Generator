@@ -586,12 +586,30 @@ def _fetch_org_source_docx(filename_kw: str) -> bytes | None:
 
 
 def _find_section_paragraph(doc, keywords: tuple[str, ...]):
-    """找含章节关键词的短段落(章节标题/小标题),返回其 <w:p> 元素;找不到返回 None。"""
+    """找含章节关键词的**正文章节标题**段落,返回其 <w:p> 元素;找不到返回 None。
+
+    跳过目录区(目录里的"五、项目管理机构"等条目不是插图位);目录条目在前、正文章节在后,
+    取最后一个匹配段即正文真章节,避免把表/图插进目录。
+    """
+    in_toc = False
+    last_match = None
     for para in doc.paragraphs:
         t = para.text.strip()
-        if t and len(t) < 40 and any(k in t for k in keywords):
-            return para._p
-    return None
+        if not t:
+            continue
+        # 进入/退出目录区:"目录"标题起,到首个实质正文(投标函/法定代表人等)止
+        if len(t) < 8 and ("目录" in t or "目 录" in t):
+            in_toc = True
+            continue
+        if in_toc:
+            # 目录条目多为"X、xxx"短行;遇到较长正文或"投标函"等正文章节起 → 出目录
+            if len(t) > 24 or "投标函" in t:
+                in_toc = False
+            else:
+                continue  # 仍在目录,条目不作锚点
+        if len(t) < 40 and any(k in t for k in keywords):
+            last_match = para._p
+    return last_match
 
 
 def _inject_org_tables(doc) -> int:

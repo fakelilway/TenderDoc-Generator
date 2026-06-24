@@ -249,6 +249,13 @@ def generate_v2_bid_package(
 
     apply_fixed_fields(combined_profile)
 
+    # 项目经理简历表字段(选派的项目经理 → 台账职称 + 身份证/毕业证 OCR)
+    pm_for_resume = str(
+        combined_profile.get("project_manager_name") or combined_profile.get("project_manager") or ""
+    ).strip()
+    if pm_for_resume:
+        combined_profile["pm_resume"] = build_pm_resume_fields(pm_for_resume)
+
     # ── Phase 0: 招标商务格式章 PDF → 福昕云转可编辑 Word(唯一路径,无降级) ──
     built_format_docx: str | None = None
     built_appendix_docx: str | None = None
@@ -1095,15 +1102,31 @@ def _inject_project_images(technical_md: str, project_id: int | None) -> str:
 # 开户/体系→投标人基本情况表后(须知3.5.1);荣誉与信誉→信誉情况表后(3.5.4)。空 anchor=卷尾。
 # 单一文件证(营业执照/安许/开户)只插1张(正本优先)——正本+多副本是同一份证,1张够证明。
 # 资质/荣誉/专利是多张不同的证,保留较大上限。
-_EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int, str], ...] = (
-    ("营业执照", ("营业执照",), 1, "基本情况表"),
-    ("企业资质证书", ("资质证书", "施工劳务资质证书"), 16, "基本情况表"),
-    ("安全生产许可证", ("安全生产许可证",), 1, "基本情况表"),
-    ("基本账户开户许可证", ("开户许可证",), 1, "基本情况表"),
-    ("管理体系认证证书", ("体系证书",), 10, "基本情况表"),
-    ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20, "信誉情况表"),
-    ("专利与工法证书", ("专利证书", "工法证书"), 15, "基本情况表"),
+# (组标题, 证件类型, 组上限, 落位锚点, 去重模式)。去重模式:
+#   one=同一份证只插1张(营业执照/安许/开户,正本+最新有效期优先);
+#   specialty=按专业各留1张(资质证书:公路工程/市政各1,同专业多次扫描算1);
+#   none=多张不同的证全保留(荣誉/专利/体系)。
+_EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int, str, str], ...] = (
+    ("营业执照", ("营业执照",), 1, "基本情况表", "one"),
+    ("企业资质证书", ("资质证书", "施工劳务资质证书"), 16, "基本情况表", "specialty"),
+    ("安全生产许可证", ("安全生产许可证",), 1, "基本情况表", "one"),
+    ("基本账户开户许可证", ("开户许可证",), 1, "基本情况表", "one"),
+    ("管理体系认证证书", ("体系证书",), 10, "基本情况表", "none"),
+    ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20, "信誉情况表", "none"),
+    ("专利与工法证书", ("专利证书", "工法证书"), 15, "基本情况表", "none"),
 )
+
+
+def _cert_sort_key(ref: dict) -> tuple:
+    """证件排序:正本优先,有效期晚的优先(去重时取这张作代表)。"""
+    import re as _re
+
+    fn = str(ref.get("file_name", ""))
+    zheng = 0 if "正本" in fn else 1
+    vt = str(ref.get("valid_to", "") or "")
+    m = _re.search(r"(20\d{2})", vt)
+    year = -int(m.group(1)) if m else 0  # 有效期晚的(年大)排前
+    return (zheng, year)
 
 
 def _qualification_evidence_markdown(limit: int = 80) -> str:
@@ -1130,25 +1153,34 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
 
     blocks: list[str] = []
     seen: set[int] = set()
-    for title, cert_types, group_cap, anchor in _EVIDENCE_GROUPS:
+    for title, cert_types, group_cap, anchor, dedup in _EVIDENCE_GROUPS:
         group_refs: list[dict] = []
         for cert_type in cert_types:
             group_refs.extend(by_type.get(cert_type, []))
-        # 单证类(cap=1)正本优先:文件名含"正本"的排前(稳定排序,保留 created_at 次序)
-        if group_cap == 1:
-            group_refs.sort(key=lambda r: 0 if "正本" in str(r.get("file_name", "")) else 1)
+        group_refs.sort(key=_cert_sort_key)  # 正本 + 最新有效期优先(去重取代表)
         emitted: list[str] = []
+        seen_keys: set[str] = set()  # one/specialty 的去重键
         for ref in group_refs:
             if len(emitted) >= group_cap or len(seen) >= limit:
                 break
             doc_id = int(ref.get("document_id", 0) or 0)
             if doc_id <= 0 or doc_id in seen:
                 continue
-            seen.add(doc_id)
             specialty = str(ref.get("specialty") or "").strip().replace('"', "")
+            # 去重:同一份证只取代表张(正本/最新),不同的证才各留
+            if dedup == "one":
+                if seen_keys:
+                    continue
+                seen_keys.add("_")
+            elif dedup == "specialty":
+                spec_key = specialty or "_"
+                if spec_key in seen_keys:
+                    continue
+                seen_keys.add(spec_key)
+            seen.add(doc_id)
             if specialty and specialty not in title:
                 caption = f"{title}（{specialty}）"
-            elif group_cap > 1:
+            elif group_cap > 1 and dedup == "none":
                 caption = f"{title}（{len(emitted) + 1}）"
             else:
                 caption = title
@@ -1258,13 +1290,15 @@ def _legal_rep_id_evidence_markdown(legal_rep_name: str) -> str:
     )
 
 
-# 项目经理/总工证件:建造师证/身份证(正反)/职称/安全证/社保 → 各自资历表后。
-# 身份证靠 OCR 分正反面(asset_resolver.resolve_id_card);其余按 owner_name+证件类型取。
-_PERSONNEL_CERT_GROUPS: tuple[tuple[str, tuple[str, ...], int], ...] = (
-    ("注册建造师证", ("一级建造师证", "二级建造师证", "建造师证"), 4),
-    ("职称证书", ("职称证书",), 2),
-    ("安全考核证", ("交安证", "建安证", "注册安全工程师证", "安全考核证"), 3),
-    ("社保证明", ("社保",), 2),
+# 项目经理/总工证件:身份证(正反)+ 建造师/职称/安全/毕业证/社保,**每类只取1张代表**
+# (同一证扫几十遍是常态,只附一张正本/最新)。cert_types 按优先级排(一级建造师 > 二级),
+# 取第一个有的类型的代表张。笼统"人员证件"(大头照)不在内,不会插进去。
+_PERSONNEL_CERT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("注册建造师证", ("一级建造师证", "二级建造师证", "建造师证")),
+    ("职称证书", ("职称证书",)),
+    ("安全考核证", ("交安证", "建安证", "注册安全工程师证")),
+    ("毕业证", ("毕业证",)),
+    ("社保证明", ("社保",)),
 )
 
 
@@ -1302,28 +1336,114 @@ def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
         refs = list_knowledge_image_references("", limit=5000)
     except Exception:
         refs = []
-    by_owner = [r for r in refs if str(r.get("owner_name") or "").strip() == name]
-    for title, cert_types, cap in _PERSONNEL_CERT_GROUPS:
-        emitted = 0
-        for r in by_owner:
-            if emitted >= cap:
+    def _insertable_image(r: dict) -> bool:
+        if str(r.get("image_insertable")) in ("False", "false", "0", "None"):
+            return False
+        return str(r.get("file_type", "")).lower() in ("jpg", "jpeg", "png")
+
+    by_owner = [
+        r
+        for r in refs
+        if str(r.get("owner_name") or "").strip() == name and _insertable_image(r)
+    ]
+    for title, cert_types in _PERSONNEL_CERT_GROUPS:
+        # 按 cert_types 优先级(一级>二级…)找第一个有的类型,取其正本/最新有效期那张
+        chosen = None
+        for ct in cert_types:
+            cands = [r for r in by_owner if ct in str(r.get("certificate_type") or "")]
+            cands.sort(key=_cert_sort_key)
+            for r in cands:
+                if int(r.get("document_id", 0) or 0) not in seen:
+                    chosen = r
+                    break
+            if chosen:
                 break
-            ctype = str(r.get("certificate_type") or "")
-            if not any(k in ctype for k in cert_types):
-                continue
-            doc_id = int(r.get("document_id", 0) or 0)
-            if doc_id <= 0 or doc_id in seen:
-                continue
-            if str(r.get("image_insertable")) in ("False", "false", "0", "None"):
-                continue
-            seen.add(doc_id)
-            emitted += 1
-            suffix = f"（{emitted}）" if cap > 1 else ""
-            blocks.append(
-                f'\n{{{{knowledge_image:document_id={doc_id} '
-                f'anchor="{anchor}" caption="{role}（{name}）{title}{suffix}" width_cm=12}}}}\n'
-            )
+        if not chosen:
+            continue
+        doc_id = int(chosen["document_id"])
+        seen.add(doc_id)
+        blocks.append(
+            f'\n{{{{knowledge_image:document_id={doc_id} '
+            f'anchor="{anchor}" caption="{role}（{name}）{title}" width_cm=12}}}}\n'
+        )
     return "".join(blocks)
+
+
+def build_pm_resume_fields(pm_name: str) -> dict[str, str]:
+    """汇总项目经理简历表要填的字段:姓名/拟任职务/职称(台账) + 年龄性别(身份证OCR) +
+    学历/毕业学校/专业(毕业证OCR)。取不到的不放进去(留白,不瞎编)。"""
+    import datetime
+    import re as _re
+
+    name = (pm_name or "").strip()
+    if not name:
+        return {}
+    fields: dict[str, str] = {"姓名": name, "拟任职务": "项目经理"}
+
+    # 台账职称
+    try:
+        from services import personnel_roster_service
+
+        for m in personnel_roster_service.get_personnel_roster().get("roster", []):
+            if str(m.get("name")) == name:
+                if m.get("title"):
+                    fields["职称"] = str(m["title"])
+                break
+    except Exception:
+        pass
+
+    # 身份证 OCR → 年龄/性别(身份证号第7-14位=出生YYYYMMDD,第17位奇男偶女)
+    try:
+        from services import asset_resolver
+        from services.id_card_ocr import classify_id_card
+
+        for c in asset_resolver.pick_id_card_documents(name):
+            cls = classify_id_card(asset_resolver.read_asset_bytes(int(c["document_id"])))
+            idn = str(cls.get("id_number") or "")
+            if len(idn) >= 17:
+                fields.setdefault("年龄", str(datetime.date.today().year - int(idn[6:10])))
+                fields.setdefault("性别", "男" if int(idn[16]) % 2 == 1 else "女")
+                break
+    except Exception:
+        pass
+
+    # 毕业证 OCR → 学历/毕业学校/专业(best-effort)
+    try:
+        from services.knowledge_service import (
+            get_knowledge_document_file_bytes,
+            list_knowledge_image_references,
+        )
+        from utils.file_parser import extract_text_from_image
+
+        refs = list_knowledge_image_references("", limit=5000)
+        dipl = next(
+            (
+                r
+                for r in refs
+                if str(r.get("owner_name") or "").strip() == name
+                and "毕业证" in str(r.get("certificate_type") or "")
+                and str(r.get("file_type", "")).lower() in ("jpg", "jpeg", "png")
+            ),
+            None,
+        )
+        if dipl:
+            txt = (extract_text_from_image(get_knowledge_document_file_bytes(int(dipl["document_id"]))) or "").replace(" ", "")
+            for deg in ("博士研究生", "硕士研究生", "博士", "硕士", "本科", "专科", "大专"):
+                if deg in txt:
+                    fields.setdefault("学历", deg)
+                    break
+            # 学校必须是真校名(xx大学/xx学院),排除"普通高等学校"等模板套话
+            m = _re.search(r"([一-龥]{3,12}(?:大学|学院))", txt)
+            if m and not m.group(1).startswith(("普通", "高等", "全日制")):
+                fields.setdefault("毕业学校", m.group(1))
+            # 专业 OCR 噪声大,只在"专业："后紧跟明确专业名(以工程/管理/技术等收尾)才填
+            m = _re.search(r"专业[:：]\s*([一-龥]{2,10}(?:工程|管理|技术|科学|设计|建筑))", txt)
+            if m:
+                fields.setdefault("专业", m.group(1))
+    except Exception:
+        pass
+
+    return fields
 
 
 def _personnel_cert_evidence_markdown(pm_name: str, tech_name: str) -> str:

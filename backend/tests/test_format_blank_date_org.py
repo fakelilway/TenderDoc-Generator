@@ -86,3 +86,43 @@ def test_inject_org_tables_copies_table(monkeypatch) -> None:
     assert inserted == 1
     assert len(target.tables) == before + 1
     assert "项目经理" in target.tables[-1].cell(0, 0).text
+
+
+def test_strip_tender_page_numbers() -> None:
+    from services.original_docx_format_service import _strip_tender_page_numbers
+    doc = Document()
+    doc.add_paragraph("正文内容")
+    doc.add_paragraph("171")  # 招标原件页码
+    doc.add_paragraph("第 5 页")
+    n = _strip_tender_page_numbers(doc)
+    texts = [p.text for p in doc.paragraphs]
+    assert "171" not in texts and "第 5 页" not in texts
+    assert "正文内容" in texts
+
+
+def test_pm_resume_table_fill_scoped() -> None:
+    from services.original_docx_format_service import _fill_pm_resume_table
+    doc = Document()
+    t = doc.add_table(rows=2, cols=4)
+    t.cell(0, 0).text = "姓名"
+    t.cell(0, 2).text = "职称"
+    t.cell(1, 0).text = "拟在本标段工程担任职务"
+    # 另一张表(无"拟在本标段")不应被填
+    other = doc.add_table(rows=1, cols=2)
+    other.cell(0, 0).text = "姓名"
+    resume = {"姓名": "李刚", "职称": "工程师", "拟任职务": "项目经理"}
+    _fill_pm_resume_table(doc, resume)
+    assert t.cell(0, 1).text == "李刚"
+    assert t.cell(1, 1).text == "项目经理"
+    assert other.cell(0, 1).text.strip() == ""  # 非简历表不动
+
+
+def test_org_table_anchor_skips_toc() -> None:
+    from services import generation_service as g
+    doc = Document()
+    doc.add_paragraph("目录")
+    doc.add_paragraph("五、项目管理机构")  # 目录条目
+    doc.add_paragraph("投标函正文……（实质内容，退出目录）" + "x" * 30)
+    real = doc.add_paragraph("五、项目管理机构")  # 正文真章节
+    el = g._find_section_paragraph(doc, ("项目管理机构",))
+    assert el is real._p  # 取正文章节,不取目录条目

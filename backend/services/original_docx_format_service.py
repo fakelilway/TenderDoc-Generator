@@ -783,10 +783,16 @@ _SLOT_CHARS = frozenset(" 　\t_＿…‥.．·・‧․-－—–")
 
 
 def _looks_like_next_label(s: str) -> bool:
-    """s 开头是否为"同级小标签 + 冒号"(如 性别：)——用于判定前一个槽为空、可填。"""
+    """s 开头是否为"同级小标签 + 冒号"(如 性别：/性　别：)——判定前一个槽为空、可填。
+
+    标签字之间常被排版拉开大空格("性　　别"),先去掉前若干字符里的空白再比对,
+    否则"姓名"的填充会越过空格串进"性别",出现"许明英性别："。
+    """
+    # 去掉开头一段的空白(含全角)后再比对,容忍 "性  别：" 这类拉开的标签
+    compact = s.replace(" ", "").replace("　", "").replace("\t", "")
     for lbl in _FORM_SIBLING_LABELS:
-        if s.startswith(lbl):
-            rest = s[len(lbl):].lstrip(" 　")
+        if compact.startswith(lbl):
+            rest = compact[len(lbl):]
             if rest[:1] in ("：", ":"):
                 return True
     return False
@@ -931,6 +937,7 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
         while i < n:
             ch = s[i]
             if ch in "：:":
+                label_seg = seg  # 当前标签(冒号前),用于签字处守卫
                 value = _inline_value_for(seg, profile, para_text, id_proof_ctx)
                 seg = ""
                 if value:
@@ -940,6 +947,16 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                     k = j
                     while k < n and s[k] in _SLOT_CHARS:  # 吃掉留白槽(tab/下划线/点线)
                         k += 1
+                    # 用户定:法定代表人签字/盖章处留白(人工签),不打名字;投标人(盖单位章)照填公司名。
+                    _lbl = label_seg.replace(" ", "").replace("　", "")
+                    _is_legal_rep = _lbl.endswith(("法定代表人", "法人代表", "委托代理人"))
+                    _after = s[k : k + 12]
+                    _is_sign_spot = any(m in _after for m in _SIGN_MARKERS) or (
+                        "签字" in _after or "签名" in _after
+                    )
+                    if _is_legal_rep and _is_sign_spot:
+                        i += 1
+                        continue  # 法人签字处留白
                     # 用户拍板(签字盖章块):投标人/法定代表人在「（盖单位章）」「（签字或盖章）」前
                     # 打上公司名/姓名,标记原样保留——填的是冒号后留白槽 s[j:k],标记在 s[k:] 不动,
                     # 故不再因签字/盖章标记跳过(区别于曾被否的 c274972"代签代盖":那是把标记替换掉)。
@@ -988,6 +1005,54 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
             run = runs[ri]
             text = run.text
             run.text = text[:a] + val + text[b:]
+    return filled
+
+
+# 项目经理(项目技术负责人)简历表的标签 → resume 字段键。只在简历表内填,不外溢。
+_PM_RESUME_LABELS: tuple[tuple[str, str], ...] = (
+    ("拟在本标段", "拟任职务"),  # 拟在本标段工程担任职务
+    ("毕业学校", "毕业学校"),
+    ("姓名", "姓名"),
+    ("年龄", "年龄"),
+    ("学历", "学历"),
+    ("职称", "职称"),
+    ("性别", "性别"),
+    ("专业", "专业"),
+)
+
+
+def _fill_pm_resume_table(document: Any, resume: dict[str, Any]) -> int:
+    """填"项目经理(项目技术负责人)简历"表:姓名/年龄/学历/职称/拟任职务/毕业学校/专业。
+
+    只在简历表内(含"拟在本标段")按标签填右邻空格;经历/获奖等填不到的留白。返回填入格数。
+    """
+    if not resume or not resume.get("姓名"):
+        return 0
+    filled = 0
+    for table in document.tables:
+        full = " ".join(c.text for row in table.rows for c in row.cells)
+        if "拟在本标段" not in full:  # 唯一锚:只认简历表
+            continue
+        for row in table.rows:
+            cells = row.cells
+            for i, cell in enumerate(cells):
+                ctext = cell.text.strip()
+                key = next(
+                    (k for lbl, k in _PM_RESUME_LABELS if ctext.startswith(lbl) or ctext == lbl),
+                    None,
+                )
+                if not key:
+                    continue
+                val = str(resume.get(key, "") or "").strip()
+                if not val:
+                    continue
+                for j in range(i + 1, len(cells)):
+                    if cells[j]._tc is cell._tc:
+                        continue
+                    if _is_blank_or_placeholder(cells[j].text.strip()):
+                        _set_cell_value(cells[j], val)
+                        filled += 1
+                    break
     return filled
 
 
@@ -1078,6 +1143,36 @@ def _image_is_seal(blob: bytes) -> bool:
         if a > 40 and r > 110 and r - g > 40 and r - b > 40
     )
     return bool(pixels) and red / len(pixels) > 0.05
+
+
+def _strip_tender_page_numbers(document: Any) -> int:
+    """清掉福昕从招标原件搬进来的页码:① 清空页脚 ② 删正文里"纯数字"页码段(如 171)。
+
+    投标文件应用自己的页码,不该带招标文件的。返回清掉的元素数。
+    """
+    import re as _re
+
+    cleared = 0
+    # ① 页脚清空(招标原件页码常在页脚)
+    try:
+        for section in document.sections:
+            footer = section.footer
+            footer.is_linked_to_previous = False
+            for para in footer.paragraphs:
+                for run in list(para.runs):
+                    run._r.getparent().remove(run._r)
+                    cleared += 1
+    except Exception:
+        pass
+    # ② 正文里整段只有数字(可带"第 X 页/共 X 页")的页码行 → 删
+    page_re = _re.compile(r"^第?\s*\d{1,4}\s*页?(\s*/?\s*共?\s*\d{1,4}\s*页?)?$")
+    for para in list(document.paragraphs):
+        t = para.text.strip()
+        if t and (t.isdigit() and len(t) <= 4 or page_re.match(t)):
+            el = para._p
+            el.getparent().remove(el)
+            cleared += 1
+    return cleared
 
 
 def _strip_seal_images(document: Any) -> int:
