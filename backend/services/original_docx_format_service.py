@@ -435,6 +435,42 @@ def _fill_signature_bidder_line(document: Any, profile: dict[str, Any]) -> int:
     return added
 
 
+def _fill_legal_rep_columns(document: Any, profile: dict[str, Any]) -> int:
+    """修福昕把法定代表人身份证明两列表单(姓名|性别、年龄|职务)压平、切断右列的问题。
+
+    现象:"姓名：许明英性"(性别只剩'性'黏在名后)、"年龄：50职"(职务只剩'职')。
+    做法:去掉末尾漏出的'性'/'职',补回"性别：法人性别"/"职务：法人职务"。值从档案/身份证OCR取。
+    """
+    gender = str(profile.get("法人性别") or "").strip()
+    title = str(profile.get("法人职务") or "").strip()
+    fixed = 0
+
+    def _strip_tail_and_append(p, ch: str, appendix: str) -> bool:
+        for r in reversed(p.runs):
+            if not r.text:
+                continue
+            if r.text.endswith(ch):
+                r.text = r.text[: -len(ch)]
+                p.add_run(appendix)
+                return True
+            return False  # 末尾非空run但不以ch结尾 → 不动(安全)
+        return False
+
+    for p in document.paragraphs:
+        norm = p.text.replace(" ", "").replace("　", "").strip()
+        if not norm:
+            continue
+        # 姓名：X性 → 补 性别(右列被切,只剩'性')
+        if norm.startswith("姓名") and norm.endswith("性") and "性别" not in norm and gender:
+            if _strip_tail_and_append(p, "性", f"　　性别：{gender}"):
+                fixed += 1
+        # 年龄：X职 → 补 职务(只剩'职')
+        elif norm.startswith("年龄") and norm.endswith("职") and "职务" not in norm and title:
+            if _strip_tail_and_append(p, "职", f"　　职务：{title}"):
+                fixed += 1
+    return fixed
+
+
 _BROAD_ENTITY_KEYS = frozenset({"投标人", "项目经理", "注册建造师"})
 _NAME_TAILS = frozenset({"名称", "姓名", "名", "全称", "单位名称"})
 # 判定"是否只剩名字尾巴"前,先剥掉这些主体周围的修饰词/装饰。

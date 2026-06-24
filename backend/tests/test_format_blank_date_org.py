@@ -245,3 +245,25 @@ def test_signature_bidder_line_both_cases() -> None:
     c.add_paragraph().add_run("联合体协议书")
     c.add_paragraph().add_run("法定代表人： \t（签字或盖章）")
     assert _fill_signature_bidder_line(c, prof) == 0
+
+
+def test_legal_rep_columns_rebuild() -> None:
+    """福昕切断的 性别/职务 右列重建(姓名：X性→补性别;年龄：X职→补职务)。"""
+    from docx import Document as _D
+    from services.original_docx_format_service import _fill_legal_rep_columns
+    prof = {"法人性别": "女", "法人职务": "总经理"}
+    d = _D()
+    p1 = d.add_paragraph()
+    for t in ["姓", " ", "名", "：", " ", "许明英", "性"]:
+        p1.add_run(t)
+    p2 = d.add_paragraph()
+    for t in ["年", " ", "龄", "：", " ", "50", "职"]:
+        p2.add_run(t)
+    assert _fill_legal_rep_columns(d, prof) == 2
+    assert "性别：女" in d.paragraphs[0].text and "许明英" in d.paragraphs[0].text
+    assert not d.paragraphs[0].text.rstrip().endswith("性")  # 漏出的'性'已去掉
+    assert "职务：总经理" in d.paragraphs[1].text
+    assert not d.paragraphs[1].text.rstrip().endswith("职")
+    # 正常姓名不动
+    d2 = _D(); d2.add_paragraph().add_run("姓 名： 张三")
+    assert _fill_legal_rep_columns(d2, prof) == 0
