@@ -213,3 +213,35 @@ def test_performance_table_empty_when_no_selection() -> None:
     for c, v in enumerate(["业绩序号", "项目名称", "备注"]):
         t.cell(0, c).text = v
     assert o._fill_performance_table(d, {}) == 0
+
+
+def test_signature_bidder_line_both_cases() -> None:
+    """签名块投标人行:存在则填空补上(不重复加)、缺失则重建。"""
+    from docx import Document as _D
+    from services.original_docx_format_service import (
+        _fill_inline_labeled_blanks, _fill_signature_bidder_line,
+    )
+    prof = {"company_name": "安徽正奇建设有限公司"}
+    # A 行存在但空 → 填空填上,重建加0
+    a = _D(); p = a.add_paragraph()
+    for t in ["投 标 人：", " ", "\t", "（盖单位章）"]:
+        p.add_run(t)
+    a.add_paragraph().add_run("法定代表人： \t（签字或盖章）")
+    _fill_inline_labeled_blanks(a, prof)
+    assert _fill_signature_bidder_line(a, prof) == 0
+    assert "安徽正奇建设有限公司" in a.paragraphs[0].text
+    # B 行缺失 → 重建补1行,在法定代表人前
+    b = _D()
+    b.add_paragraph().add_run("（其他补充说明）。")
+    b.add_paragraph()
+    b.add_paragraph().add_run("法定代表人： \t（签字或盖章）")
+    assert _fill_signature_bidder_line(b, prof) == 1
+    texts = [x.text for x in b.paragraphs]
+    bidder_i = next(i for i, t in enumerate(texts) if "投 标 人" in t)
+    rep_i = next(i for i, t in enumerate(texts) if "法定代表人" in t)
+    assert bidder_i < rep_i and "安徽正奇建设有限公司" in texts[bidder_i]
+    # 联合体协议书区不补
+    c = _D()
+    c.add_paragraph().add_run("联合体协议书")
+    c.add_paragraph().add_run("法定代表人： \t（签字或盖章）")
+    assert _fill_signature_bidder_line(c, prof) == 0

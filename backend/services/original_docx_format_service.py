@@ -377,6 +377,64 @@ def _blank_zone_step(para_text: str, in_blank: bool) -> bool:
     ):
         return False
     return in_blank
+
+
+# 福昕转换常把投标函/承诺函签名块的"投标人：__（盖单位章）"整行弄丢(只剩"法定代表人：（签字）")。
+# 检测到签名块缺投标人行时,补一行"投标人：公司（盖单位章）"。法定代表人仍留人工签字。
+_SIGN_REP_RE = __import__("re").compile(r"^法定代表人(或其?(授权|委托)代理人?)?[：:]")
+
+
+def _fill_signature_bidder_line(document: Any, profile: dict[str, Any]) -> int:
+    """签名块缺"投标人：__（盖单位章）"行时补上(福昕弄丢的)。联合体协议书区不补。"""
+    company = str(profile.get("company_name") or "").strip()
+    if not company:
+        return 0
+    paras = list(document.paragraphs)
+    in_blank = False
+    added = 0
+    for idx, p in enumerate(paras):
+        t = p.text.strip()
+        in_blank = _blank_zone_step(t, in_blank)
+        if in_blank:
+            continue
+        # 必须是签名块的"法定代表人："行(带 签字/盖章 标记)
+        if not _SIGN_REP_RE.match(t) or not any(m in t for m in ("签字", "盖章")):
+            continue
+        # 往前看 ≤6 段有没有"投标人："行;遇标题/另一签名块/委托语境就停
+        has_bidder = False
+        skip_ctx = False  # 授权委托书/代理人语境 → 不补投标人(那里是委托人/代理人签字)
+        empty_para = None
+        steps = 0
+        j = idx - 1
+        while j >= 0 and steps < 6:
+            pt = paras[j].text.strip()
+            if pt == "":
+                if empty_para is None:
+                    empty_para = paras[j]
+                j -= 1
+                steps += 1
+                continue
+            if any(k in pt for k in ("委托", "代理人", "授权")):
+                skip_ctx = True
+                break
+            if _BLANK_SECTION_END_RE.search(pt) or "法定代表人" in pt:
+                break
+            if pt.replace(" ", "").startswith("投标人") and ("：" in pt or ":" in pt):
+                has_bidder = True
+                break
+            j -= 1
+            steps += 1
+        if has_bidder or skip_ctx:
+            continue
+        line = f"投 标 人： {company}（盖单位章）"
+        if empty_para is not None:
+            empty_para.add_run(line)  # 填进签名块前的空段(位置正好)
+        else:
+            p.insert_paragraph_before(line)  # 没空段就在法定代表人行前插一行
+        added += 1
+    return added
+
+
 _BROAD_ENTITY_KEYS = frozenset({"投标人", "项目经理", "注册建造师"})
 _NAME_TAILS = frozenset({"名称", "姓名", "名", "全称", "单位名称"})
 # 判定"是否只剩名字尾巴"前,先剥掉这些主体周围的修饰词/装饰。
