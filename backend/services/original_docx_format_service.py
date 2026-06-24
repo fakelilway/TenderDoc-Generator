@@ -1213,6 +1213,66 @@ def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
     return False
 
 
+def _fill_performance_table(document: Any, profile: dict[str, Any]) -> int:
+    """填"投标人业绩情况表"(业绩序号|项目名称（合同名称）|备注)的项目名称列,用选中的类似业绩。
+
+    只填空格、首数据行已有内容则整表留人工(保真)。返回填入的行数。
+    选中业绩来自 profile['selected_performance'](_apply_selected_project_manager 注入,已去重)。
+    """
+    perf = profile.get("selected_performance") or []
+    names: list[str] = []
+    seen: set[str] = set()
+    for p in perf:
+        nm = str(p.get("name", "")).strip()
+        if nm and nm not in seen:  # 函数内也去重(双保险,防勾重)
+            seen.add(nm)
+            names.append(nm)
+    if not names:
+        return 0
+
+    filled = 0
+    for table in document.tables:
+        try:
+            rows = table.rows
+            n_cols = len(table.columns)
+            if len(rows) < 2 or n_cols < 2:
+                continue
+            headers = [table.cell(0, c).text.strip() for c in range(n_cols)]
+            # 必须是"业绩情况表":含"业绩序号"列 + "项目名称/合同名称"列
+            if not any("业绩序号" in h for h in headers):
+                continue
+            col_name = next(
+                (c for c, h in enumerate(headers)
+                 if "项目名称" in h or "合同名称" in h or "工程名称" in h),
+                None,
+            )
+            col_seq = next((c for c, h in enumerate(headers) if "业绩序号" in h or "序号" in h), None)
+            if col_name is None:
+                continue
+            # 首数据行项目名称已有内容 → 留人工
+            if not _is_blank_or_placeholder(table.cell(1, col_name).text.strip()):
+                continue
+            i = 0
+            for ri in range(1, len(rows)):
+                if i >= len(names):
+                    break
+                cell = table.cell(ri, col_name)
+                t = cell.text.strip()
+                if t and t not in ("……", "…", "...", "．．．"):
+                    continue  # 该行已有项目名,跳过
+                _set_cell_value(cell, names[i])
+                # 序号列若是 …… 或空,补成序号数字
+                if col_seq is not None:
+                    st = table.cell(ri, col_seq).text.strip()
+                    if not st or st in ("……", "…", "..."):
+                        _set_cell_value(table.cell(ri, col_seq), str(i + 1))
+                i += 1
+                filled += 1
+        except Exception:
+            continue
+    return filled
+
+
 def _image_is_seal(blob: bytes) -> bool:
     """True if the image is a red ink seal (公章/印章).
 

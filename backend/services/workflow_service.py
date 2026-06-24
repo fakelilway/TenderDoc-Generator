@@ -644,11 +644,22 @@ def _apply_selected_project_manager(company_profile, project):
     sel = project.get("selected_personnel") or {}
     selected = sel.get("project_manager")
     tech = sel.get("tech_director")
+    perf = project.get("selected_performance") or []  # 选中的类似业绩(多选)
     pm_ok = bool(selected and selected.get("name"))
     tech_ok = bool(tech and tech.get("name"))
-    if not pm_ok and not tech_ok:
+    if not pm_ok and not tech_ok and not perf:
         return company_profile
     profile = dict(company_profile or {})
+    # 选中业绩按名字去重(用户可能勾重),原样带给填表逻辑(_fill_performance_table 用)
+    if perf:
+        seen_p: set[str] = set()
+        uniq = []
+        for it in perf:
+            nm = str(it.get("name", "")).strip()
+            if nm and nm not in seen_p:
+                seen_p.add(nm)
+                uniq.append(it)
+        profile["selected_performance"] = uniq
     if pm_ok:
         profile["project_manager_name"] = selected["name"]
         if selected.get("title"):

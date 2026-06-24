@@ -173,6 +173,7 @@ def convert_format_pages_via_cloud(
         _fill_establish_segmented,
         _fill_inline_labeled_blanks,
         _fill_known_table_cells,
+        _fill_performance_table,
         _fill_personnel_table,
         _fill_pm_resume_table,
         _find_format_page_range_in_pdf,
@@ -211,6 +212,7 @@ def convert_format_pages_via_cloud(
     _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
     _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
     _fill_personnel_table(doc, profile or {})
+    _fill_performance_table(doc, profile or {})  # 投标人业绩情况表 → 填选中的类似业绩项目名
     _fill_pm_resume_table(doc, (profile or {}).get("pm_resume") or {})  # 项目经理简历表
     # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
     _strip_seal_images(doc)

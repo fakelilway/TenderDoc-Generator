@@ -183,3 +183,33 @@ def test_evidence_groups_drop_system_patent() -> None:
     # 基本情况表后只剩这4类
     basic = [g[0] for g in _EVIDENCE_GROUPS if g[3] == "基本情况表"]
     assert set(basic) == {"营业执照", "企业资质证书", "安全生产许可证", "基本账户开户许可证"}
+
+
+def test_performance_table_fills_selected(monkeypatch) -> None:
+    """投标人业绩情况表(业绩序号|项目名称|备注)按选中业绩填项目名,去重,保真。"""
+    from docx import Document as _D
+    d = _D(); t = d.add_table(rows=4, cols=3)
+    for c, v in enumerate(["业绩序号", "项目名称（合同名称）", "备注"]):
+        t.cell(0, c).text = v
+    t.cell(1, 0).text = "1"; t.cell(2, 0).text = "2"; t.cell(3, 0).text = "……"
+    prof = {"selected_performance": [
+        {"name": "项目A"}, {"name": "项目A"}, {"name": "项目B"},
+    ]}
+    assert o._fill_performance_table(d, prof) == 2  # 去重后2个
+    assert t.cell(1, 1).text == "项目A"
+    assert t.cell(2, 1).text == "项目B"
+    # 保真:首数据行已填则整表跳过
+    d2 = _D(); t2 = d2.add_table(rows=2, cols=3)
+    for c, v in enumerate(["业绩序号", "项目名称（合同名称）", "备注"]):
+        t2.cell(0, c).text = v
+    t2.cell(1, 1).text = "已填"
+    assert o._fill_performance_table(d2, prof) == 0
+    assert t2.cell(1, 1).text == "已填"
+
+
+def test_performance_table_empty_when_no_selection() -> None:
+    from docx import Document as _D
+    d = _D(); t = d.add_table(rows=2, cols=3)
+    for c, v in enumerate(["业绩序号", "项目名称", "备注"]):
+        t.cell(0, c).text = v
+    assert o._fill_performance_table(d, {}) == 0
