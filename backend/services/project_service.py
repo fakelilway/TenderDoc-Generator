@@ -89,7 +89,9 @@ from services.project.strategy import (
 from services.project.personnel import (
     get_selected_personnel,
     recommend_project_personnel,
+    recommend_tech_director_personnel,
     save_selected_project_manager,
+    save_selected_tech_director,
 )
 from services.project.delivery import (
     _DELIVERY_FORMATS,

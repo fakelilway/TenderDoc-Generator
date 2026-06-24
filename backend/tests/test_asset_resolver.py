@@ -97,6 +97,32 @@ def test_resolve_filters_to_images_only(monkeypatch) -> None:
     assert "jpg" in params and "png" in params
 
 
+def _idrow(doc_id):
+    return (doc_id, f"{doc_id}.jpg", f"knowledge/{doc_id}.jpg", "jpg", {"certificate_type": "身份证", "owner_name": "许明英"})
+
+
+def test_pick_id_card_prefers_both(monkeypatch) -> None:
+    # 候选: 正面(1)/背面(2)/完整版(3) → 只取完整版1张
+    monkeypatch.setattr(asset_resolver, "_list_id_card_candidates", lambda name: [_idrow(1), _idrow(2), _idrow(3)])
+    monkeypatch.setattr(asset_resolver, "read_asset_bytes", lambda doc_id: b"x")
+    # 按调用顺序返回 side: 正面→背面→完整版
+    seq = iter([{"side": "front", "name": ""}, {"side": "back", "name": ""}, {"side": "both", "name": "许明英"}])
+    monkeypatch.setattr("services.id_card_ocr.classify_id_card", lambda b: next(seq))
+    out = asset_resolver.pick_id_card_documents("许明英")
+    assert len(out) == 1 and out[0]["side"] == "both"
+
+
+def test_pick_id_card_falls_back_to_front_back(monkeypatch) -> None:
+    # 没有完整版 → 取 正面+背面 各一
+    monkeypatch.setattr(asset_resolver, "_list_id_card_candidates", lambda name: [_idrow(1), _idrow(2)])
+    monkeypatch.setattr(asset_resolver, "read_asset_bytes", lambda doc_id: b"x")
+    seq = iter([{"side": "front", "name": "许明英"}, {"side": "back", "name": ""}])
+    monkeypatch.setattr("services.id_card_ocr.classify_id_card", lambda b: next(seq))
+    out = asset_resolver.pick_id_card_documents("许明英")
+    assert {o["side"] for o in out} == {"front", "back"}
+    assert len(out) == 2
+
+
 def test_read_asset_bytes_delegates(monkeypatch) -> None:
     monkeypatch.setattr(
         asset_resolver, "get_knowledge_document_file_bytes", lambda doc_id: b"\xff\xd8\xff\xe0data"

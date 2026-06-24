@@ -13,6 +13,7 @@ from schemas.personnel import (
     PersonnelMember,
     PMRecommendation,
     PMRequirement,
+    TechDirectorRequirement,
 )
 
 # 建造师等级高低:一级可顶二级要求。
@@ -132,6 +133,128 @@ def recommend_project_managers(
     scored = [
         rec
         for rec in (_score_member(member, requirement) for member in roster)
+        if rec is not None
+    ]
+    scored.sort(key=lambda rec: (-rec.score, rec.member.name))
+    return scored[:limit]
+
+
+# ── 项目技术负责人(总工)选派 ──────────────────────────────────────────────
+# 总工看职称(高级>中级)+专业,与项目经理(建造师证)不同。
+_TITLE_RANK = {"正高": 4, "高级": 3, "副高": 3, "中级": 2, "工程师": 2, "助理": 1, "初级": 1}
+
+
+def _title_rank(title: str) -> int:
+    t = title or ""
+    # 先匹配高级(含"高级工程师"),再中级,避免"高级工程师"里的"工程师"误判中级
+    if "正高" in t:
+        return 4
+    if "高级" in t or "副高" in t:
+        return 3
+    if "中级" in t:
+        return 2
+    if "助理" in t or "初级" in t:
+        return 1
+    if "工程师" in t:  # 裸"工程师"=中级
+        return 2
+    return 0
+
+
+def derive_tech_director_requirement(requirements: Any) -> TechDirectorRequirement:
+    """从招标里派生总工(项目技术负责人)硬性要求:职称等级 + 专业 + 是否要注册。"""
+    items = list(getattr(requirements, "qualification_list", []) or [])
+    items += list(getattr(requirements, "technical_score_items", []) or [])
+    texts = [
+        f"{getattr(it, 'title', '')} {getattr(it, 'description', '')}" for it in items
+    ]
+    tech_text = " ".join(
+        t
+        for t in texts
+        if ("技术负责人" in t or "总工" in t or "项目总工" in t)
+    )
+
+    title_level = ""
+    if "高级" in tech_text or "正高" in tech_text or "副高" in tech_text:
+        title_level = "高级职称"
+    elif "中级" in tech_text:
+        title_level = "中级职称"
+
+    specialty = ""
+    for keyword in _SPECIALTY_KEYWORDS:
+        if keyword in tech_text:
+            specialty = "市政公用工程" if keyword == "市政公用" else keyword
+            break
+
+    requires_reg = "注册建造师" in tech_text or "注册" in tech_text
+
+    return TechDirectorRequirement(
+        title_level=title_level,
+        specialty=specialty,
+        requires_registration=requires_reg,
+        note=tech_text[:160],
+    )
+
+
+def _score_tech(
+    member: PersonnelMember, requirement: TechDirectorRequirement
+) -> PMRecommendation | None:
+    """给一个总工候选打分;有职称即入选(职称是总工核心),硬等级不够则淘汰。"""
+    cand_rank = _title_rank(member.title)
+    if cand_rank == 0 and not member.builder_certs:
+        return None  # 无职称也无建造师 → 不像总工候选
+
+    matched: list[str] = []
+    gaps: list[str] = []
+    score = 0.0
+
+    req_rank = _title_rank(requirement.title_level)
+    if req_rank:
+        if cand_rank >= req_rank:
+            score += 2.0
+            matched.append(f"职称达标:{member.title or '—'}")
+        else:
+            return None  # 职称不够,硬性不满足
+    elif cand_rank:
+        score += 1.0 + 0.1 * cand_rank
+
+    # 专业:看职称专业,其次建造师专业
+    cand_specialties = [member.title_specialty, *member.builder_specialties]
+    cand_specialties = [s for s in cand_specialties if s]
+    if requirement.specialty:
+        if any(requirement.specialty in s or s in requirement.specialty for s in cand_specialties):
+            score += 2.0
+            matched.append(f"专业匹配:{requirement.specialty}")
+        elif not cand_specialties:
+            score += 0.3
+            gaps.append("专业待核验(名册未注明)")
+        else:
+            gaps.append(f"专业不符(本人:{'/'.join(cand_specialties)})")
+    elif cand_specialties:
+        matched.append(f"专业:{'/'.join(cand_specialties)}")
+
+    # 要注册:有建造师证加分
+    if requirement.requires_registration:
+        if member.builder_certs:
+            score += 1.0
+            matched.append("持注册建造师证")
+        else:
+            gaps.append("缺注册建造师证(招标要求,需人工补)")
+
+    if member.source == "台账":
+        score += 0.5
+    elif member.source == "知识库":
+        gaps.append("名册来源=知识库,需核验在职/有效期")
+
+    return PMRecommendation(member=member, score=round(score, 2), matched=matched, gaps=gaps)
+
+
+def recommend_tech_directors(
+    roster: list[PersonnelMember], requirement: TechDirectorRequirement, limit: int = 20
+) -> list[PMRecommendation]:
+    """按要求从名册推荐总工候选,分高在前。"""
+    scored = [
+        rec
+        for rec in (_score_tech(member, requirement) for member in roster)
         if rec is not None
     ]
     scored.sort(key=lambda rec: (-rec.score, rec.member.name))

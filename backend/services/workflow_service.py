@@ -641,17 +641,26 @@ def _apply_selected_project_manager(company_profile, project):
     ``project_manager_name``/``project_manager_cert``,下游商务卷填充(投标人基本情况表、
     项目管理机构人员组成表)即自动用选定人选。未选派则原样返回。
     """
-    selected = (project.get("selected_personnel") or {}).get("project_manager")
-    if not selected or not selected.get("name"):
+    sel = project.get("selected_personnel") or {}
+    selected = sel.get("project_manager")
+    tech = sel.get("tech_director")
+    pm_ok = bool(selected and selected.get("name"))
+    tech_ok = bool(tech and tech.get("name"))
+    if not pm_ok and not tech_ok:
         return company_profile
     profile = dict(company_profile or {})
-    profile["project_manager_name"] = selected["name"]
-    builder_certs = selected.get("builder_certs") or []
-    if builder_certs:
-        primary = builder_certs[0]
-        cert_no = str(primary.get("cert_no") or "").strip()
-        if cert_no:
-            profile["project_manager_cert"] = cert_no
+    if pm_ok:
+        profile["project_manager_name"] = selected["name"]
+        builder_certs = selected.get("builder_certs") or []
+        if builder_certs:
+            cert_no = str((builder_certs[0]).get("cert_no") or "").strip()
+            if cert_no:
+                profile["project_manager_cert"] = cert_no
+    # 总工(项目技术负责人)选派 → 覆盖档案默认,下游商务卷人员表 + 证件插图自动用选定人
+    if tech_ok:
+        profile["tech_director_name"] = tech["name"]
+        if tech.get("title"):
+            profile["tech_director_title"] = tech["title"]
     return profile
 
 

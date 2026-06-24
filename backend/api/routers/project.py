@@ -23,6 +23,8 @@ from schemas.personnel import (
     PMRecommendationResponse,
     PMSelectionRequest,
     PMSelectionResponse,
+    TechDirectorRecommendationResponse,
+    TechDirectorSelectionRequest,
 )
 from schemas.tender_spec import ConformanceReportResponse
 from schemas.project import (
@@ -435,6 +437,46 @@ def save_project_personnel_selection(
             else None
         )
         result = project_service.save_selected_project_manager(project_id, member)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return PMSelectionResponse(**result)
+
+
+@router.get(
+    "/api/project/{project_id}/tech-director/recommendations",
+    response_model=TechDirectorRecommendationResponse,
+)
+def get_project_tech_director_recommendations(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> TechDirectorRecommendationResponse:
+    """派生招标总工(项目技术负责人)要求 + 从公司名册推荐匹配候选(按职称+专业排序)。"""
+    try:
+        result = project_service.recommend_tech_director_personnel(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+    return TechDirectorRecommendationResponse(**result)
+
+
+@router.put(
+    "/api/project/{project_id}/tech-director",
+    response_model=PMSelectionResponse,
+)
+def save_project_tech_director_selection(
+    project_id: int,
+    request: TechDirectorSelectionRequest,
+    _project: int = Depends(authorized_project),
+) -> PMSelectionResponse:
+    """选定/清空本项目总工。member=None 清空。"""
+    try:
+        member = (
+            request.tech_director.model_dump()
+            if request.tech_director is not None
+            else None
+        )
+        result = project_service.save_selected_tech_director(project_id, member)
     except Exception as error:
         _raise_http_error(error)
 

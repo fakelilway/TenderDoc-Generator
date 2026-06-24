@@ -18,6 +18,7 @@ import type {
   PersonnelMember,
   PMRecommendationResponse,
   PMSelectionResponse,
+  TechDirectorRecommendationResponse,
   LoginResponse,
   LogoutResponse,
   ParsedConfirmationResponse,
@@ -453,6 +454,22 @@ export function savePersonnelSelection(
   return requestJson<PMSelectionResponse>(
     `/api/project/${projectId}/personnel`,
     { method: "PUT", body: JSON.stringify({ project_manager: member }) }
+  );
+}
+
+export function getTechDirectorRecommendations(projectId: number) {
+  return requestJson<TechDirectorRecommendationResponse>(
+    `/api/project/${projectId}/tech-director/recommendations`
+  );
+}
+
+export function saveTechDirectorSelection(
+  projectId: number,
+  member: PersonnelMember | null
+) {
+  return requestJson<PMSelectionResponse>(
+    `/api/project/${projectId}/tech-director`,
+    { method: "PUT", body: JSON.stringify({ tech_director: member }) }
   );
 }
 

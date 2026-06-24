@@ -8,12 +8,13 @@ from services import v2_generation_service as v2
 
 
 def test_personnel_cert_markdown_emits_idcard_and_certs(monkeypatch) -> None:
-    # mock 身份证正反面解析
-    def fake_resolve_id_card(name, side="front"):
-        return {"matched": True, "document_id": 1 if side == "front" else 2}
-
+    # mock 身份证最小覆盖选图(正面+背面各一)
     monkeypatch.setattr(
-        "services.asset_resolver.resolve_id_card", fake_resolve_id_card
+        "services.asset_resolver.pick_id_card_documents",
+        lambda name: [
+            {"document_id": 1, "side": "front"},
+            {"document_id": 2, "side": "back"},
+        ],
     )
     # mock 知识库图片引用:江舟的建造师证/职称证/社保(社保无图)
     refs = [
@@ -46,8 +47,7 @@ def test_personnel_cert_markdown_empty_name() -> None:
 
 def test_personnel_cert_evidence_combines_pm_and_tech(monkeypatch) -> None:
     monkeypatch.setattr(
-        "services.asset_resolver.resolve_id_card",
-        lambda name, side="front": {"matched": False},
+        "services.asset_resolver.pick_id_card_documents", lambda name: []
     )
     monkeypatch.setattr(
         "services.knowledge_service.list_knowledge_image_references",

@@ -1083,11 +1083,13 @@ def _inject_project_images(technical_md: str, project_id: int | None) -> str:
 # (组标题, 该组证件类型, 该组最多插几张)。过期证件已在 list_knowledge_image_references 滤掉。
 # (组标题, 证件类型, 组上限, 落位锚点)。anchor=招标要求该组插在哪张表后:营业执照/资质/安许/
 # 开户/体系→投标人基本情况表后(须知3.5.1);荣誉与信誉→信誉情况表后(3.5.4)。空 anchor=卷尾。
+# 单一文件证(营业执照/安许/开户)只插1张(正本优先)——正本+多副本是同一份证,1张够证明。
+# 资质/荣誉/专利是多张不同的证,保留较大上限。
 _EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int, str], ...] = (
-    ("营业执照", ("营业执照",), 2, "基本情况表"),
+    ("营业执照", ("营业执照",), 1, "基本情况表"),
     ("企业资质证书", ("资质证书", "施工劳务资质证书"), 16, "基本情况表"),
-    ("安全生产许可证", ("安全生产许可证",), 2, "基本情况表"),
-    ("基本账户开户许可证", ("开户许可证",), 2, "基本情况表"),
+    ("安全生产许可证", ("安全生产许可证",), 1, "基本情况表"),
+    ("基本账户开户许可证", ("开户许可证",), 1, "基本情况表"),
     ("管理体系认证证书", ("体系证书",), 10, "基本情况表"),
     ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20, "信誉情况表"),
     ("专利与工法证书", ("专利证书", "工法证书"), 15, "基本情况表"),
@@ -1122,6 +1124,9 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
         group_refs: list[dict] = []
         for cert_type in cert_types:
             group_refs.extend(by_type.get(cert_type, []))
+        # 单证类(cap=1)正本优先:文件名含"正本"的排前(稳定排序,保留 created_at 次序)
+        if group_cap == 1:
+            group_refs.sort(key=lambda r: 0 if "正本" in str(r.get("file_name", "")) else 1)
         emitted: list[str] = []
         for ref in group_refs:
             if len(emitted) >= group_cap or len(seen) >= limit:
@@ -1215,25 +1220,21 @@ def _legal_rep_id_evidence_markdown(legal_rep_name: str) -> str:
     name = (legal_rep_name or "").strip()
     if not name:
         return ""
+    # 最小覆盖:完整版1张 / 否则正反各1,OCR判面,不重复堆插(完整版+正面+背面)
     try:
-        from services.knowledge_service import list_knowledge_image_references
+        from services import asset_resolver
 
-        refs = list_knowledge_image_references("", limit=5000)
+        cards = asset_resolver.pick_id_card_documents(name)
     except Exception:
-        return ""
-    cards = [
-        r
-        for r in refs
-        if str(r.get("owner_name") or "").strip() == name
-        and "身份证" in str(r.get("certificate_type") or "")
-        and str(r.get("image_insertable")) not in ("False", "false", "0", "None")
-    ]
+        cards = []
+    _ID_LABEL = {"both": "（正反面）", "front": "正面", "back": "背面"}
     blocks: list[str] = []
-    for i, r in enumerate(cards[:2], 1):
+    for r in cards:
         doc_id = int(r.get("document_id", 0) or 0)
         if doc_id <= 0:
             continue
-        cap = f"法定代表人（{name}）身份证" + (f"（{i}）" if len(cards) > 1 else "")
+        label = _ID_LABEL.get(str(r.get("side")), "")
+        cap = f"法定代表人（{name}）身份证{label}"
         blocks.append(
             f'\n{{{{knowledge_image:document_id={doc_id} '
             f'anchor="法定代表人身份证明" caption="{cap}" width_cm=12}}}}\n'
@@ -1266,19 +1267,21 @@ def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
     blocks: list[str] = []
     seen: set[int] = set()
 
-    # 身份证正反面:OCR 判面,别抓错(正面有姓名)
+    # 身份证:最小覆盖(完整版1张 / 否则正反各1),OCR判面,不重复堆插
     try:
         from services import asset_resolver
 
-        for side, label in (("front", "正面"), ("back", "背面")):
-            card = asset_resolver.resolve_id_card(name, side=side)
-            if card.get("matched") and int(card.get("document_id", 0)) not in seen:
-                doc_id = int(card["document_id"])
-                seen.add(doc_id)
-                blocks.append(
-                    f'\n{{{{knowledge_image:document_id={doc_id} '
-                    f'anchor="{anchor}" caption="{role}（{name}）身份证{label}" width_cm=12}}}}\n'
-                )
+        _ID_LABEL = {"both": "（正反面）", "front": "正面", "back": "背面"}
+        for card in asset_resolver.pick_id_card_documents(name):
+            doc_id = int(card.get("document_id", 0))
+            if doc_id <= 0 or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            label = _ID_LABEL.get(str(card.get("side")), "")
+            blocks.append(
+                f'\n{{{{knowledge_image:document_id={doc_id} '
+                f'anchor="{anchor}" caption="{role}（{name}）身份证{label}" width_cm=12}}}}\n'
+            )
     except Exception:
         pass
 

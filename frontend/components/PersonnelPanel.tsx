@@ -1,20 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Check, HardHat } from "lucide-react";
+import type { ReactNode } from "react";
+import { AlertTriangle, Check, HardHat, Ruler } from "lucide-react";
 
 import {
   getPersonnelRecommendations,
-  savePersonnelSelection
+  getTechDirectorRecommendations,
+  savePersonnelSelection,
+  saveTechDirectorSelection
 } from "@/lib/api";
-import type {
-  PersonnelMember,
-  PMRecommendation,
-  PMRequirement
-} from "@/lib/types";
+import type { PersonnelMember, PMRecommendation, PMSelectionResponse } from "@/lib/types";
 
-// M-人员名册 Unit3c:本项目项目经理选派。按招标要求从公司名册推荐匹配候选,选定后
-// 自动填进商务卷(投标人基本情况表 + 项目管理机构人员组成表)。
+// 本项目选派:项目经理(看建造师证)+ 项目总工(看职称)。按招标要求从公司名册推荐匹配候选,
+// 选定后自动填进商务卷(投标人基本情况表 + 项目管理机构人员组成表)+ 证件插图按选定人取。
 
 function certText(member: PersonnelMember): string {
   const certs = member.builder_certs
@@ -29,8 +28,21 @@ function sameMember(a: PersonnelMember | null, b: PersonnelMember | null): boole
   return a.name === b.name;
 }
 
-export function PersonnelPanel({ projectId }: { projectId: number }) {
-  const [requirement, setRequirement] = useState<PMRequirement | null>(null);
+type RoleConfig = {
+  title: string;
+  iconColor: string;
+  icon: ReactNode;
+  fetchRecs: (
+    projectId: number
+  ) => Promise<{ requirement: unknown; recommendations: PMRecommendation[]; selected: PersonnelMember | null }>;
+  saveSel: (projectId: number, member: PersonnelMember | null) => Promise<PMSelectionResponse>;
+  selectedKey: "project_manager" | "tech_director";
+  reqText: (requirement: unknown) => string;
+  emptyHint: string;
+};
+
+function RoleSelector({ projectId, role }: { projectId: number; role: RoleConfig }) {
+  const [reqText, setReqText] = useState<string>("");
   const [recommendations, setRecommendations] = useState<PMRecommendation[]>([]);
   const [selected, setSelected] = useState<PersonnelMember | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,23 +51,22 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await getPersonnelRecommendations(projectId);
-      setRequirement(res.requirement);
+      const res = await role.fetchRecs(projectId);
+      setReqText(role.reqText(res.requirement));
       setRecommendations(res.recommendations);
       setSelected(res.selected);
       setError(null);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      // 解析未完成时后端会报 "has no parsed requirements" —— 给友好提示
       setError(
         /parsed requirements/i.test(message)
-          ? "先在「解析确认」完成招标解析,再来选派项目经理。"
+          ? `先在「解析确认」完成招标解析,再来选派${role.title}。`
           : message
       );
     } finally {
       setLoaded(true);
     }
-  }, [projectId]);
+  }, [projectId, role]);
 
   useEffect(() => {
     void refresh();
@@ -66,33 +77,26 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
       setBusy(true);
       setError(null);
       try {
-        const res = await savePersonnelSelection(projectId, member);
-        setSelected(res.selected?.project_manager ?? null);
+        const res = await role.saveSel(projectId, member);
+        setSelected((res.selected?.[role.selectedKey] as PersonnelMember) ?? null);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
       } finally {
         setBusy(false);
       }
     },
-    [projectId]
+    [projectId, role]
   );
-
-  const reqText =
-    requirement && (requirement.builder_level || requirement.builder_specialty)
-      ? `招标要求:${requirement.builder_level || "等级不限"}` +
-        `${requirement.builder_specialty ? ` / ${requirement.builder_specialty}` : ""}` +
-        `${requirement.requires_safety_b ? " / 需安全B证" : ""}`
-      : "招标未明确项目经理要求,列全部建造师候选供选派";
 
   return (
     <section className="ios-panel rounded-[26px] border p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-[#ff9500]/14 text-[#c2740d]">
-            <HardHat className="h-4 w-4" />
+          <span className={`grid h-8 w-8 place-items-center rounded-full ${role.iconColor}`}>
+            {role.icon}
           </span>
           <div>
-            <h2 className="text-sm font-semibold text-[#1d1d1f]">项目经理选派</h2>
+            <h2 className="text-sm font-semibold text-[#1d1d1f]">{role.title}选派</h2>
             <p className="text-[11px] text-[#8e8e93]">{reqText}</p>
           </div>
         </div>
@@ -104,14 +108,10 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
       {selected ? (
         <div className="mt-3 flex items-center justify-between gap-3 rounded-[16px] border border-[#34c759]/30 bg-[#34c759]/[0.08] px-3 py-2.5">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-[#1f9d4d]">
-              已选派:{selected.name}
-            </p>
+            <p className="text-sm font-semibold text-[#1f9d4d]">已选派:{selected.name}</p>
             <p className="truncate text-[11px] text-[#6e6e73]">
               {certText(selected)}
-              {selected.safety_cert_classes?.length
-                ? ` · 安全${selected.safety_cert_classes.join("")}证`
-                : ""}
+              {selected.title ? ` · ${selected.title}` : ""}
             </p>
           </div>
           <button
@@ -127,10 +127,10 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
 
       {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
 
-      <div className="mt-3 max-h-[420px] space-y-1.5 overflow-auto">
+      <div className="mt-3 max-h-[360px] space-y-1.5 overflow-auto">
         {loaded && !error && recommendations.length === 0 ? (
           <p className="rounded-[14px] border border-dashed border-black/[0.08] bg-white/54 px-3 py-3 text-center text-xs text-[#8e8e93]">
-            名册里没有符合要求的项目经理候选。可在公司证件库补充建造师后重导名册。
+            {role.emptyHint}
           </p>
         ) : null}
         {recommendations.map((rec) => {
@@ -140,9 +140,7 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
               key={`${rec.member.name}-${rec.member.id_number}`}
               className={[
                 "rounded-[14px] border px-3 py-2 transition",
-                isSel
-                  ? "border-[#34c759]/30 bg-[#34c759]/[0.06]"
-                  : "border-black/[0.06] bg-white/56"
+                isSel ? "border-[#34c759]/30 bg-[#34c759]/[0.06]" : "border-black/[0.06] bg-white/56"
               ].join(" ")}
             >
               <div className="flex items-center justify-between gap-3">
@@ -181,10 +179,7 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
               {rec.matched.length || rec.gaps.length ? (
                 <div className="mt-1 flex flex-wrap gap-1">
                   {rec.matched.map((m) => (
-                    <span
-                      key={m}
-                      className="rounded bg-[#34c759]/12 px-1.5 py-0.5 text-[10px] text-[#1f9d4d]"
-                    >
+                    <span key={m} className="rounded bg-[#34c759]/12 px-1.5 py-0.5 text-[10px] text-[#1f9d4d]">
                       {m}
                     </span>
                   ))}
@@ -204,5 +199,46 @@ export function PersonnelPanel({ projectId }: { projectId: number }) {
         })}
       </div>
     </section>
+  );
+}
+
+const PM_ROLE: RoleConfig = {
+  title: "项目经理",
+  iconColor: "bg-[#ff9500]/14 text-[#c2740d]",
+  icon: <HardHat className="h-4 w-4" />,
+  fetchRecs: (pid) => getPersonnelRecommendations(pid),
+  saveSel: (pid, m) => savePersonnelSelection(pid, m),
+  selectedKey: "project_manager",
+  reqText: (r) => {
+    const req = r as { builder_level?: string; builder_specialty?: string; requires_safety_b?: boolean };
+    return req && (req.builder_level || req.builder_specialty)
+      ? `招标要求:${req.builder_level || "等级不限"}${req.builder_specialty ? ` / ${req.builder_specialty}` : ""}${req.requires_safety_b ? " / 需安全B证" : ""}`
+      : "招标未明确项目经理要求,列全部建造师候选供选派";
+  },
+  emptyHint: "名册里没有符合要求的项目经理候选。可在公司证件库补充建造师后重导名册。"
+};
+
+const TECH_ROLE: RoleConfig = {
+  title: "项目总工",
+  iconColor: "bg-[#007aff]/14 text-[#0a6cff]",
+  icon: <Ruler className="h-4 w-4" />,
+  fetchRecs: (pid) => getTechDirectorRecommendations(pid),
+  saveSel: (pid, m) => saveTechDirectorSelection(pid, m),
+  selectedKey: "tech_director",
+  reqText: (r) => {
+    const req = r as { title_level?: string; specialty?: string; requires_registration?: boolean };
+    return req && (req.title_level || req.specialty)
+      ? `招标要求:${req.title_level || "职称不限"}${req.specialty ? ` / ${req.specialty}` : ""}${req.requires_registration ? " / 需注册建造师" : ""}`
+      : "招标未明确总工要求,列有职称的候选供选派";
+  },
+  emptyHint: "名册里没有符合要求的总工候选。可在公司证件库补充职称证后重导名册。"
+};
+
+export function PersonnelPanel({ projectId }: { projectId: number }) {
+  return (
+    <div className="space-y-3">
+      <RoleSelector projectId={projectId} role={PM_ROLE} />
+      <RoleSelector projectId={projectId} role={TECH_ROLE} />
+    </div>
   );
 }

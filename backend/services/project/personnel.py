@@ -14,7 +14,9 @@ from schemas.personnel import PersonnelMember
 from services import personnel_roster_service
 from services.personnel_selection_service import (
     derive_pm_requirement,
+    derive_tech_director_requirement,
     recommend_project_managers,
+    recommend_tech_directors,
 )
 
 from . import _runtime
@@ -41,6 +43,20 @@ def recommend_project_personnel(project_id: int) -> dict[str, Any]:
     }
 
 
+def recommend_tech_director_personnel(project_id: int) -> dict[str, Any]:
+    """派生招标总工(项目技术负责人)要求 + 从公司名册推荐匹配候选(含当前选定)。"""
+    project = _fetch_project(project_id)
+    requirement = derive_tech_director_requirement(_project_requirements(project))
+    recommendations = recommend_tech_directors(_load_roster(), requirement)
+    selected = (project.get("selected_personnel") or {}).get("tech_director")
+    return {
+        "project_id": project_id,
+        "requirement": requirement.model_dump(),
+        "recommendations": [rec.model_dump() for rec in recommendations],
+        "selected": selected,
+    }
+
+
 def get_selected_personnel(project_id: int) -> dict[str, Any]:
     project = _fetch_project(project_id)
     return {
@@ -49,15 +65,24 @@ def get_selected_personnel(project_id: int) -> dict[str, Any]:
     }
 
 
-def save_selected_project_manager(
-    project_id: int, member: dict[str, Any] | None
+def _save_selected_role(
+    project_id: int, role_key: str, member: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """存本项目选定的项目经理(member=名册里的一条记录;None=清空选派)。"""
-    # 校验:非空时必须能被 PersonnelMember 接住(防脏数据写库)。
+    """存某角色(project_manager/tech_director)的选派,合并保留其它角色;None=清空该角色。"""
     clean = PersonnelMember(**member).model_dump() if member else None
-    payload: dict[str, Any] = {"project_manager": clean} if clean else {}
     with _runtime.connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT selected_personnel FROM projects WHERE id = %s", (project_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise ProjectNotFoundError(f"Project {project_id} was not found")
+            payload: dict[str, Any] = dict(row["selected_personnel"] or {})
+            if clean:
+                payload[role_key] = clean
+            else:
+                payload.pop(role_key, None)
             cursor.execute(
                 """
                 UPDATE projects
@@ -68,9 +93,21 @@ def save_selected_project_manager(
                 (Json(payload), project_id),
             )
             row = cursor.fetchone()
-    if not row:
-        raise ProjectNotFoundError(f"Project {project_id} was not found")
     return {
         "project_id": int(row["id"]),
         "selected": row["selected_personnel"] or {},
     }
+
+
+def save_selected_project_manager(
+    project_id: int, member: dict[str, Any] | None
+) -> dict[str, Any]:
+    """存本项目选定的项目经理(member=名册里的一条记录;None=清空选派)。"""
+    return _save_selected_role(project_id, "project_manager", member)
+
+
+def save_selected_tech_director(
+    project_id: int, member: dict[str, Any] | None
+) -> dict[str, Any]:
+    """存本项目选定的总工/项目技术负责人(None=清空)。"""
+    return _save_selected_role(project_id, "tech_director", member)

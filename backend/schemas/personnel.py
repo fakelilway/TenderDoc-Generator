@@ -56,6 +56,18 @@ class PMRequirement(BaseModel):
     note: str = ""  # 原文摘录,供人工核对
 
 
+class TechDirectorRequirement(BaseModel):
+    """从招标里解析出的项目技术负责人(总工)硬性要求(供推荐匹配)。
+
+    总工看职称(高级/中级)+专业,与项目经理(看建造师证)不同。
+    """
+
+    title_level: str = ""  # 高级职称 / 中级职称 / "" = 不限
+    specialty: str = ""  # 职称专业方向 / "" = 不限
+    requires_registration: bool = False  # 是否要求注册建造师
+    note: str = ""  # 原文摘录,供人工核对
+
+
 class PMRecommendation(BaseModel):
     """一个被推荐的项目经理候选 + 匹配说明。"""
 
@@ -79,4 +91,16 @@ class PMSelectionRequest(BaseModel):
 
 class PMSelectionResponse(BaseModel):
     project_id: int
-    selected: dict = {}  # {"project_manager": {...}} 或 {}
+    selected: dict = {}  # {"project_manager": {...}, "tech_director": {...}} 或 {}
+
+
+class TechDirectorRecommendationResponse(BaseModel):
+    project_id: int
+    requirement: TechDirectorRequirement
+    recommendations: list[PMRecommendation]
+    selected: PersonnelMember | None = None
+
+
+class TechDirectorSelectionRequest(BaseModel):
+    # None = 清空选派
+    tech_director: PersonnelMember | None = None

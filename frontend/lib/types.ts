@@ -636,9 +636,26 @@ export type PMRecommendationResponse = {
   selected: PersonnelMember | null;
 };
 
+export type TechDirectorRequirement = {
+  title_level: string;
+  specialty: string;
+  requires_registration: boolean;
+  note: string;
+};
+
+export type TechDirectorRecommendationResponse = {
+  project_id: number;
+  requirement: TechDirectorRequirement;
+  recommendations: PMRecommendation[];
+  selected: PersonnelMember | null;
+};
+
 export type PMSelectionResponse = {
   project_id: number;
-  selected: { project_manager?: PersonnelMember | null };
+  selected: {
+    project_manager?: PersonnelMember | null;
+    tech_director?: PersonnelMember | null;
+  };
 };
 
 // 逐空核对报告(读懂招标→每个空 找要求→核对→填/告警)

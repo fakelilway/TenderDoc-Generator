@@ -164,3 +164,34 @@ def resolve_id_card(owner_name: str, side: str = "front") -> dict[str, Any]:
             "candidates": len(rows),
         }
     return chosen
+
+
+def pick_id_card_documents(owner_name: str) -> list[dict[str, Any]]:
+    """某人身份证的**最小覆盖**选图:有完整版(正反合一)只取它1张;否则取正面+背面各1张。
+
+    避免"完整版+正面+背面"重复堆插。返回 [asset,...](带 side),OCR 判面。
+    """
+    from services.id_card_ocr import classify_id_card
+
+    classified: list[dict[str, Any]] = []
+    for row in _list_id_card_candidates(owner_name):
+        asset = _row_to_asset(row)
+        try:
+            cls = classify_id_card(read_asset_bytes(asset["document_id"]))
+        except Exception:  # noqa: BLE001
+            continue
+        asset["side"] = cls["side"]
+        asset["ocr_name"] = cls["name"]
+        classified.append(asset)
+
+    both = [a for a in classified if a["side"] == "both"]
+    if both:
+        return [both[0]]  # 完整版够了,正反都在一张上
+    picked: list[dict[str, Any]] = []
+    front = next((a for a in classified if a["side"] == "front"), None)
+    back = next((a for a in classified if a["side"] == "back"), None)
+    if front:
+        picked.append(front)
+    if back:
+        picked.append(back)
+    return picked
