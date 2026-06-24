@@ -882,20 +882,8 @@ def _enrich_commercial_markdown(
         if hardcheck_md:
             parts.append(hardcheck_md)
 
-    # Bid bond section
-    parts.append("\n<!-- tdg:pagebreak -->\n")
-    parts.append("\n## 投标保证金\n")
-    bond_info = []
-    if profile.get("bid_bond_amount"):
-        bond_info.append(f"金额：{profile['bid_bond_amount']}")
-    if requirements.bid_deadline:
-        bond_info.append(f"有效期至：{requirements.bid_deadline}")
-    if bond_info:
-        parts.append(f"\n{'，'.join(bond_info)}。\n")
-    else:
-        parts.append(
-            "\n投标保证金按招标文件要求提交，具体金额、方式和有效期详见投标保证金保函/凭证。\n"
-        )
+    # 投标保证金 / 联合体协议书:用户定——保持格式章原样留白,不自动加文字(金额/方式人工填)。
+    # (原先这里会追加"## 投标保证金 + 说明文字",现移除。)
 
     # Project manager section
     parts.append("\n<!-- tdg:pagebreak -->\n")

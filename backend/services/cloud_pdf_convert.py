@@ -168,6 +168,7 @@ def convert_format_pages_via_cloud(
     from services.original_docx_format_service import (
         _drop_spurious_stream_tables,
         _fill_basic_info_subfields,
+        _fill_bid_date_today,
         _fill_establish_segmented,
         _fill_inline_labeled_blanks,
         _fill_known_table_cells,
@@ -204,6 +205,7 @@ def convert_format_pages_via_cloud(
     _fill_known_table_cells(doc, profile or {})
     _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
     _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
+    _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
     _fill_personnel_table(doc, profile or {})
     # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
     _strip_seal_images(doc)

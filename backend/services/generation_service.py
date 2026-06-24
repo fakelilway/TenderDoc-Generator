@@ -554,6 +554,97 @@ def _drop_empty_headings(lines: list[str]) -> str:
     return "\n".join(out)
 
 
+# 用户上传到资料库的"图/表"docx,生成时复制进标书对应章节(项目管理机构表/拟分包表/组织结构图)。
+# (锚点章节关键词, 资料库文件名关键词)。组织结构框图原为 .doc(读不了),用户重存 .docx 后自动生效。
+_ORG_DOC_SOURCES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("项目管理机构",), "项目管理机构"),
+    (("拟分包", "分包"), "拟分包"),
+    (("组织结构", "组织机构", "企业组织"), "组织结构"),
+)
+
+
+def _fetch_org_source_docx(filename_kw: str) -> bytes | None:
+    """从资料库取公司级 .docx(文件名含关键词);取不到返回 None。"""
+    try:
+        from rag.vector_store import get_db_connection
+        from utils.minio_client import minio_client
+        from core.config import settings
+
+        with get_db_connection() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT file_path FROM documents WHERE project_id IS NULL "
+                "AND lower(file_type) = 'docx' AND file_name ILIKE %s "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (f"%{filename_kw}%",),
+            )
+            row = cursor.fetchone()
+        if not row or not row[0]:
+            return None
+        return minio_client.download_bytes(settings.minio_bucket, str(row[0]))
+    except Exception:
+        return None
+
+
+def _find_section_paragraph(doc, keywords: tuple[str, ...]):
+    """找含章节关键词的短段落(章节标题/小标题),返回其 <w:p> 元素;找不到返回 None。"""
+    for para in doc.paragraphs:
+        t = para.text.strip()
+        if t and len(t) < 40 and any(k in t for k in keywords):
+            return para._p
+    return None
+
+
+def _inject_org_tables(doc) -> int:
+    """把资料库里的项目管理机构表/拟分包表/组织结构图(docx)复制进标书对应章节后。
+
+    复制 docx 正文里的**表格**与**含图段落**(跳过纯文字噪声);有锚点章节插其后,无则插卷尾。
+    逐源容错,绝不因此崩或丢内容。返回插入的块数。
+    """
+    from copy import deepcopy
+    from io import BytesIO
+
+    from docx import Document as _Doc
+    from docx.oxml.ns import qn
+
+    inserted = 0
+    for anchors, fkw in _ORG_DOC_SOURCES:
+        blob = _fetch_org_source_docx(fkw)
+        if not blob:
+            continue
+        try:
+            src = _Doc(BytesIO(blob))
+        except Exception:
+            continue
+        # 取源 docx 正文里的表格 + 含图段落(<w:drawing>/<w:pict>)
+        blocks = []
+        for child in src.element.body:
+            if child.tag == qn("w:tbl"):
+                blocks.append(child)
+            elif child.tag == qn("w:p") and (
+                child.findall(".//" + qn("w:drawing")) or child.findall(".//" + qn("w:pict"))
+            ):
+                blocks.append(child)
+        if not blocks:
+            continue
+
+        target_el = _find_section_paragraph(doc, anchors)
+        try:
+            if target_el is not None:
+                for blk in blocks:
+                    new_blk = deepcopy(blk)
+                    target_el.addnext(new_blk)
+                    target_el = new_blk
+            else:
+                for blk in blocks:
+                    doc.element.body.append(deepcopy(blk))
+            inserted += len(blocks)
+        except Exception:
+            logger.warning("注入资料库图表失败(%s),跳过不阻断", fkw, exc_info=True)
+    if inserted:
+        logger.info("资料库图表注入:%d 块(项目管理机构/拟分包/组织结构)", inserted)
+    return inserted
+
+
 def _place_anchored_images(doc, prose_markdown: str) -> str:
     """把 prose 里带 anchor 的 {{knowledge_image}} 就地插到格式章对应章节后;返回去掉这些标记
     (及随之变空的标题)后的 prose——剩余无锚点图仍由调用方追加到卷尾。逐图容错,绝不丢图/不崩。
@@ -635,6 +726,8 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
         # 带 anchor 的附件先就地落位到对应章节后(营业执照→基本情况表后…),返回去锚点后的
         # 剩余 prose;无锚点/锚点没命中的仍走下面的卷尾追加(兜底,绝不丢图)。
         prose_markdown = _place_anchored_images(doc, prose_markdown)
+        # 资料库里的项目管理机构表/拟分包表/组织结构图(docx)就地复制进对应章节
+        _inject_org_tables(doc)
 
         doc.add_page_break()
         # 传 image_resolver,让附录里的 {{knowledge_image:...}} 标记从 MinIO 取图插入(B)

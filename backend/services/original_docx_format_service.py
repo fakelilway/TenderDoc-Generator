@@ -345,6 +345,38 @@ def _is_blank_or_placeholder(text: str) -> bool:
 # 号码 / …荣誉 / …业绩"含主体词但问的是别的字段——绝不能拿公司名/项目经理名去填(实测
 # 122 商务卷正栽在这:项目经理身份证号被填成"江舟"、牵头人信用代码被填成公司名)。仅当
 # 标签是"要名字"(键本身,或键+名称/姓名等名字尾巴)时才填,否则留空待人工。
+# 用户定:投标保证金 相关空一律留白(金额/方式人工填)。"联合体"不在此——投标函里"独立投标人或
+# 联合体牵头人名称"对单独投标人就该填公司名;联合体协议书"整章"留白由 _blank_zone_para_ids 处理。
+_LEAVE_BLANK_KEYWORDS = ("保证金", "保函")
+
+# 这些章节标题下整段留白(联合体协议书/投标保证金),含日期/名字一律不自动填。
+_BLANK_SECTION_TITLES = ("联合体协议", "联合体共同", "投标保证金")
+_BLANK_SECTION_END_RE = __import__("re").compile(
+    r"^[（(][一二三四五六七八九十百]+[)）]"  # （七）...
+    r"|^[一二三四五六七八九十百]+[、.，]"  # 七、...
+    r"|^第[一二三四五六七八九十]+[章节部]"  # 第七章
+    r"|^\d+[、.]"  # 7. / 7、
+)
+
+
+def _blank_zone_step(para_text: str, in_blank: bool) -> bool:
+    """状态机:按段顺序判断当前是否在"留白章节"(联合体协议书/投标保证金)内。
+
+    遇到留白章节标题→进入;遇到下一个编号章节标题→退出。供填充循环实时跳过
+    (不用 lxml 元素 id——它跨遍历不稳定)。
+    """
+    t = (para_text or "").strip()
+    short = 0 < len(t) < 30
+    if short and any(k in t for k in _BLANK_SECTION_TITLES):
+        return True
+    if (
+        in_blank
+        and short
+        and _BLANK_SECTION_END_RE.search(t)
+        and not any(k in t for k in _BLANK_SECTION_TITLES)
+    ):
+        return False
+    return in_blank
 _BROAD_ENTITY_KEYS = frozenset({"投标人", "项目经理", "注册建造师"})
 _NAME_TAILS = frozenset({"名称", "姓名", "名", "全称", "单位名称"})
 # 判定"是否只剩名字尾巴"前,先剥掉这些主体周围的修饰词/装饰。
@@ -366,6 +398,8 @@ def _label_to_profile_key(label: str) -> str:
     )
     if not norm or any(skip in norm for skip in _TABLE_FILL_SKIP):
         return ""
+    if any(kw in norm for kw in _LEAVE_BLANK_KEYWORDS):
+        return ""  # 联合体/保证金 留白
     matches = [(key, pkey) for key, pkey in _TABLE_FILL_LABELS if key in norm]
     if not matches:
         return ""
@@ -593,6 +627,64 @@ def _fill_establish_segmented(document: Any, profile: dict[str, Any]) -> int:
     return filled
 
 
+# 投标日期=标书制作当天:这些是"别的日期",绝不当投标日期填(成立/有效期/截止/开标/出生/签发)。
+_BID_DATE_SKIP = ("成立", "有效", "截止", "开标", "出生", "签发", "注册", "到期", "起止")
+
+
+def _fill_bid_date_today(document: Any, today: Any = None) -> int:
+    """把投标/签署日期的"__年__月__日"空槽填成标书制作当天(用户定)。
+
+    只动:① 含"日期"标签的段(排除成立/有效期等);② 整段就是"年 月 日"+空槽的落款日期行。
+    成立日期另由 _fill_establish_segmented 用 establish_date 填,这里跳过,不冲突。
+    """
+    import datetime as _dt
+
+    d = today or _dt.date.today()
+    parts = {"年": str(d.year), "月": str(d.month), "日": str(d.day)}
+    filled = 0
+    in_blank = False  # 联合体协议书/保证金章节内的日期不填(实时跟踪,lxml的id不稳)
+    for para in document.paragraphs:
+        text = para.text
+        in_blank = _blank_zone_step(text, in_blank)
+        if in_blank:
+            continue
+        if any(s in text for s in _BID_DATE_SKIP):
+            continue
+        has_ymd = "年" in text and "月" in text and "日" in text
+        if not has_ymd:
+            continue
+        residue = re.sub(r"[年月日\s　_．.、]", "", text)
+        # 落款日期行:整段只剩年月日+空槽(residue空),或明确含"日期"标签
+        if not ("日期" in text or residue == ""):
+            continue
+        runs = para.runs
+        # ① 拆 run 结构(福昕转换件常见):"__"是空 run、"年"是另一 run → 填前面的空槽
+        last_slot = None
+        for i, r in enumerate(runs):
+            stripped = r.text.strip()
+            if stripped == "":
+                last_slot = i
+            elif stripped[0] in parts:
+                if last_slot is not None and runs[last_slot].text.strip() == "":
+                    runs[last_slot].text = parts[stripped[0]]
+                    filled += 1
+                last_slot = None
+            else:
+                last_slot = None
+        # ② 单 run 结构:"日期：__年_月_日"整串在一个 run → 正则就地把空槽换成今天
+        for r in runs:
+            t = r.text
+            if not any(k in t for k in ("年", "月", "日")):
+                continue
+            new_t = re.sub(r"(?<![\d标])([_＿\s　]+)年", parts["年"] + "年", t)
+            new_t = re.sub(r"(?<![\d])([_＿\s　]+)月", parts["月"] + "月", new_t)
+            new_t = re.sub(r"(?<![\d])([_＿\s　]+)日", parts["日"] + "日", new_t)
+            if new_t != t:
+                r.text = new_t
+                filled += 1
+    return filled
+
+
 def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
     """基本情况表式网格自动填:标签格 → 同行右侧第一个空值格。
 
@@ -755,6 +847,9 @@ def _inline_value_for(
     章节的身份声明块)才填法人名,避免把人员表/其他人的"姓名"误填成法人。
     """
     norm = seg.replace(" ", "").replace("　", "")
+    # 联合体/保证金 留白:本段或标签命中即不填(用户定)
+    if any(kw in norm or kw in para_text for kw in _LEAVE_BLANK_KEYWORDS):
+        return ""
     if norm.endswith("姓名") and (id_proof_context or "的法定代表人" in para_text):
         return str(profile.get("legal_representative", "") or "").strip()
     # 法定代表人身份证明表的 性别/年龄(从法人身份证 OCR 推导,见 v2._legal_rep_pii)。
@@ -811,11 +906,15 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
     if not has_data:
         return 0
     filled = 0
+    in_blank = False  # 联合体协议书/保证金 章节整段留白(实时跟踪)
     for paragraph, id_proof_ctx in _iter_fillable_with_idproof(document, has_legal_rep):
         runs = paragraph.runs
         if not runs:
             continue
         para_text = paragraph.text
+        in_blank = _blank_zone_step(para_text, in_blank)
+        if in_blank:
+            continue
         # 全文 + 每字符 (run下标, run内下标)
         chars: list[str] = []
         owner: list[tuple[int, int]] = []
