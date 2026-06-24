@@ -139,3 +139,47 @@ def test_bond_mention_in_paragraph_does_not_blank_quality_duration() -> None:
     _fill_inline_labeled_blanks(doc, {"质量": "合格", "工期": "90日历天"})
     txt = doc.paragraphs[0].text
     assert "合格" in txt and "90日历天" in txt
+
+
+def test_authorization_letter_fills_legal_rep_only() -> None:
+    """授权委托书:本人___（姓名）系→法人名;代理人（姓名）留白;不误填随处的（姓名）。"""
+    from docx import Document as _D
+    from services.original_docx_format_service import _fill_authorization_letter
+    doc = _D()
+    p = doc.add_paragraph()
+    for t in ["本人 ", "\t", "（姓名）系 ", "\t", "（投标人名称）的法定代表人，现委托 ", "\t", "（姓名）为我方代理人。"]:
+        p.add_run(t)
+    # 另一段普通"（姓名）"不该被填(无授权委托书语境)
+    other = doc.add_paragraph("项目经理（姓名）：")
+    _fill_authorization_letter(doc, {"legal_representative": "许明英"})
+    t0 = doc.paragraphs[0].text
+    assert "本人许明英（姓名）系" in t0  # 法人名填在第一个（姓名）前
+    assert t0.count("许明英") == 1  # 代理人那个（姓名）没被填
+    assert "许明英" not in other.text  # 无语境的（姓名）不动
+
+
+def test_personnel_table_fills_pm_and_tech_rows() -> None:
+    from docx import Document as _D
+    from services.original_docx_format_service import _fill_personnel_table
+    doc = _D()
+    t = doc.add_table(rows=4, cols=5)
+    for c, h in enumerate(["职务", "姓名", "职称", "证书名称", "证号"]):
+        t.cell(0, c).text = h
+        t.cell(1, c).text = h
+    prof = {
+        "project_manager_name": "江甜甜", "project_manager_cert": "皖234", "project_manager_title": "工程师",
+        "tech_director_name": "李刚", "tech_director_cert": "皖134", "tech_director_title": "工程师",
+    }
+    _fill_personnel_table(doc, prof)
+    assert [t.cell(2, c).text for c in (0, 1, 4)] == ["项目经理", "江甜甜", "皖234"]
+    assert [t.cell(3, c).text for c in (0, 1, 4)] == ["项目技术负责人", "李刚", "皖134"]
+
+
+def test_evidence_groups_drop_system_patent() -> None:
+    from services.v2_generation_service import _EVIDENCE_GROUPS
+    titles = [g[0] for g in _EVIDENCE_GROUPS]
+    assert "管理体系认证证书" not in titles  # 体系删了
+    assert "专利与工法证书" not in titles  # 专利工法删了
+    # 基本情况表后只剩这4类
+    basic = [g[0] for g in _EVIDENCE_GROUPS if g[3] == "基本情况表"]
+    assert set(basic) == {"营业执照", "企业资质证书", "安全生产许可证", "基本账户开户许可证"}

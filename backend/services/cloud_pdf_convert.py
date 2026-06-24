@@ -167,6 +167,7 @@ def convert_format_pages_via_cloud(
 
     from services.original_docx_format_service import (
         _drop_spurious_stream_tables,
+        _fill_authorization_letter,
         _fill_basic_info_subfields,
         _fill_bid_date_today,
         _fill_establish_segmented,
@@ -206,6 +207,7 @@ def convert_format_pages_via_cloud(
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
     _fill_known_table_cells(doc, profile or {})
     _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
+    _fill_authorization_letter(doc, profile or {})  # 授权委托书"本人___（姓名）系"→法人名
     _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
     _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
     _fill_personnel_table(doc, profile or {})

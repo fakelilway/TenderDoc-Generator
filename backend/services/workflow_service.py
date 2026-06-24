@@ -651,6 +651,8 @@ def _apply_selected_project_manager(company_profile, project):
     profile = dict(company_profile or {})
     if pm_ok:
         profile["project_manager_name"] = selected["name"]
+        if selected.get("title"):
+            profile["project_manager_title"] = selected["title"]
         builder_certs = selected.get("builder_certs") or []
         if builder_certs:
             cert_no = str((builder_certs[0]).get("cert_no") or "").strip()
@@ -661,6 +663,11 @@ def _apply_selected_project_manager(company_profile, project):
         profile["tech_director_name"] = tech["name"]
         if tech.get("title"):
             profile["tech_director_title"] = tech["title"]
+        tech_certs = tech.get("builder_certs") or []
+        if tech_certs:
+            tcert = str((tech_certs[0]).get("cert_no") or "").strip()
+            if tcert:
+                profile["tech_director_cert"] = tcert
     return profile
 
 

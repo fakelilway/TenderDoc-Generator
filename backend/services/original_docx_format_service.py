@@ -1058,17 +1058,86 @@ def _fill_pm_resume_table(document: Any, resume: dict[str, Any]) -> int:
     return filled
 
 
-def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
-    """填"项目管理机构人员组成表"的项目经理行(职务/姓名/证号),从公司档案取。
+def _fill_authorization_letter(document: Any, profile: dict[str, Any]) -> int:
+    """授权委托书:"本人 ___（姓名）系 ___（投标人名称）的法定代表人" 里第一个（姓名）填法人名。
 
-    这是列表头驱动的多列表(职务|姓名|职称|证书名称|级别|证号|专业|养老保险|备注),
-    与"标签格→右邻"不同。只填项目经理这一行、只填空格、不改表结构;其余人员留给人工
-    或后续按知识库补。返回是否填了。
+    占位形态是"空白在前、括号提示在后"(___（姓名）),通用内联引擎只认"标签：___"故不覆盖。
+    严格语境锚定:只在含"法定代表人"+"委托/代理人"的段、且匹配"本人…（姓名）系"才填,绝不全局
+    填'（姓名）'(否则人员表/项目经理简历的姓名会被误填成法人)。委托代理人那个（姓名）留白(法人亲签)。
+    (投标人名称已由 _known_replacements 的 '（投标人名称）'→company 处理,这里不碰。)
+    """
+    import re as _re
+    from collections import defaultdict
+
+    legal_rep = str(profile.get("legal_representative") or "").strip()
+    if not legal_rep:
+        return 0
+    filled = 0
+    for paragraph in document.paragraphs:
+        runs = paragraph.runs
+        if not runs:
+            continue
+        owner: list[tuple[int, int]] = []
+        for ri, run in enumerate(runs):
+            for li in range(len(run.text)):
+                owner.append((ri, li))
+        s = "".join(r.text for r in runs)
+        if "法定代表人" not in s or ("委托" not in s and "代理人" not in s):
+            continue
+        m = _re.search(r"本人[ \t　_＿]*（\s*姓\s*名\s*）系", s)
+        if not m:
+            continue
+        bg = m.start() + 2  # "本人" 之后
+        paren = s.find("（", m.start())
+        be = paren  # 空白槽 = s[bg:be]
+        if s[bg:be].strip():  # 槽里已有实质内容(已填) → 不覆盖
+            continue
+        edits: list[tuple[int, int, int, str]] = []
+        if be > bg:  # 有空白槽:首空白字符替成法人名,其余空白清掉
+            ri0, li0 = owner[bg]
+            edits.append((ri0, li0, li0 + 1, legal_rep))
+            for k in range(bg + 1, be):
+                rk, lk = owner[k]
+                edits.append((rk, lk, lk + 1, ""))
+        else:  # 无槽:插到"本人"之后
+            ri0, li0 = owner[m.start() + 1]
+            edits.append((ri0, li0 + 1, li0 + 1, legal_rep))
+        by_run: dict[int, list[tuple[int, int, str]]] = defaultdict(list)
+        for ri, a, b, v in edits:
+            by_run[ri].append((a, b, v))
+        for ri, ops in by_run.items():
+            t = runs[ri].text
+            for a, b, v in sorted(ops, reverse=True):
+                t = t[:a] + v + t[b:]
+            runs[ri].text = t
+        filled += 1
+    return filled
+
+
+def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
+    """填"项目管理机构人员组成表"的项目经理 + 总工两行(职务/姓名/职称/证号),从选派取。
+
+    列表头驱动的多列表(职务|姓名|职称|证书名称|级别|证号|专业|养老保险|备注)。
+    只填空格、首数据行已有人则整表留人工、不改表结构。返回是否填了。
     """
     pm_name = str(profile.get("project_manager_name") or "").strip()
-    if not pm_name:
+    tech_name = str(profile.get("tech_director_name") or "").strip()
+    if not pm_name and not tech_name:
         return False
-    pm_cert = str(profile.get("project_manager_cert") or "").strip()
+    # 要填的人:(职务, 姓名, 证号, 职称)。总工职务=项目技术负责人(用户定)。
+    people: list[tuple[str, str, str, str]] = []
+    if pm_name:
+        people.append((
+            "项目经理", pm_name,
+            str(profile.get("project_manager_cert") or "").strip(),
+            str(profile.get("project_manager_title") or "").strip(),
+        ))
+    if tech_name:
+        people.append((
+            "项目技术负责人", tech_name,
+            str(profile.get("tech_director_cert") or "").strip(),
+            str(profile.get("tech_director_title") or "").strip(),
+        ))
 
     for table in document.tables:
         try:
@@ -1088,6 +1157,7 @@ def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
             col_cert = next(
                 (c for c, h in enumerate(headers) if "证号" in h or "证书号" in h), None
             )
+            col_title = next((c for c, h in enumerate(headers) if "职称" in h), None)
             if col_role is None or col_name is None:
                 continue
             # 必须是"人员组成"表(含证书/资格证明列),别误填别的两列表
@@ -1102,18 +1172,33 @@ def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
             if data_r >= len(rows):
                 continue
 
-            name_cell = table.cell(data_r, col_name)
-            if not _is_blank_or_placeholder(name_cell.text.strip()):
-                continue  # 第一行已有人,留给人工
-            _set_cell_value(name_cell, pm_name)
-            role_cell = table.cell(data_r, col_role)
-            if _is_blank_or_placeholder(role_cell.text.strip()):
-                _set_cell_value(role_cell, "项目经理")
-            if col_cert is not None and pm_cert:
-                cert_cell = table.cell(data_r, col_cert)
-                if _is_blank_or_placeholder(cert_cell.text.strip()):
-                    _set_cell_value(cert_cell, pm_cert)
-            return True
+            if not _is_blank_or_placeholder(table.cell(data_r, col_name).text.strip()):
+                continue  # 首数据行已有人,整表留人工
+            filled_any = False
+            ri = data_r
+            for role, name, cert, title in people:
+                # 找下一个姓名空的行
+                while ri < len(rows) and not _is_blank_or_placeholder(
+                    table.cell(ri, col_name).text.strip()
+                ):
+                    ri += 1
+                if ri >= len(rows):
+                    break
+                _set_cell_value(table.cell(ri, col_name), name)
+                if _is_blank_or_placeholder(table.cell(ri, col_role).text.strip()):
+                    _set_cell_value(table.cell(ri, col_role), role)
+                if col_cert is not None and cert and _is_blank_or_placeholder(
+                    table.cell(ri, col_cert).text.strip()
+                ):
+                    _set_cell_value(table.cell(ri, col_cert), cert)
+                if col_title is not None and title and _is_blank_or_placeholder(
+                    table.cell(ri, col_title).text.strip()
+                ):
+                    _set_cell_value(table.cell(ri, col_title), title)
+                filled_any = True
+                ri += 1
+            if filled_any:
+                return True
         except Exception:
             continue
     return False
