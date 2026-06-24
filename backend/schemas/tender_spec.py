@@ -36,6 +36,21 @@ class PerformanceRequirement(BaseModel):
     time_basis: str = "交工"  # 时间以"交工"为准
 
 
+class PerformanceSelectionItem(BaseModel):
+    """选定的一条业绩(多选)。"""
+
+    name: str
+    year: str = ""
+    amount: str = ""
+    type: str = ""
+    document_id: int | None = None
+
+
+class PerformanceSelectionRequest(BaseModel):
+    # 多选:招标要 N 个类似业绩,这里是用户勾选的若干条
+    selected: list[PerformanceSelectionItem] = []
+
+
 class TenderSpec(BaseModel):
     """读懂招标的结构化成果(阶段一,LLM 抽 + 人工核)。
 

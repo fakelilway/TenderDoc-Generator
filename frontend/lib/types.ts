@@ -650,6 +650,38 @@ export type TechDirectorRecommendationResponse = {
   selected: PersonnelMember | null;
 };
 
+// 业绩选择(多选)
+export type PerformanceRequirement = {
+  since: string;
+  category: string;
+  min_amount_wan: number;
+  min_count: number;
+  time_basis: string;
+};
+
+export type PerformanceItem = {
+  name: string;
+  year: string;
+  amount: string;
+  type: string;
+  document_id?: number | null;
+};
+
+export type PerformanceRecommendation = PerformanceItem & {
+  manager?: string;
+  has_evidence: boolean;
+  score: number;
+  matched: string[];
+  gaps: string[];
+};
+
+export type PerformanceRecommendationResponse = {
+  project_id: number;
+  requirement: PerformanceRequirement;
+  recommendations: PerformanceRecommendation[];
+  selected: PerformanceItem[];
+};
+
 export type PMSelectionResponse = {
   project_id: number;
   selected: {

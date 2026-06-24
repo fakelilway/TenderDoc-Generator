@@ -93,6 +93,11 @@ from services.project.personnel import (
     save_selected_project_manager,
     save_selected_tech_director,
 )
+from services.project.performance import (
+    get_selected_performance,
+    recommend_project_performance,
+    save_selected_performance,
+)
 from services.project.delivery import (
     _DELIVERY_FORMATS,
     _DELIVERY_VOLUME_LABELS,

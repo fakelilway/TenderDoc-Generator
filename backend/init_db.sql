@@ -60,6 +60,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS tender_text TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS boq_text TEXT;
 -- 本项目选派的人员(项目经理等),从公司名册按招标要求选定,填进商务卷人员表
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_personnel JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_performance JSONB;
 
 -- 投标人企业档案：单行表，生成标书时注入【投标人信息】并填写商务卷表格
 CREATE TABLE IF NOT EXISTS company_profile (

@@ -32,6 +32,7 @@ import { OutlineEditor } from "@/components/OutlineEditor";
 import { ProjectMaterialPanel } from "@/components/ProjectMaterialPanel";
 import { ProjectBOQPanel } from "@/components/ProjectBOQPanel";
 import { PersonnelPanel } from "@/components/PersonnelPanel";
+import { PerformancePanel } from "@/components/PerformancePanel";
 import { ConformancePanel } from "@/components/ConformancePanel";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
@@ -1579,6 +1580,9 @@ export function TenderWorkspace({
                 <div className="space-y-4">
                   {projectId != null ? (
                     <PersonnelPanel projectId={projectId} />
+                  ) : null}
+                  {projectId != null ? (
+                    <PerformancePanel projectId={projectId} />
                   ) : null}
                   {projectId != null ? (
                     <ProjectMaterialPanel projectId={projectId} />

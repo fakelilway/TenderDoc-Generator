@@ -942,13 +942,24 @@ def _enrich_commercial_markdown(
     if personnel_cert_md:
         parts.append(personnel_cert_md)
 
+    # 本项目选定的类似业绩(多选);未选则空,回退自动行为
+    selected_perf_names: list[str] = []
+    if project_id is not None:
+        try:
+            from services import project_service
+
+            sel = project_service.get_selected_performance(project_id).get("selected") or []
+            selected_perf_names = [str(s.get("name", "")) for s in sel if s.get("name")]
+        except Exception:
+            selected_perf_names = []
+
     # 类似业绩 + 主要人员:从知识库台账/人员证书自动汇总成表(C1,附加参考,不动原表)
-    kb_tables_md = _kb_qualification_tables_markdown()
+    kb_tables_md = _kb_qualification_tables_markdown(selected_perf_names)
     if kb_tables_md:
         parts.append(kb_tables_md)
 
     # A3:类似业绩证明链——每个业绩附 中标通知书+合同+交工验收 扫描(import_performance_evidence)
-    perf_evidence_md = _performance_evidence_markdown()
+    perf_evidence_md = _performance_evidence_markdown(selected_names=selected_perf_names)
     if perf_evidence_md:
         parts.append(perf_evidence_md)
 
@@ -961,9 +972,10 @@ _NAME_NOISE_TOKENS = (
 )
 
 
-def _kb_qualification_tables_markdown() -> str:
+def _kb_qualification_tables_markdown(selected_perf_names: list[str] | None = None) -> str:
     """C1:把知识库的业绩台账/主要人员汇总成 markdown 表,作为资格响应附录的参考。
 
+    selected_perf_names 非空时:业绩表只列选中的;为空则汇总近年(原行为)。
     纯附加内容(不填招标原表),无数据则返回空。
     """
     try:
@@ -980,10 +992,20 @@ def _kb_qualification_tables_markdown() -> str:
         records = list_performance_records(limit=15)
     except Exception:
         records = []
+    if records and selected_perf_names:
+        from services.performance_archive_service import _norm
+
+        wanted = {_norm(n) for n in selected_perf_names if n}
+        records = [r for r in records if _norm(str(r.get("name", ""))) in wanted]
     if records:
+        heading = (
+            "### 本项目响应类似业绩（已选定）"
+            if selected_perf_names
+            else "### 近年承建业绩（系统自知识库汇总，请按招标类似业绩要求筛选）"
+        )
         lines = [
             "",
-            "### 近年承建业绩（系统自知识库汇总，请按招标类似业绩要求筛选）",
+            heading,
             "",
             "| 项目名称 | 中标金额 | 年份 | 类型 |",
             "| --- | --- | --- | --- |",
@@ -1401,8 +1423,14 @@ def _build_performance_evidence_md(
     )
 
 
-def _performance_evidence_markdown(limit_projects: int = 6) -> str:
-    """A3b:从知识库取业绩证明扫描,按项目成组插中标通知书/合同/交工验收。无数据返回空。"""
+def _performance_evidence_markdown(
+    limit_projects: int = 6, selected_names: list[str] | None = None
+) -> str:
+    """A3b:从知识库取业绩证明扫描,按项目成组插中标通知书/合同/交工验收。无数据返回空。
+
+    selected_names 非空时:只插**选中的**业绩(按项目名匹配),招标要几个就插几个,不再一股脑全堆。
+    为空时:回退原行为(取前 limit_projects 个,兼容未做业绩选择的项目)。
+    """
     try:
         from rag.vector_store import get_db_connection
 
@@ -1415,10 +1443,17 @@ def _performance_evidence_markdown(limit_projects: int = 6) -> str:
                 "AND metadata_json->>'document_category' = '业绩证明' "
                 "AND coalesce(metadata_json->>'image_insertable', '') <> 'false'"
             )
-            rows = cursor.fetchall()
+            rows = list(cursor.fetchall())
     except Exception:
         return ""
-    return _build_performance_evidence_md(list(rows), limit_projects)
+
+    if selected_names:
+        from services.performance_archive_service import _norm
+
+        wanted = {_norm(n) for n in selected_names if n}
+        rows = [r for r in rows if _norm(str(r[1] or "")) in wanted]
+        limit_projects = max(limit_projects, len(wanted))  # 选了几个就放几个进去
+    return _build_performance_evidence_md(rows, limit_projects)
 
 
 def _match_profile_field(title: str, profile: dict[str, str]) -> str:

@@ -18,6 +18,8 @@ import type {
   PersonnelMember,
   PMRecommendationResponse,
   PMSelectionResponse,
+  PerformanceItem,
+  PerformanceRecommendationResponse,
   TechDirectorRecommendationResponse,
   LoginResponse,
   LogoutResponse,
@@ -454,6 +456,22 @@ export function savePersonnelSelection(
   return requestJson<PMSelectionResponse>(
     `/api/project/${projectId}/personnel`,
     { method: "PUT", body: JSON.stringify({ project_manager: member }) }
+  );
+}
+
+export function getPerformanceRecommendations(projectId: number) {
+  return requestJson<PerformanceRecommendationResponse>(
+    `/api/project/${projectId}/performance/recommendations`
+  );
+}
+
+export function savePerformanceSelection(
+  projectId: number,
+  selected: PerformanceItem[]
+) {
+  return requestJson<{ project_id: number; selected: PerformanceItem[] }>(
+    `/api/project/${projectId}/performance`,
+    { method: "PUT", body: JSON.stringify({ selected }) }
   );
 }
 

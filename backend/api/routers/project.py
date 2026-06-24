@@ -26,7 +26,10 @@ from schemas.personnel import (
     TechDirectorRecommendationResponse,
     TechDirectorSelectionRequest,
 )
-from schemas.tender_spec import ConformanceReportResponse
+from schemas.tender_spec import (
+    ConformanceReportResponse,
+    PerformanceSelectionRequest,
+)
 from schemas.project import (
     ProjectCreateResponse,
     ProjectDeleteResponse,
@@ -481,6 +484,32 @@ def save_project_tech_director_selection(
         _raise_http_error(error)
 
     return PMSelectionResponse(**result)
+
+
+@router.get("/api/project/{project_id}/performance/recommendations")
+def get_project_performance_recommendations(
+    project_id: int,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """派生招标类似业绩要求 + 从台账推荐匹配候选(多选,有证明/同类/达标金额优先)。"""
+    try:
+        return project_service.recommend_project_performance(project_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.put("/api/project/{project_id}/performance")
+def save_project_performance_selection(
+    project_id: int,
+    request: PerformanceSelectionRequest,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """选定/清空本项目类似业绩(多选)。"""
+    try:
+        items = [item.model_dump() for item in request.selected]
+        return project_service.save_selected_performance(project_id, items)
+    except Exception as error:
+        _raise_http_error(error)
 
 
 @router.get(
