@@ -705,6 +705,35 @@ export function renameCert(documentId: number, title: string) {
   });
 }
 
+// 自助验证:下载一个把这张证件真图插好的 DOCX,亲眼确认不是只写名字。
+export async function downloadCertTestDocx(documentId: number) {
+  const token = getAccessToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(`/api/cert-archive/test-insert/${documentId}`, { headers });
+  if (!res.ok) {
+    let message = `下载失败 ${res.status}`;
+    try {
+      const payload = (await res.json()) as { detail?: string };
+      if (payload.detail) message = payload.detail;
+    } catch {
+      /* 非 JSON 错误体,用默认提示 */
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `test_insert_${documentId}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function searchKnowledge(
   query: string,
   topK = 5,

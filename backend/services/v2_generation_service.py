@@ -933,6 +933,15 @@ def _enrich_commercial_markdown(
     if legal_id_md:
         parts.append(legal_id_md)
 
+    # 项目经理/总工证件(建造师证/身份证正反/职称/安全/社保)→ 各自资历表后
+    pm_name = str(
+        profile.get("project_manager_name") or profile.get("project_manager") or ""
+    ).strip()
+    tech_name = str(profile.get("tech_director_name") or "").strip()
+    personnel_cert_md = _personnel_cert_evidence_markdown(pm_name, tech_name)
+    if personnel_cert_md:
+        parts.append(personnel_cert_md)
+
     # 类似业绩 + 主要人员:从知识库台账/人员证书自动汇总成表(C1,附加参考,不动原表)
     kb_tables_md = _kb_qualification_tables_markdown()
     if kb_tables_md:
@@ -1235,6 +1244,90 @@ def _legal_rep_id_evidence_markdown(legal_rep_name: str) -> str:
         "\n<!-- tdg:pagebreak -->\n"
         "\n## 附录：法定代表人身份证明材料（系统自动插入，请人工核验）\n"
         + "".join(blocks)
+    )
+
+
+# 项目经理/总工证件:建造师证/身份证(正反)/职称/安全证/社保 → 各自资历表后。
+# 身份证靠 OCR 分正反面(asset_resolver.resolve_id_card);其余按 owner_name+证件类型取。
+_PERSONNEL_CERT_GROUPS: tuple[tuple[str, tuple[str, ...], int], ...] = (
+    ("注册建造师证", ("一级建造师证", "二级建造师证", "建造师证"), 4),
+    ("职称证书", ("职称证书",), 2),
+    ("安全考核证", ("交安证", "建安证", "注册安全工程师证", "安全考核证"), 3),
+    ("社保证明", ("社保",), 2),
+)
+
+
+def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
+    """单个人(项目经理/总工)的证件插图标记:身份证正反 + 建造师/职称/安全/社保。"""
+    name = (name or "").strip()
+    if not name:
+        return ""
+
+    blocks: list[str] = []
+    seen: set[int] = set()
+
+    # 身份证正反面:OCR 判面,别抓错(正面有姓名)
+    try:
+        from services import asset_resolver
+
+        for side, label in (("front", "正面"), ("back", "背面")):
+            card = asset_resolver.resolve_id_card(name, side=side)
+            if card.get("matched") and int(card.get("document_id", 0)) not in seen:
+                doc_id = int(card["document_id"])
+                seen.add(doc_id)
+                blocks.append(
+                    f'\n{{{{knowledge_image:document_id={doc_id} '
+                    f'anchor="{anchor}" caption="{role}（{name}）身份证{label}" width_cm=12}}}}\n'
+                )
+    except Exception:
+        pass
+
+    # 建造师证/职称/安全/社保:按 owner_name + 证件类型取
+    try:
+        from services.knowledge_service import list_knowledge_image_references
+
+        refs = list_knowledge_image_references("", limit=5000)
+    except Exception:
+        refs = []
+    by_owner = [r for r in refs if str(r.get("owner_name") or "").strip() == name]
+    for title, cert_types, cap in _PERSONNEL_CERT_GROUPS:
+        emitted = 0
+        for r in by_owner:
+            if emitted >= cap:
+                break
+            ctype = str(r.get("certificate_type") or "")
+            if not any(k in ctype for k in cert_types):
+                continue
+            doc_id = int(r.get("document_id", 0) or 0)
+            if doc_id <= 0 or doc_id in seen:
+                continue
+            if str(r.get("image_insertable")) in ("False", "false", "0", "None"):
+                continue
+            seen.add(doc_id)
+            emitted += 1
+            suffix = f"（{emitted}）" if cap > 1 else ""
+            blocks.append(
+                f'\n{{{{knowledge_image:document_id={doc_id} '
+                f'anchor="{anchor}" caption="{role}（{name}）{title}{suffix}" width_cm=12}}}}\n'
+            )
+    return "".join(blocks)
+
+
+def _personnel_cert_evidence_markdown(pm_name: str, tech_name: str) -> str:
+    """选派的项目经理 + 总工的证件扫描件,落到各自资历表后(资格审查硬内容)。"""
+    sections: list[str] = []
+    pm_md = _one_person_cert_markdown("项目经理", pm_name, "项目经理资历表")
+    if pm_md:
+        sections.append(pm_md)
+    tech_md = _one_person_cert_markdown("项目技术负责人", tech_name, "项目总工资历表")
+    if tech_md:
+        sections.append(tech_md)
+    if not sections:
+        return ""
+    return (
+        "\n<!-- tdg:pagebreak -->\n"
+        "\n## 附录：项目经理 / 项目技术负责人证件材料（系统自动插入，请人工核验）\n"
+        + "".join(sections)
     )
 
 

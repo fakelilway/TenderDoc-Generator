@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  FileDown,
   ImageIcon,
   Loader2,
   Pencil,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 
 import {
+  downloadCertTestDocx,
   getCompanyCertArchive,
   getKnowledgeDocumentPreview,
   getPersonCertArchive,
@@ -61,6 +63,19 @@ export function CertArchivePanel() {
   // 改名
   const [editId, setEditId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
+  // 下载测试DOCX
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
+
+  async function downloadTest(docId: number) {
+    setDownloadingId(docId);
+    try {
+      await downloadCertTestDocx(docId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "下载测试DOCX失败");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -174,6 +189,18 @@ export function CertArchivePanel() {
               <Pencil className="h-3 w-3" />
             </button>
           ) : null}
+          <button
+            type="button"
+            title="下载测试DOCX(把这张真图插进Word自己看)"
+            className="text-muted hover:text-brand"
+            onClick={() => downloadTest(doc.document_id)}
+          >
+            {downloadingId === doc.document_id ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <FileDown className="h-3 w-3" />
+            )}
+          </button>
           {extra}
         </>
       )}

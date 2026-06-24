@@ -48,6 +48,11 @@ COMMERCIAL_KEYWORDS = (
     "信用",
     "承诺函",
     "声明函",
+    # 资格审查证件附录(系统自动插图)的标题:身份证明/证件材料/业绩证明/资历表,归商务卷
+    "身份证明",
+    "证件材料",
+    "业绩证明",
+    "资历",
 )
 PRICING_KEYWORDS = (
     "报价",
@@ -320,13 +325,38 @@ def _parse_knowledge_image_marker(line: str) -> dict[str, object] | None:
     }
 
 
+def _apply_table_grid(table) -> None:
+    """套表格网格线。福昕/pdf2docx 转换件常无内置"Table Grid"样式,直接赋值会抛
+    KeyError 把整段渲染带崩(→ 兜底吞掉证件插图,word/media 0 张)。故:先试内置样式,
+    取不到就直接写边框 XML——表格仍有网格线,且绝不让渲染崩。
+    """
+    try:
+        table.style = "Table Grid"
+        return
+    except Exception:
+        pass
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tblPr = table._tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), "4")
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), "auto")
+        borders.append(el)
+    tblPr.append(borders)
+
+
 def _add_bidder_basic_info_table(
     document: Document,
     attrs: dict[str, str],
     style_profile: str | None,
 ) -> None:
     table = document.add_table(rows=15, cols=6)
-    table.style = "Table Grid"
+    _apply_table_grid(table)
     table.autofit = False
     widths_cm = (2.9, 1.5, 2.0, 2.0, 2.6, 2.9)
     for row in table.rows:
@@ -787,7 +817,7 @@ def _add_table(
 
     column_count = max(len(row) for row in rows)
     table = document.add_table(rows=0, cols=column_count)
-    table.style = "Table Grid"
+    _apply_table_grid(table)
 
     for row_values in rows:
         row = table.add_row()
@@ -927,16 +957,20 @@ def split_delivery_markdown(markdown_text: str) -> dict[str, str]:
         if stripped.startswith("# ") and not stripped.startswith("## "):
             continue
         if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
             heading = stripped.lstrip("#").strip()
             seen_section = True
-            if any(keyword in heading for keyword in _META_NOTE_HEADINGS):
-                current = []  # meta notes belong to no volume
-            elif any(keyword in heading for keyword in PRICING_KEYWORDS):
-                current = pricing
-            elif any(keyword in heading for keyword in COMMERCIAL_KEYWORDS):
-                current = commercial
-            else:
-                current = technical
+            # 仅顶层小节(##)决定归哪卷;### 及更深的子标题继承父卷,不再按关键词改判
+            # (否则 "## 附录：资格证明材料(商务)" 下的 "### 企业资质证书" 会被甩回技术卷)。
+            if level <= 2:
+                if any(keyword in heading for keyword in _META_NOTE_HEADINGS):
+                    current = []  # meta notes belong to no volume
+                elif any(keyword in heading for keyword in PRICING_KEYWORDS):
+                    current = pricing
+                elif any(keyword in heading for keyword in COMMERCIAL_KEYWORDS):
+                    current = commercial
+                else:
+                    current = technical
         elif not seen_section:
             current = technical
         current.append(line)

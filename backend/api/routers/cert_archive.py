@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.deps import _raise_http_error
@@ -70,6 +73,47 @@ def retype_company(
         return {"ok": True, "changed": changed}
     except Exception as error:  # noqa: BLE001
         _raise_http_error(error)
+
+
+@router.get("/api/cert-archive/test-insert/{document_id}")
+def test_insert_docx(
+    document_id: int,
+    _current_user: UserProfile = Depends(auth_service.require_knowledge_view),
+) -> StreamingResponse:
+    """自助验证:把这张证件的**真实图片**插进一个 DOCX 并下载,亲眼确认不是只写名字。"""
+    from docx import Document
+    from docx.shared import Inches
+
+    from services import asset_resolver
+
+    try:
+        asset = asset_resolver.resolve_asset(document_id=document_id)
+        if not asset.get("matched"):
+            raise ValueError("没找到这张证件的图片")
+        blob = asset_resolver.read_asset_bytes(document_id)
+        if not blob:
+            raise ValueError("读到空图片")
+
+        doc = Document()
+        doc.add_heading("图片插入测试", level=1)
+        doc.add_paragraph(f"材料名称：{asset['asset_name']}")
+        doc.add_paragraph(
+            f"归属：{asset.get('owner_name', '')}  类型：{asset.get('asset_type', '')}"
+        )
+        doc.add_picture(BytesIO(blob), width=Inches(5.5))
+        buf = BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+    except Exception as error:  # noqa: BLE001
+        _raise_http_error(error)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f"attachment; filename=test_insert_{document_id}.docx"
+        },
+    )
 
 
 @router.patch("/api/cert-archive/cert/{document_id}")
