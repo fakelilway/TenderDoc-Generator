@@ -853,8 +853,10 @@ def _inline_value_for(
     章节的身份声明块)才填法人名,避免把人员表/其他人的"姓名"误填成法人。
     """
     norm = seg.replace(" ", "").replace("　", "")
-    # 联合体/保证金 留白:本段或标签命中即不填(用户定)
-    if any(kw in norm or kw in para_text for kw in _LEAVE_BLANK_KEYWORDS):
+    # 保证金/保函 留白:只看**标签本身**(如"投标保证金金额：")。绝不看整段——投标函正文
+    # 里顺带提到"投标保证金"会把整段的质量/工期等空也误留白(实测回归)。章节级留白另由
+    # _blank_zone_step 处理。
+    if any(kw in norm for kw in _LEAVE_BLANK_KEYWORDS):
         return ""
     if norm.endswith("姓名") and (id_proof_context or "的法定代表人" in para_text):
         return str(profile.get("legal_representative", "") or "").strip()

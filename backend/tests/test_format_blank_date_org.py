@@ -126,3 +126,16 @@ def test_org_table_anchor_skips_toc() -> None:
     real = doc.add_paragraph("五、项目管理机构")  # 正文真章节
     el = g._find_section_paragraph(doc, ("项目管理机构",))
     assert el is real._p  # 取正文章节,不取目录条目
+
+
+def test_bond_mention_in_paragraph_does_not_blank_quality_duration() -> None:
+    """投标函正文顺带提到'投标保证金'时,同段的质量/工期空仍要照填(修留白过宽回归)。"""
+    from docx import Document as _D
+    from services.original_docx_format_service import _fill_inline_labeled_blanks
+    doc = _D()
+    p = doc.add_paragraph()
+    for t in ["3.质量标准：", " ", "\t", "；工期：", " ", "\t", "日历天。我方按时提交投标保证金。"]:
+        p.add_run(t)
+    _fill_inline_labeled_blanks(doc, {"质量": "合格", "工期": "90日历天"})
+    txt = doc.paragraphs[0].text
+    assert "合格" in txt and "90日历天" in txt
