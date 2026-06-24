@@ -510,7 +510,11 @@ def _insert_image_after(after_el, doc, document_id, caption, width_cm):
         img_p.add_run(f"（图片资料未能插入，请人工补充：{caption}）")
         return img_el
     try:
-        pic = img_p.add_run().add_picture(BytesIO(bytes(img)), width=Cm(float(width_cm)))
+        from utils.image_orient import upright_image_bytes
+
+        pic = img_p.add_run().add_picture(
+            BytesIO(upright_image_bytes(bytes(img))), width=Cm(float(width_cm))
+        )
         if pic.height > Cm(20):
             scale = Cm(20) / pic.height
             pic.width = int(pic.width * scale)

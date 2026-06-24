@@ -502,11 +502,12 @@ def _add_knowledge_image(
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         return
 
-    image_stream = (
-        BytesIO(bytes(image_source))
-        if isinstance(image_source, (bytes, bytearray))
-        else str(image_source)
-    )
+    if isinstance(image_source, (bytes, bytearray)):
+        from utils.image_orient import upright_image_bytes
+
+        image_stream = BytesIO(upright_image_bytes(bytes(image_source)))
+    else:
+        image_stream = str(image_source)
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     # 正奇风格的 Normal 是固定 32 磅行距，整页高的扫描件会向上溢出

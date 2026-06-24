@@ -100,7 +100,9 @@ def test_insert_docx(
         doc.add_paragraph(
             f"归属：{asset.get('owner_name', '')}  类型：{asset.get('asset_type', '')}"
         )
-        doc.add_picture(BytesIO(blob), width=Inches(5.5))
+        from utils.image_orient import upright_image_bytes
+
+        doc.add_picture(BytesIO(upright_image_bytes(blob)), width=Inches(5.5))
         buf = BytesIO()
         doc.save(buf)
         buf.seek(0)

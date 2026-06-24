@@ -72,8 +72,10 @@ def main() -> None:
         blob = asset_resolver.read_asset_bytes(asset["document_id"])
         if not blob:
             raise ValueError("读到空字节")
-        # 真插入 image part(不是写文件名)
-        doc.add_picture(BytesIO(blob), width=Inches(5.5))
+        # 真插入 image part(不是写文件名);按 EXIF 摆正避免侧躺
+        from utils.image_orient import upright_image_bytes
+
+        doc.add_picture(BytesIO(upright_image_bytes(blob)), width=Inches(5.5))
         expected[0]["status"] = "inserted"
         print(f"\n✅ 已插入真实图片 {len(blob)} 字节")
     except Exception as exc:  # noqa: BLE001
