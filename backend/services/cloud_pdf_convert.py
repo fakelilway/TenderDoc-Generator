@@ -173,10 +173,8 @@ def convert_format_pages_via_cloud(
         _fill_establish_segmented,
         _fill_inline_labeled_blanks,
         _fill_known_table_cells,
-        _fill_legal_rep_columns,
         _fill_performance_table,
         _fill_personnel_table,
-        _fill_signature_bidder_line,
         _fill_pm_resume_table,
         _find_format_page_range_in_pdf,
         _log_unfilled_fields,
@@ -213,8 +211,6 @@ def convert_format_pages_via_cloud(
     _fill_authorization_letter(doc, profile or {})  # 授权委托书"本人___（姓名）系"→法人名
     _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
     _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
-    _fill_legal_rep_columns(doc, profile or {})  # 福昕切断的 性别/职务 右列 → 重建
-    _fill_signature_bidder_line(doc, profile or {})  # 福昕弄丢的"投标人：（盖单位章）"签名行 → 补上
     _fill_personnel_table(doc, profile or {})
     _fill_performance_table(doc, profile or {})  # 投标人业绩情况表 → 填选中的类似业绩项目名
     _fill_pm_resume_table(doc, (profile or {}).get("pm_resume") or {})  # 项目经理简历表
