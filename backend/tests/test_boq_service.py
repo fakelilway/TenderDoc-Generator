@@ -79,8 +79,8 @@ def test_boq_overview_and_section_brief() -> None:
 
 def test_adjust_min_chars_by_share() -> None:
     boq = _boq()
-    assert b.adjust_min_chars(boq, "路基(土石方)及地基处理工程施工方案", 2000) == 3200  # 90% → 1.6x
-    assert b.adjust_min_chars(boq, "附属交安与绿化工程施工方案", 1500) == 700          # 3% → 压下限
+    assert b.adjust_min_chars(boq, "路基(土石方)及地基处理工程施工方案", 2000) == 4400  # 90% → 2.2x
+    assert b.adjust_min_chars(boq, "附属交安与绿化工程施工方案", 1500) == 1050          # 3% → 压低 0.7x
     assert b.adjust_min_chars(boq, "施工总进度计划与工期保证措施", 2200) == 2200        # 无匹配 → 原样
     assert b.adjust_min_chars(TenderBOQ(), "路基工程施工方案", 2000) == 2000            # 空BOQ → 原样
 
@@ -126,7 +126,9 @@ def test_boq_brief_reaches_writer_prompt() -> None:
     user = msgs[-1]["content"]
     assert "本工程量清单(BOQ)与造价占比" in user
     assert "路基填方50万m³" in user
-    assert "工程量清单优先" in user  # 写作规则已注入
+    # BOQ 详略规则已注入,且降级到"满足招标要求的前提下"(招标优先于占比)
+    assert "按上面【BOQ 与造价占比】定详略" in user
+    assert "在已满足招标要求" in user
     # 不传 boq_brief 时不应出现该块
     msgs2 = build_node_fill_prompt(
         node_title="x", project_name="x", requirements={}, company_name="x"

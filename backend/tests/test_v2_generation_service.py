@@ -54,7 +54,7 @@ def test_sections_from_confirmed_outline_maps_titles_and_focus() -> None:
     assert "三检制" in sections[3]["must_cover"]
     # explicit target honored; default applied otherwise
     assert sections[2]["target_chars"] == 2000
-    assert sections[0]["target_chars"] == 1500
+    assert sections[0]["target_chars"] == 2200  # _CONFIRMED_OUTLINE_TARGET_CHARS
 
 
 def test_sections_from_confirmed_outline_honors_small_and_only_empty_falls_back() -> None:

@@ -353,7 +353,6 @@ async def upload_project_boq(
     没上传则回退"从招标正文估占比"。扫描件 PDF 抽不出文字会提示(暂不支持 OCR)。
     """
     try:
-        from services import boq_service
         from services.project.boq import set_project_boq
 
         filename = file.filename or "boq.pdf"
@@ -367,16 +366,14 @@ async def upload_project_boq(
                 "warning": "未从文件抽到文字——可能是扫描件 PDF(暂不支持 OCR)。"
                 "请上传文字版 PDF/Word,或造价软件导出的版本。",
             }
-        boq = boq_service.build_boq("", boq_text=text)  # 即时解析占比预览(best-effort)
+        # 只快速存清单文字即返回。占比**不在上传时同步算**——那会卡 ~30 秒 LLM 调用,导致前端
+        # 超时反复重试 /boq + 轮询 /status,把数据库连接池(maxconn)瞬时抢空报"连接池耗尽"。
+        # 真实占比在点击"开始生成"时由 v2 生成链按本清单 build_boq 计算并驱动技术卷详略。
         return {
             "chars": int(stored.get("chars", 0)),
-            "total_amount_wan": boq.total_amount_wan,
-            "dominant": boq.dominant,
-            "note": boq.note,
-            "categories": [
-                {"name": c.name, "share_pct": c.share_pct, "key_quantities": c.key_quantities}
-                for c in sorted(boq.categories, key=lambda x: -x.share_pct)
-            ],
+            "categories": [],
+            "note": "清单已上传。各分部分项占比将在点击“开始生成”时按本清单自动计算，"
+            "并据此驱动技术卷“占比大的多写、占比小的精简”。",
         }
     except Exception as error:
         _raise_http_error(error)

@@ -179,6 +179,12 @@ def run_bid_workflow(
         project_status="processing",
     )
     outline = _outline_from_project(project, requirements, bid_template)
+    # 招标没识别出技术标结构 → 大纲会退化成"施工组织设计"一节占位,导致技术卷只生成一节(~7页)、
+    # 占比详略与逐节知识库检索全部失效。这里按工程量清单分部分项+标准施组章节展开成完整多节大纲,
+    # 让下面的"逐节检索知识库"和生成的"按占比定详略"都能真正落到每一节。
+    outline = _expand_thin_outline(
+        outline, requirements, state.tender_text, project.get("boq_text") or ""
+    )
     state.bid_outline = [section.model_dump() for section in outline]
     state.document_outline = project.get("document_outline_json") or [
         section.model_dump()
@@ -256,7 +262,17 @@ def run_bid_workflow(
     state.v2_format_docx = getattr(v2_pkg, 'format_docx_path', None)
     state.v2_appendix_docx = getattr(v2_pkg, 'appendix_docx_path', None)
     if v2_pkg.audit_result:
-        audit_summary = f"通过={v2_pkg.audit_result.passed}, 格式={len(v2_pkg.audit_result.format_issues)} 内容={len(v2_pkg.audit_result.content_issues)} 证据={len(v2_pkg.audit_result.evidence_issues)}"
+        ar = v2_pkg.audit_result
+        audit_summary = (
+            f"通过={ar.passed}, 格式={len(ar.format_issues)} 内容={len(ar.content_issues)} "
+            f"证据={len(ar.evidence_issues)} 招标覆盖={len(ar.coverage_issues)}"
+        )
+        # 招标覆盖校验:评分点未充分正面响应=major(不阻断出标),在此醒目告警让用户决定是否人工补强;
+        # 废标项未实质规避=critical,会进入下面的 audit_blocked 分支硬拦。
+        cov_majors = [i for i in ar.coverage_issues if i.severity == "major"]
+        if cov_majors and not v2_pkg.audit_blocked:
+            details = "；".join(i.problem for i in cov_majors[:6])
+            audit_summary += f" | 招标覆盖告警(评分点未充分响应,建议人工补强): {details}"
     else:
         audit_summary = "审查未执行"
 
@@ -632,6 +648,266 @@ def _outline_from_project(
     if outline_json:
         return [BidSectionOutline.model_validate(item) for item in outline_json]
     return build_bid_outline(requirements, bid_template)
+
+
+# 标准施组"保证措施"章节(招标未写明结构时的兜底)。每条 (标题, 编写要点)。
+_CANONICAL_ASSURANCE_SECTIONS = [
+    ("施工进度计划与工期保证措施", "施工总进度计划、关键线路与控制性节点、各分部分项进度安排、人材机资源保障、工期风险与赶工补救措施。"),
+    ("工程质量管理体系及保证措施", "质量管理体系与质量目标、各分部分项质量控制要点、原材料与试验检测、质量通病防治、成品保护措施。"),
+    ("安全生产管理体系及保证措施", "安全管理体系与安全生产责任制、危险源辨识与管控、专项安全技术措施、安全教育培训与应急救援。"),
+    ("环境保护与水土保持措施", "环境保护目标、扬尘/噪声/废水/弃渣控制、绿色施工、水土保持与生态恢复措施。"),
+    ("文明施工与现场管理措施", "文明施工标准与现场布置、标识标牌、材料堆放、现场协调与周边社会关系处理。"),
+    ("交通组织与安全保通方案", "施工期间交通组织、半幅施工或导改方案、行车安全与保通措施、夜间及交通高峰期施工安排。"),
+    ("项目风险预测与防范及应急预案", "主要风险源识别与防范、应急组织机构、各类突发情况应急预案、抢险物资储备与演练。"),
+]
+
+
+# 施工方案章节排序 = 施工逻辑顺序(路基→排水→路面→桥涵→交安→绿化)。评审看重工序合理性,
+# 不能按造价占比乱排;占比只决定每节"写多少"(adjust_min_chars),不决定"先后"。
+_CONSTRUCTION_GROUP_ORDER = ["路基", "排水", "路面", "桥涵", "交安", "绿化"]
+
+
+def _construction_rank(name: str) -> int:
+    """按施工逻辑给分部分项排序:返回其在 _CONSTRUCTION_GROUP_ORDER 的位次,未知归到最后。"""
+    from services import boq_service
+
+    groups = boq_service._groups_of(name or "")
+    for i, g in enumerate(_CONSTRUCTION_GROUP_ORDER):
+        if g in groups:
+            return i
+    return len(_CONSTRUCTION_GROUP_ORDER)
+
+
+# 各专业的施工工序(按施工先后逻辑排)。占比大的专业拆成更多道工序章节→大幅加量(每节一次LLM调用,
+# 突破单节字数上限),且工序顺序天然合逻辑。
+_DISCIPLINE_PROCESS = {
+    "路基": [
+        ("场地清理与旧路面、结构物挖除", "清表清淤、旧路面及基层挖除、结构物拆除、老路面碎石化处理。"),
+        ("路基挖方与土方调配", "路基挖方、淤泥清挖、土方运输、利用土方与弃方处理。"),
+        ("特殊路基处理与边坡防护", "软基/淤泥处理、换填加固、边坡及挡墙防护、杉木桩防护。"),
+        ("路基填筑、压实与整修", "分层填筑、含水量控制、碾压、压实度与弯沉检测、路基整修。"),
+    ],
+    "排水": [
+        ("排水管道与检查井施工", "管基处理、管道铺设、接口处理、检查井砌筑、排水试验。"),
+    ],
+    "路面": [
+        ("旧路面病害处治与换板施工", "弯沉检测与路面状况调查、旧板破除与换板、板底脱空注浆、错台与裂缝处治。"),
+        ("级配碎石基层与垫层施工", "级配碎石拌和运输、摊铺整平、碾压成型、压实度与平整度控制。"),
+        ("水泥混凝土面板施工", "模板与传力杆/钢筋安装、混凝土拌和运输浇筑振捣、抹面拉毛、切缝。"),
+        ("接缝处理、灌缝与成品养护", "胀缝/缩缝/纵缝设置、切缝清缝、灌缝胶灌注、面板养护与成品保护。"),
+        ("沥青混凝土面层施工", "透层与黏层、沥青混合料拌和运输、摊铺、碾压、接缝与平整度控制。"),
+    ],
+    "桥涵": [
+        ("圆管涵基础与管节安装施工", "基坑开挖、基础浇筑、管节预制与安装、接缝处理。"),
+        ("桥涵结构防水与台背回填", "结构施工、防水层施工、台背回填与压实。"),
+    ],
+    "交安": [
+        ("波形梁钢护栏施工", "立柱定位与打入、防阻块与波形梁安装、端头处理与旧护栏重新安装。"),
+        ("交通标志施工", "标志基础与立柱安装、版面制作与更换、附着式标志安装。"),
+        ("交通标线及附属设施施工", "标线放样与涂敷、轮廓标/示警桩/道口标柱/减速带/凸面镜安装。"),
+    ],
+    "绿化": [
+        ("绿化与景观施工", "苗木选型与种植、客土与浇水养护、景观附属设施。"),
+    ],
+}
+
+
+def _subsection_count(share_pct: float) -> int:
+    """占比越大→拆成越多道工序章节(占比驱动'写多少'的结构级实现)。"""
+    if share_pct >= 40:
+        return 5
+    if share_pct >= 25:
+        return 4
+    if share_pct >= 15:
+        return 3
+    if share_pct >= 5:
+        return 2
+    return 1
+
+
+def _discipline_sections(boq) -> list[BidSectionOutline]:
+    """按工程量清单分部分项 → 施工方案章节:占比越大拆成越多道工序(各自成节、各自一次LLM调用),
+    工序按施工逻辑先后排;每节标题带专业前缀(让占比详略/知识库检索按专业落)。"""
+    from services import boq_service
+
+    out: list[BidSectionOutline] = []
+    if boq is None or boq.is_empty():
+        return out
+    cats = sorted(boq.categories, key=lambda c: (_construction_rank(c.name), -c.share_pct))
+    for c in cats:
+        name = (c.name or "").strip()
+        if not name or "总则" in name or "临时" in name:
+            continue  # 总则/临时类并入"施工组织与现场布置"
+        groups = boq_service._groups_of(name)
+        procs = None
+        for g in _CONSTRUCTION_GROUP_ORDER:
+            if g in groups and g in _DISCIPLINE_PROCESS:
+                procs = _DISCIPLINE_PROCESS[g]
+                break
+        kq = (c.key_quantities or "").strip()
+        n = _subsection_count(c.share_pct)
+        if procs:
+            for i, (pname, pfocus) in enumerate(procs[:n]):
+                focus = pfocus + (f" 引用本工程量清单真实工程量：{kq}" if (i == 0 and kq) else "")
+                out.append(
+                    BidSectionOutline(title=f"{name}·{pname}", required=True, focus_points=[focus])
+                )
+        else:
+            title = name if name.endswith(("方案", "措施")) else f"{name}施工方案、方法与技术措施"
+            out.append(
+                BidSectionOutline(
+                    title=title,
+                    required=True,
+                    focus_points=[
+                        f"依据工程量清单真实工程量编写施工工艺、方法、技术措施与质量验收标准。主要工程量：{kq}"
+                        if kq
+                        else "依据工程量清单真实工程量编写施工工艺、方法、技术措施与质量验收标准。"
+                    ],
+                )
+            )
+    return out
+
+
+def _extract_tender_format_structure(
+    tender_text: str,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """从招标"投标文件格式"抽技术标规定结构。
+
+    返回 (施工组织设计编制要点, 附表清单[(编号, 名称)])。抽不到→([], [])。
+    这是"目录必须跟招标投标文件格式一致 + 有表格就附表格"的数据源。
+    """
+    text = tender_text or ""
+    aps: dict[str, str] = {}
+    for m in re.finditer(r"附表([一二三四五六七八九十]+)\s+([^\n附\d]{2,20})", text):
+        num, name = m.group(1), m.group(2).strip()
+        if num not in aps and len(name) >= 3:
+            aps[num] = name
+    appendices = [(f"附表{k}", v) for k, v in aps.items()]
+    points: list[str] = []
+    idx = text.find("投标人应按照以下要点编制施工组织设计")
+    if idx >= 0:
+        seg = text[idx : idx + 1200]
+        points = [
+            p.strip()
+            for p in re.findall(r"（[一二三四五六七八九十\d]+）\s*([^\n（）]{4,40})", seg)
+        ]
+    return points, appendices
+
+
+def _tender_format_outline(
+    appendices: list[tuple[str, str]],
+    requirements: TenderRequirements,
+    tender_text: str,
+    boq_text: str,
+) -> list[BidSectionOutline]:
+    """按招标"投标文件格式"(施工组织设计编制要点 + 附表)搭技术标大纲——目录与招标一致。
+
+    施工方案主体按工程量清单分部分项展开并引用真实工程量(保证深度);招标规定的每张附表
+    逐一补为"附表节",生成时渲染成表格(满足"有表格就要附表格")。
+    """
+    try:
+        from services import boq_service
+
+        boq = boq_service.build_boq(tender_text or "", boq_text=boq_text or "")
+    except Exception:
+        boq = None
+
+    def sec(title: str, focus: str) -> BidSectionOutline:
+        return BidSectionOutline(title=title, required=True, focus_points=[focus])
+
+    sections: list[BidSectionOutline] = [
+        sec("施工组织与现场布置", "施工管理目标、施工组织机构与职责分工、施工现场总体布置、临时设施(营地/料场/便道/供电供水/消防)规划、主要资源进场安排。"),
+        sec("劳动力、机械设备、材料的供应及资金流量计划", "劳动力组织与进退场计划、主要机械设备配置与进场计划、主要材料供应来源与质量保证、月度资金流量安排。"),
+    ]
+    # 编制要点③ 技术措施:按工程量清单分部分项→工序章节(占比越大拆越多道工序、写得越多;工序按施工逻辑排)。
+    disciplines = _discipline_sections(boq)
+    if not disciplines:
+        for t in (  # 无清单兜底,施工逻辑顺序:路基→路面→桥涵→交安
+            "路基工程施工方案、方法与技术措施",
+            "路面工程施工方案、方法与技术措施",
+            "桥涵工程施工方案、方法与技术措施",
+            "交通安全设施工程施工方案、方法与技术措施",
+        ):
+            disciplines.append(sec(t, "依据招标与现场条件编写施工工艺、方法、技术措施与质量验收标准。"))
+    sections.extend(disciplines)
+    sections.extend(
+        [
+            sec("保畅方案与交通组织措施", "养护施工期间的交通组织、半幅施工或导改、行车安全与保通措施、便道与标志标牌设置、夜间及交通高峰期施工安排。"),
+            sec("工程质量保证体系及保证措施", "质量管理体系与质量目标、各分部分项质量控制要点、原材料与试验检测、质量通病防治、成品保护。"),
+            sec("安全生产保证体系及保证措施", "安全管理体系与安全生产责任制、危险源辨识与管控、专项安全技术措施、安全教育与应急救援。"),
+            sec("环境保护、水土保持保证措施", "环境保护目标、扬尘/噪声/废水/弃渣控制、绿色施工、水土保持。"),
+            sec("其他应说明的事项", "投标人认为需说明的其他技术事项、对本工程的合理化建议等。"),
+        ]
+    )
+    # 招标规定的附表:逐张补为附表节(标题=招标原名),生成时渲染成表格。
+    for num, name in appendices:
+        sections.append(
+            sec(f"{num} {name}", f"按招标文件{num}格式的附表(表格),由投标人填写。")
+        )
+    return sections
+
+
+def _boq_discipline_fallback(
+    requirements: TenderRequirements, tender_text: str, boq_text: str
+) -> list[BidSectionOutline]:
+    """招标未写明技术标结构时的兜底:按工程量清单分部分项 + 标准施组章节展开。"""
+    try:
+        from services import boq_service
+
+        boq = boq_service.build_boq(tender_text or "", boq_text=boq_text or "")
+    except Exception:
+        boq = None
+    sections: list[BidSectionOutline] = [
+        BidSectionOutline(
+            title="总体施工组织布置及规划",
+            required=True,
+            focus_points=["工程概况、编制依据与原则、施工目标、总体施工部署、施工组织机构与职责分工、主要人材机资源配置、施工总平面布置。"],
+        )
+    ]
+    disciplines = _discipline_sections(boq)
+    if not disciplines:
+        for t in ("路基工程施工方案", "排水工程施工方案", "路面工程施工方案", "桥涵工程施工方案", "交通安全设施工程施工方案"):
+            disciplines.append(
+                BidSectionOutline(title=t, required=True, focus_points=["依据招标要求与现场条件编写施工工艺、技术措施与质量验收标准。"])
+            )
+    sections.extend(disciplines)
+    sections.extend(
+        BidSectionOutline(title=t, required=True, focus_points=[f])
+        for t, f in _CANONICAL_ASSURANCE_SECTIONS
+    )
+    return sections
+
+
+def _expand_thin_outline(
+    outline: list[BidSectionOutline],
+    requirements: TenderRequirements,
+    tender_text: str,
+    boq_text: str,
+) -> list[BidSectionOutline]:
+    """大纲退化成 ≤1 节占位时,重建完整技术标大纲。
+
+    **优先以招标"投标文件格式"为准**:招标写明了施工组织设计编制要点 + 附表的,目录照它搭、
+    附表逐张补成附表节(生成时渲染成表格);招标没写明结构的,才按工程量清单分部分项 + 标准
+    施组章节兜底。用户已确认 ≥2 节真实大纲则原样保留。
+    """
+    real = [s for s in (outline or []) if str(getattr(s, "title", "") or "").strip()]
+    placeholder = any(
+        "未能从招标文件自动识别" in str(p)
+        for s in real
+        for p in (getattr(s, "focus_points", None) or [])
+    )
+    if len(real) > 1 and not placeholder:
+        return outline  # 已是像样的多节大纲,尊重原样
+
+    points, appendices = _extract_tender_format_structure(tender_text)
+    if points or appendices:
+        logger.info(
+            "技术卷大纲按招标'投标文件格式'重建:编制要点 %d 项 + 附表 %d 张",
+            len(points), len(appendices),
+        )
+        return _tender_format_outline(appendices, requirements, tender_text, boq_text)
+    logger.info("招标未写明技术标结构,按工程量清单分部分项 + 标准施组章节展开")
+    return _boq_discipline_fallback(requirements, tender_text, boq_text)
 
 
 def _apply_selected_project_manager(company_profile, project):

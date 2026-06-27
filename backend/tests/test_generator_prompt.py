@@ -23,13 +23,14 @@ def test_prompt_injects_score_and_invalid_items() -> None:
     )
     content = _user_content(messages)
 
-    assert "本节点须正面响应的评分点" in content
+    assert "须逐条正面响应的评分点" in content
     assert "质量保证措施" in content
     assert "提供完整的质量管理体系" in content
-    assert "本节点须规避的废标项" in content
+    assert "绝不可触碰的废标红线" in content
     assert "安全生产许可证" in content
-    # response rule present
-    assert "逐条正面响应上述评分点" in content
+    # 招标要求被确立为最高准则、且评分/废标响应规则强化
+    assert "最高准则" in content
+    assert "逐条正面响应" in content and "逐条规避" in content
 
 
 def test_prompt_includes_project_specifics_and_style() -> None:

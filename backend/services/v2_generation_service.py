@@ -91,6 +91,61 @@ def _distribute_requirement_items(
     return result
 
 
+def _is_appendix_title(title: str) -> bool:
+    """是否为招标规定的附表节(附表一 总体作业计划表 等)——这类是表格,不走 LLM 空写。"""
+    return str(title or "").strip().startswith("附表")
+
+
+def _appendix_markdown(title: str) -> str:
+    """把招标附表节渲染成标准 Markdown 表格(由 markdown_to_docx 转成 docx 表格)。
+
+    按附表名关键词匹配公路养护示范文本附表一~五的列式;未知附表给带列占位的通用表。
+    满足"招标格式里有表格,生成文件里也要有对应表格"。
+    """
+    t = str(title or "").strip()
+    note = "（按招标文件附表格式填写）"
+    if "施工总平面图" in t:
+        body = (
+            "投标人应递交一份施工总平面图，绘出现场临时设施布置，并附文字说明临时营地、料场、"
+            "临时设施、供电、供水、道路、消防等设施的情况和布置。\n\n"
+            "【施工总平面图：请在此插入施工总平面布置图（图片 / CAD 图），并附文字说明】"
+        )
+    elif "作业计划表" in t or "进度计划表" in t:
+        body = (
+            f"{note}\n\n"
+            "| 序号 | 主要工程项目 | 单位 | 工程数量 | 计划开工 | 计划完工 | 总工期(日历天) | 各月进度安排 |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| 1 | ________ | ____ | ________ | ____年__月 | ____年__月 | ________ | ________ |\n"
+            "| 2 | ________ | ____ | ________ | ____年__月 | ____年__月 | ________ | ________ |\n"
+            "| 3 | ________ | ____ | ________ | ____年__月 | ____年__月 | ________ | ________ |"
+        )
+    elif "劳动力计划表" in t:
+        body = (
+            f"{note}（按工程施工阶段填报各工种投入劳动力人数）\n\n"
+            "| 工种 | 施工准备 | 路基/路面施工 | 安全设施施工 | 收尾阶段 | 备注 |\n"
+            "|---|---|---|---|---|---|\n"
+            "| ________ | ____ | ____ | ____ | ____ | ________ |\n"
+            "| ________ | ____ | ____ | ____ | ____ | ________ |"
+        )
+    elif "临时占地" in t:
+        body = (
+            f"{note}\n\n"
+            "| 桩号 | 用途 | 地类(水田/旱地/果园/荒地等) | 面积(m²) | 需用时间(年月至年月) | 用地位置(左/右, m) |\n"
+            "|---|---|---|---|---|---|\n"
+            "| ________ | ________ | ________ | ____ | ____年__月至____年__月 | ________ |"
+        )
+    elif "外供电力" in t or "电力需求" in t:
+        body = (
+            f"{note}\n\n"
+            "| 桩号 | 用电位置(左/右, m) | 用途 | 计划用电量(kW·h) | 需用时间(年月至年月) | 备注 |\n"
+            "|---|---|---|---|---|---|\n"
+            "| ________ | ________ | ________ | ____ | ____年__月至____年__月 | ________ |"
+        )
+    else:
+        body = f"{note}\n\n【{t}：请按招标文件附表格式填写】"
+    return f"## {t}\n\n{body}"
+
+
 @dataclass
 class V2BidPackage:
     """Generated bid package produced by the V2 original-format pipeline."""
@@ -158,8 +213,8 @@ def _knowledge_chunk_payload(chunk: Any) -> dict[str, Any]:
     """把检索结果(RetrievalResult / dict / str)规整成写作 prompt 认的载荷。
 
     必须保留 ``metadata``——generator_prompt 靠 ``metadata['document_category']``
-    才能把公司历史施组片段标成【公司同类施工方案·仅参照写法/工艺/深度】;旧代码
-    只留 content,导致该深度标注永不触发(料即使接通也被当普通素材)。
+    才能把公司历史施组片段标成【公司同类施工方案·以此为骨架:沿用结构/工艺/深度,数据换本项目】;
+    旧代码只留 content,导致该深度标注永不触发(料即使接通也被当普通素材)。
     """
     if isinstance(chunk, dict):
         content = str(chunk.get("content", "") or chunk.get("snippet", ""))
@@ -357,6 +412,9 @@ def generate_v2_bid_package(
         concurrently inside ``fill_technical_volume`` (capped by
         ``BID_WRITER_CONCURRENCY``), cutting the volume from ~25 min to ~5-6 min."""
         titles = [s["title"] for s in sections]
+        # 招标规定的附表(附表一~五等)是表格,不走 LLM 空写——单独渲染成表格模板(见 _recombine)。
+        appendix_titles = [t for t in titles if _is_appendix_title(t)]
+        prose_titles = [t for t in titles if t not in appendix_titles]
         # FIX(喂料接通):retrieved 按章节标题归类,旧代码取 "technical"/"施工组织"
         # 这两个永不存在的 key → 公司施组语料被静默丢弃、技术卷沦为 LLM 空写。
         # 改为汇总去重后喂每个写作节点,并保留 metadata(让"公司同类施工方案"标注生效)。
@@ -364,13 +422,13 @@ def generate_v2_bid_package(
         knowledge_chunks = [
             _knowledge_chunk_payload(c) for c in chunks[:MAX_KNOWLEDGE_CHUNKS]
         ]
-        # Distribute scored/废标 criteria across nodes once, so each node only
-        # carries the items it should respond to (avoids cross-section bloat).
+        # Distribute scored/废标 criteria across PROSE nodes only(附表不写正文,别把要响应的
+        # 评分/废标项分配给附表节而漏写)。
         score_by_title = _distribute_requirement_items(
-            titles, requirements.technical_score_items
+            prose_titles, requirements.technical_score_items
         )
         invalid_by_title = _distribute_requirement_items(
-            titles, requirements.invalid_bid_items
+            prose_titles, requirements.invalid_bid_items
         )
         guidance_by_title = {s["title"]: str(s.get("must_cover", "")) for s in sections}
         min_chars_by_title = {
@@ -382,16 +440,18 @@ def generate_v2_bid_package(
         if boq is not None and not boq.is_empty():
             from services import boq_service
 
-            for t in titles:
+            for t in prose_titles:
                 brief = boq_service.section_node_brief(boq, t)
                 if brief:
                     boq_by_title[t] = brief
                 min_chars_by_title[t] = boq_service.adjust_min_chars(
-                    boq, t, min_chars_by_title.get(t, 0)
+                    boq,
+                    t,
+                    min_chars_by_title.get(t, 0) or _CONFIRMED_OUTLINE_TARGET_CHARS,
                 )
 
         result = fill_technical_volume(
-            node_titles=titles,
+            node_titles=prose_titles,
             project_name=requirements.project_name or "投标项目",
             requirements=requirements.model_dump(),
             company_name=company_name,
@@ -405,15 +465,96 @@ def generate_v2_bid_package(
             max_workers=max(1, int(getattr(settings, "bid_writer_concurrency", 5) or 1)),
         )
 
-        # Reassemble in section order; the format-tree title is the only top-level
-        # heading per section (writer bodies are already cleaned of echoed ones).
-        all_results: list[str] = []
-        for title, node in zip(titles, result.nodes):
-            section_body = _strip_writer_top_level_headings(
-                f"\n## {title}\n\n{node.content}\n"
+        # Reassemble in原大纲 order:散文节用 LLM 正文,附表节渲染成招标格式的表格。
+        def _recombine() -> str:
+            node_by_title = {n.title: n for n in result.nodes}
+            parts: list[str] = []
+            for s in sections:
+                title = s["title"]
+                if _is_appendix_title(title):
+                    parts.append(_appendix_markdown(title))
+                    continue
+                node = node_by_title.get(title)
+                if node is None:
+                    continue
+                body = _strip_writer_top_level_headings(
+                    f"\n## {title}\n\n{node.content}\n"
+                )
+                parts.append(f"## {title}\n\n{body}")
+            return "\n\n".join(parts)
+
+        combined = _recombine()
+
+        # 招标合规定向补写:逐条核对评分点/废标项是否被实质响应,对未响应项重写其归属章节并补足。
+        # best-effort——判定/补写异常都不阻断生成,最终仍由出标前的"招标覆盖闸"把关。
+        try:
+            from agents.content_writer_agent import rewrite_node_for_compliance
+            from prompts.generator_prompt import build_node_fill_prompt
+            from services.v2_audit_service import evaluate_coverage
+
+            req_dump = requirements.model_dump()
+            missing = [
+                v
+                for v in evaluate_coverage(
+                    combined,
+                    req_dump.get("invalid_bid_items") or [],
+                    req_dump.get("technical_score_items") or [],
+                )
+                if not v.covered
+            ]
+            if missing:
+                # 键用 (kind, title, description):标题可能重复/为空,只用 title 会把未响应项
+                # 路由到错误章节补写。title+description 足以唯一定位(去重已保证唯一)。
+                owner_of: dict[tuple[str, str, str], str] = {}
+                for kind, by_title in (("废标", invalid_by_title), ("评分", score_by_title)):
+                    for sect, its in by_title.items():
+                        for it in its:
+                            owner_of[(kind, it["title"], it.get("description", ""))] = sect
+                missing_by_title: dict[str, list[dict[str, str]]] = {}
+                for v in missing:
+                    owner = owner_of.get((v.kind, v.title, v.description))
+                    # 只补"确实与该技术章节相关"的项(与归属标题有词重叠);与所有技术标题都
+                    # 不相关、被 catch_all 强分过来的项(多为商务/资格类,如投标保证金)不硬塞进
+                    # 施工方案——交由出标前的全卷覆盖闸核(它对商务+技术+报价整卷判覆盖)。
+                    if owner in titles and (
+                        _cjk_bigrams(f"{v.title} {v.description}") & _cjk_bigrams(owner)
+                    ):
+                        missing_by_title.setdefault(owner, []).append(
+                            {"kind": v.kind, "title": v.title, "description": v.description}
+                        )
+                node_by_title = {n.title: n for n in result.nodes}
+                repaired = 0
+                for sect, miss in missing_by_title.items():
+                    node = node_by_title.get(sect)
+                    if node is None:
+                        continue
+                    base_messages = build_node_fill_prompt(
+                        node_title=sect,
+                        project_name=requirements.project_name or "投标项目",
+                        requirements=req_dump,
+                        company_name=company_name,
+                        knowledge_chunks=knowledge_chunks,
+                        tender_text=tender_text,
+                        score_items=score_by_title.get(sect),
+                        invalid_items=invalid_by_title.get(sect),
+                        section_guidance=guidance_by_title.get(sect, ""),
+                        target_chars=min_chars_by_title.get(sect, 0),
+                        boq_brief=boq_by_title.get(sect, ""),
+                    )
+                    new_content = rewrite_node_for_compliance(
+                        base_messages, node.content, sect, miss
+                    )
+                    if new_content and new_content != node.content:
+                        node.content = new_content
+                        repaired += 1
+                if repaired:
+                    logger.info("招标合规定向补写:修正 %d 个章节的未响应项", repaired)
+                    combined = _recombine()
+        except Exception:
+            logger.warning(
+                "招标合规定向补写异常,跳过(出标前覆盖闸仍会把关)", exc_info=True
             )
-            all_results.append(f"## {title}\n\n{section_body}")
-        combined = "\n\n".join(all_results)
+
         return result, combined
 
     tech_sections = confirmed_sections or _collect_technical_sections(requirements)
@@ -527,6 +668,10 @@ def generate_v2_bid_package(
         requirements=requirements.model_dump(),
         filled_fields=_collect_filled_fields(fill_results),
         profile=profile,
+        # 招标覆盖校验对"商务+技术+报价"整卷判覆盖:有的废标项在商务卷响应,只看技术卷会误拦。
+        coverage_text="\n\n".join(
+            t for t in (commercial_md, technical_md, pricing_md) if t
+        ),
     )
     audit_blocked = False
     if not audit.passed:
@@ -656,7 +801,7 @@ def _collect_technical_sections(requirements: TenderRequirements) -> list[dict]:
 
 # Default per-section length budget for a human-confirmed outline, matching the
 # "specific tender outline" path in _collect_technical_sections.
-_CONFIRMED_OUTLINE_TARGET_CHARS = 1500
+_CONFIRMED_OUTLINE_TARGET_CHARS = 2200
 
 
 def _sections_from_confirmed_outline(

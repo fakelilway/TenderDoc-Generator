@@ -12,10 +12,17 @@ from docx import Document
 from pypdf import PdfReader
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt", ".md", ".jpg", ".jpeg", ".png"}
+SUPPORTED_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".txt", ".md",
+    ".jpg", ".jpeg", ".png",
+    ".xlsx", ".xlsm", ".xls",
+}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 LEGACY_WORD_EXTENSIONS = {".doc"}
 TEXT_EXTENSIONS = {".txt", ".md"}
+# 工程量清单常是 Excel:.xlsx/.xlsm 直接用 openpyxl 读,旧版 .xls 走 LibreOffice 转换。
+XLSX_EXTENSIONS = {".xlsx", ".xlsm"}
+LEGACY_EXCEL_EXTENSIONS = {".xls"}
 
 
 def _as_bytes_io(file_data: bytes | bytearray | BinaryIO) -> BytesIO | BinaryIO:
@@ -65,6 +72,88 @@ def extract_text_from_docx(file_path: str | Path | bytes | bytearray | BinaryIO)
                 parts.append(" | ".join(cells))
 
     return "\n".join(parts)
+
+
+def extract_text_from_xlsx(file_path: str | Path | bytes | bytearray | BinaryIO) -> str:
+    """Extract sheet/row/cell text from an XLSX (or XLSM) path or byte stream.
+
+    把每行单元格序列化成「单元格 | 单元格」(同 docx 表格的写法),让工程量清单这类
+    Excel 表格能被当文本读、喂给 LLM 估占比。``data_only=True`` 取公式的缓存计算值
+    (合价等);若工作簿从未被 Excel 算过、无缓存值,该单元格为空(只丢公式不影响整表)。
+    """
+    from openpyxl import load_workbook
+
+    source = (
+        str(file_path)
+        if isinstance(file_path, (str, Path))
+        else _as_bytes_io(file_path)
+    )
+    workbook = load_workbook(source, read_only=True, data_only=True)
+    parts: list[str] = []
+    try:
+        multi_sheet = len(workbook.worksheets) > 1
+        for sheet in workbook.worksheets:
+            rows: list[str] = []
+            for row in sheet.iter_rows(values_only=True):
+                cells = [
+                    str(value).strip()
+                    for value in row
+                    if value is not None and str(value).strip()
+                ]
+                if cells:
+                    rows.append(" | ".join(cells))
+            if not rows:
+                continue
+            if multi_sheet:
+                parts.append(f"## 工作表:{sheet.title}")
+            parts.extend(rows)
+    finally:
+        workbook.close()
+    return "\n".join(parts)
+
+
+def extract_text_from_legacy_xls(
+    file_path: str | Path | bytes | bytearray | BinaryIO,
+) -> str:
+    """Convert a legacy .xls file with LibreOffice, then extract XLSX text."""
+    converter = shutil.which("soffice") or shutil.which("libreoffice")
+    if not converter:
+        raise ValueError(
+            "Legacy .xls conversion requires LibreOffice/soffice. Re-save the file "
+            "as .xlsx, or install LibreOffice before parsing .xls."
+        )
+
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        source_path = tmp_path / "input.xls"
+        if isinstance(file_path, (str, Path)):
+            source_path.write_bytes(Path(file_path).read_bytes())
+        elif isinstance(file_path, (bytes, bytearray)):
+            source_path.write_bytes(bytes(file_path))
+        else:
+            source_path.write_bytes(file_path.read())
+
+        subprocess.run(
+            [
+                converter,
+                "--headless",
+                "--convert-to",
+                "xlsx",
+                "--outdir",
+                str(tmp_path),
+                str(source_path),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        converted = source_path.with_suffix(".xlsx")
+        if not converted.exists():
+            matches = list(tmp_path.glob("*.xlsx"))
+            if not matches:
+                raise ValueError("Legacy .xls conversion did not produce an XLSX file")
+            converted = matches[0]
+        return extract_text_from_xlsx(converted)
 
 
 def extract_text_from_txt(file_path: str | Path | bytes | bytearray | BinaryIO) -> str:
@@ -218,6 +307,13 @@ def extract_text(
         return extract_text_from_docx(file_input)
     if content_type == "text/plain" or suffix in TEXT_EXTENSIONS:
         return extract_text_from_txt(file_input)
+    if suffix in XLSX_EXTENSIONS or content_type in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel.sheet.macroEnabled.12",
+    }:
+        return extract_text_from_xlsx(file_input)
+    if suffix in LEGACY_EXCEL_EXTENSIONS or content_type == "application/vnd.ms-excel":
+        return extract_text_from_legacy_xls(file_input)
     if suffix in LEGACY_WORD_EXTENSIONS or content_type == "application/msword":
         return extract_text_from_legacy_doc(file_input)
     if suffix in IMAGE_EXTENSIONS or (content_type or "").startswith("image/"):

@@ -144,11 +144,11 @@ export function ProjectBOQPanel({ projectId }: { projectId: number | null }) {
           ? "抽取并解析占比中(约 30 秒)…"
           : pendingFile
             ? `已选:${pendingFile.name}`
-            : "上传工程量清单(PDF / Word)"}
+            : "上传工程量清单(PDF / Word / Excel)"}
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.doc,.docx,.txt"
+          accept=".pdf,.doc,.docx,.txt,.xlsx,.xlsm,.xls"
           className="hidden"
           disabled={busy}
           onChange={(event) => handleFile(event.target.files)}

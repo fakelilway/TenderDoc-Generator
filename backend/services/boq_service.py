@@ -215,7 +215,8 @@ def boq_overview(boq: TenderBOQ) -> str:
     if dom:
         line += (
             f"主导分部分项=【{dom}】:技术卷应把绝大部分篇幅与最细的工艺、具体工程量放在主导项;"
-            "占比很小的分部一句话带过、不堆砌无关工艺。"
+            "在已满足招标评分点/废标项的前提下,占比很小且不涉及任何评分点/废标项的纯凑数分部"
+            "才可一句话带过、不堆砌无关工艺,绝不因占比低而省略与招标要求相关的内容。"
         )
     return line
 
@@ -242,7 +243,12 @@ def section_node_brief(boq: TenderBOQ, section_title: str) -> str:
 
 
 def adjust_min_chars(boq: TenderBOQ, section_title: str, base: int) -> int:
-    """按占比定详略:本节对应类别占比高→加厚,极小→压到下限。best-effort,无匹配原样返回。"""
+    """按占比定详略(力度已加强):占比越大篇幅越厚,主导分部分项最高加厚到 2.2 倍;
+    占比很小的压低篇幅、不为凑数堆砌。best-effort,无匹配/空 BOQ 原样返回。
+
+    注:生成端另有约 1200 字硬底(MIN_NODE_CONTENT_CHARS),占比极小的分部不会比
+    半页更短——这里压低的是写作目标与重写力度,避免把小分部灌成大段。
+    """
     if boq.is_empty() or not base:
         return base
     cats = match_categories(boq, section_title)
@@ -250,9 +256,11 @@ def adjust_min_chars(boq: TenderBOQ, section_title: str, base: int) -> int:
         return base
     share = sum(c.share_pct for c in cats)
     if share >= 40:
-        return int(base * 1.6)
+        return int(base * 2.2)
+    if share >= 25:
+        return int(base * 1.7)
     if share >= 15:
-        return int(base * 1.15)
-    if share <= 4:
-        return min(base, 700)
-    return base
+        return int(base * 1.35)
+    if share >= 8:
+        return base
+    return int(base * 0.7)

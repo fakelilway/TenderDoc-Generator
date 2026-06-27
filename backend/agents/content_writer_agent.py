@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Minimum compact (whitespace-stripped) character budget per technical node.
 # A施工组织设计 section that falls below this is too thin to be competitive, so
 # we rewrite it once with a deepen instruction before accepting it.
-MIN_NODE_CONTENT_CHARS = 1200
+MIN_NODE_CONTENT_CHARS = 1800
 
 # Default bounded fan-out for the per-node LLM calls. Each node is independent,
 # so we generate several at once; the cap keeps us under the provider rate limit.
@@ -239,6 +239,57 @@ def _rewrite_node_deeper(
         return first_draft
     rewritten = _clean_node_content(raw, title)
     return rewritten if _compact_len(rewritten) > _compact_len(first_draft) else first_draft
+
+
+def rewrite_node_for_compliance(
+    base_messages: list[dict[str, str]],
+    current_content: str,
+    title: str,
+    missing: list[dict[str, str]],
+) -> str:
+    """针对审查发现的"未响应招标要求"定向补写本节,保留原有正确内容、逐条补足响应。
+
+    ``missing`` 是归属本节、覆盖校验判为"未实质响应"的项:[{kind:'废标'|'评分', title, description}]。
+    返回补写后的正文;调用失败或反而更短则原样返回 ``current_content``(best-effort,不阻断)。
+    """
+    if not missing:
+        return current_content
+    lines: list[str] = []
+    for m in missing:
+        tag = (
+            "废标红线(必须实质规避,命中即整体废标)"
+            if m.get("kind") == "废标"
+            else "评分点(必须正面响应,漏答即失分)"
+        )
+        body = f"{m.get('title', '')}：{m.get('description', '')}".strip("：").strip()
+        lines.append(f"- 【{tag}】{body}")
+    missing_block = "\n".join(lines)
+    repair_messages = base_messages + [
+        {"role": "assistant", "content": current_content},
+        {
+            "role": "user",
+            "content": (
+                f"评标视角审查发现:本节“{title}”上文**未实质响应**以下招标硬要求。请重写本节"
+                f"完整正文,在保留原有正确内容的前提下,**逐条正面、实质地响应**下列每一条——"
+                f"评分点给出对应的、可量化的工程措施与验收标准;废标红线明确承诺/规避并满足招标"
+                f"限值。数据一律以招标文件与本项目为准,不得编造、不得照搬历史项目数值。"
+                f"只输出本节正文,不得输出标题或元话语。\n\n未响应清单:\n{missing_block}"
+            ),
+        },
+    ]
+    try:
+        raw = _generate_messages_with_llm(
+            repair_messages, agent_name=f"content-writer-comply-{title[:16]}"
+        )
+    except Exception:
+        logger.warning("定向补写失败,保留原稿: %s", title, exc_info=True)
+        return current_content
+    rewritten = _clean_node_content(raw, title)
+    # 接受补写(它已针对未响应项补足合规),除非它显著变短(可能丢了内容)——此时退回原稿兜底。
+    # 注意不能用"取更长者":补写可能比原稿略短却已补上合规响应,那才是我们要的稿。
+    if _compact_len(rewritten) >= _compact_len(current_content) * 0.8:
+        return rewritten
+    return current_content
 
 
 def _clean_node_content(raw: str, title: str) -> str:
