@@ -222,8 +222,15 @@ def test_assemble_two_volumes_commercial_copies_format_technical_is_prose(tmp_pa
     commercial_text = "\n".join(p.text for p in commercial.paragraphs)
     technical_text = "\n".join(p.text for p in Document(tmp_path / "project_8_technical.docx").paragraphs)
 
-    # 商务卷：照抄了格式章（表格保留）+ 合规正文
-    assert len(commercial.tables) == 1
+    # 商务卷：照抄了格式章（格式章的表保留）+ 合规正文 + 资料库标准表(项目管理机构/拟分包等自动注入)。
+    # 不固定表格总数——系统会注入组织机构/拟分包等标准表;只校验"格式章的表确实被保留"。
+    assert len(commercial.tables) >= 1
+    assert any(
+        "投标人名称" in c.text
+        for tb in commercial.tables
+        for r in tb.rows
+        for c in r.cells
+    )
     assert "投标函" in commercial_text
     assert "资格响应合规说明" in commercial_text
     # 技术卷：是生成的施工组织设计正文，不含商务格式页

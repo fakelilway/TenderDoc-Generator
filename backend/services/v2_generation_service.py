@@ -96,6 +96,19 @@ def _is_appendix_title(title: str) -> bool:
     return str(title or "").strip().startswith("附表")
 
 
+_APPENDIX_TITLE_RE = re.compile(r"^附表([一二三四五六七八九十]+)\s*(.+)$")
+
+
+def _required_appendices(sections: list[dict] | None) -> list[tuple[str, str]]:
+    """从技术卷大纲的附表节解析出招标要求的附表清单 [(附表号, 名称)],顺序保持。"""
+    out: list[tuple[str, str]] = []
+    for s in sections or []:
+        m = _APPENDIX_TITLE_RE.match(str((s or {}).get("title", "")).strip())
+        if m:
+            out.append((m.group(1), m.group(2).strip()))
+    return out
+
+
 def _appendix_markdown(title: str) -> str:
     """把招标附表节渲染成标准 Markdown 表格(由 markdown_to_docx 转成 docx 表格)。
 
@@ -354,23 +367,30 @@ def generate_v2_bid_package(
                 + "；".join(fmt_issues)
             )
 
-    # 技术卷附表:福昕把招标附表区(附表一~八)转成可编辑空表,导出时拼到技术卷末。
-    # best-effort——失败则技术卷不含附表(投标人另行补),不影响主流程。
-    if (
-        original_format_docx_available
-        and tender_bytes
-        and str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() == "foxit"
-    ):
+    # 技术卷附表:按招标要求**逐张装配**——命中公司定稿附表(assets/company_appendices)原样拼公司
+    # 文件;否则从招标该附表那一页转可编辑表(福昕);都取不到则占位。拼成一个 docx,导出时接到技术卷末。
+    # best-effort——失败则技术卷不含附表(投标人另行补),不阻断主流程。
+    required_appendices = _required_appendices(confirmed_technical_outline)
+    if required_appendices:
         try:
             import tempfile as _tempfile
 
-            from services.cloud_pdf_convert import convert_appendix_pages_via_cloud
+            from services.appendix_service import build_appendix_docx
 
+            _tender_pdf = None
+            if tender_bytes:
+                _tp = _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                _tp.write(tender_bytes)
+                _tp.close()
+                _tender_pdf = _tp.name
             _ap = _tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
             _ap.close()
-            built_appendix_docx = convert_appendix_pages_via_cloud(tender_bytes, _ap.name)
+            built_appendix_docx = build_appendix_docx(
+                required_appendices, _ap.name, _tender_pdf
+            )
+            logger.info("技术卷附表装配:%s", "、".join(f"附表{n}{nm}" for n, nm in required_appendices))
         except Exception:
-            logger.warning("附表云转换失败 — 技术卷不含附表", exc_info=True)
+            logger.warning("技术卷附表装配失败 — 技术卷不含附表", exc_info=True)
             built_appendix_docx = None
 
     # 福昕原格式模式:格式页直接照抄招标 DOCX,无需文本提取/正则填表。下列容器恒空,
@@ -472,8 +492,7 @@ def generate_v2_bid_package(
             for s in sections:
                 title = s["title"]
                 if _is_appendix_title(title):
-                    parts.append(_appendix_markdown(title))
-                    continue
+                    continue  # 附表改为拼成 docx 接到技术卷末(见 build_appendix_docx),正文不再出 markdown 模板
                 node = node_by_title.get(title)
                 if node is None:
                     continue
