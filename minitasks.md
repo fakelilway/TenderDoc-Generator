@@ -2,9 +2,9 @@
 
 本文只记录当前版本、当前路线和下一步任务。开发史请看 Git，不放在产品文档里。
 
-**当前版本：** V2 原格式复制生成内核（两卷交付）
-**当前重点：** 本项目专用技术材料库（技术卷实质素材）、新点软件交付实测、公司内网落地
-**硬边界：** 招标文件原格式页是最高权威；系统不输出近似重画格式稿。
+**当前版本：** V2 原格式复制生成内核（两卷交付）｜更新日期 2026-06-29
+**当前重点：** 工程量清单(BOQ)驱动技术卷详略、严格按招标"投标文件格式"搭目录与附表、防废标覆盖闸、本项目专用技术材料库、新点软件交付实测、公司内网落地
+**硬边界：** 招标文件原格式页是最高权威；系统不输出近似重画格式稿。技术正文最高准则=招标要求（评分项逐条响应、废标项一条不踩）> BOQ 占比详略 > 知识库骨架，冲突以招标为准。
 
 ## 当前主流程
 
@@ -13,12 +13,13 @@ flowchart LR
     A["上传招标文件"] --> B["Parser 提取要求+格式目录树"]
     B --> C["人工确认解析"]
     C --> C2["人工确认/编辑技术卷大纲(扫招标为主)"]
-    C2 --> D["选择知识库资料"]
+    C2 --> D["选择知识库资料 + 上传工程量清单(BOQ,支持Excel)"]
     D --> E["复制招标格式章为商务卷<br/>福昕云 PDF→可编辑 Word"]
     E --> F["已知字段烧录进表单/自动填公司档案"]
-    D --> G["按确认目录并发写技术正文"]
+    D --> G0["开始生成时算清单占比<br/>按招标格式重建技术卷目录"]
+    G0 --> G["按占比详略并发写技术正文(工序拆节,附表渲染成表)"]
     G --> G2["福昕云转可编辑附表(一~八)拼到技术卷末尾"]
-    F --> H["格式/内容/证据审查 + 废标风险审查"]
+    F --> H["格式/内容/证据审查 + 废标风险审查 + 招标覆盖闸"]
     G2 --> H
     H --> I["人工终审"]
     I --> J["下载 商务卷/技术卷 DOCX + 审查报告"]
@@ -31,6 +32,10 @@ flowchart LR
   - PDF 招标：**优先福昕国内云转可编辑 Word**（真段落/真表格，开关 `CLOUD_PDF_CONVERT=foxit`）+ 自动填公司档案（投标人/地址/法代/资质等）；云失败自动下沉 pdf2docx → 整页截图+域 → 纯整页图 → 硬报错。纯文字版招标最佳，扫描版需先 OCR。
   - DOCX 招标：**copy-then-prune**（复制源文件、删格式章外元素），保留页眉页脚/图片/表格。
 - **技术卷 = 人工确认目录 + LLM 写的施工组织设计正文 + 福昕可编辑附表**（附表一~八，数据格留空人工填，docxcompose 拼到卷末另起页），正奇排版 + 自动更新目录，不与商务格式页混排。
+- **技术卷目录严格按招标"投标文件格式"搭**：有招标格式→照招标目录（编制要点成章 + 每张附表补成附表节）；无招标格式→按工程量清单分部分项 + 标准章节兜底。施工方案按清单分部分项展开成工序章节，**占比越大拆越多道工序**（每道工序单独成节、各一次 LLM 调用，突破单节字数上限），但章节先后由施工逻辑定（路基→排水→路面→桥涵→交安→绿化），占比只决定"写多少"。
+- **附表节渲染成真表格**（总体作业计划表 / 劳动力计划表 / 临时占地计划表 / 外供电力需求计划表用 Markdown 表格、施工总平面图为图占位），不走 LLM 空写。
+- **占比详略**：占比大加厚、小压缩，主导分部分项最高 2.2 倍；同时有约 1200 字硬底兜底，占比极小的分部不会被压没。
+- **交卷前过"招标覆盖闸"防废标**：逐条核每个评分项是否正面响应、每条废标项是否实质规避，未响应的节点定向重写。
 - 失败语义：格式复制 / 技术正文写作失败 = 硬错误直接报错；审查发现严重问题 = 软阻断（`audit_blocked=True`，保留草稿供人工预览）。
 
 ## 已完成
@@ -52,6 +57,13 @@ flowchart LR
 | M16 | ✅ | 知识库 OCR | RapidOCR（`rapidocr-onnxruntime`，无系统二进制）落地；证件扫描件（JPG/PNG）文字提取，证号/有效期/资质等级可检索可填空；图片证件各 mode 均 OCR |
 | M22 | ✅ | 技术卷大纲人工确认 | 放出大纲编辑器（中心标签「技术大纲」+「添加章节」）；parser 扫招标"编制要点+附表"逐条原样（`technical_outline`）；`_collect_technical_sections` 优先读人工确认的 `bid_outline_json` 驱动目录、无规定时给最小中性壳（不再盲套硬编码大纲）；商务卷移出大纲环节。已合 main |
 | M24 | ✅ | 福昕云 PDF→可编辑Word（格式复制升级） | 商务格式章 + 技术附表经福昕国内云转**真·可编辑 Word**（非贴图）+ 自动填字段；Phase0 最上层（`CLOUD_PDF_CONVERT=foxit`）失败下沉 pdf2docx→图；附表 docxcompose 拼技术卷末；P0-2 内容体检防空壳。**解决"可编辑 vs 一模一样"取舍**。实测招标#122：商务 168 段 19 表 + 附表 6 可编辑表 + 字段已填 |
+| M25 | ✅ | 工程量清单(BOQ)支持 Excel 上传 | `utils/file_parser.py extract_text_from_xlsx`（openpyxl 读 .xlsx/.xlsm，行序列化"单元格\|单元格"；旧版 .xls 走 LibreOffice 转）；`SUPPORTED_EXTENSIONS` 加 .xlsx/.xlsm/.xls；前端 `ProjectBOQPanel` 放开 accept。BOQ 上传接口改为**上传时只快速抽存清单全文即返回**（不再同步算占比，原同步 ~30s LLM 把 DB 连接池抢空报 PoolError）；**真实占比改到"开始生成"时算** |
+| M26 | ✅ | 技术卷大纲严格按招标"投标文件格式"重建 | 修根因 bug：招标没识别出技术标结构时大纲原退化成"施工组织设计"一节占位（技术卷只一节 ~7 页、占比详略与逐节检索全失效）。现 `_expand_thin_outline`（检索前重建）：`_extract_tender_format_structure` 抽"编制要点+附表清单"；有招标格式→`_tender_format_outline` 照招标目录搭，无→`_boq_discipline_fallback`（清单分部分项+标准章节）。施工方案按清单分部分项→`_discipline_sections` 工序章节：占比越大拆越多道工序（≥40%:5 / ≥25%:4 / ≥15%:3 / ≥5%:2 / else 1），每道工序单独成节（各一次 LLM 调用，突破单节 ~5000 字上限）；章节按 `_construction_rank` 施工逻辑排（路基→排水→路面→桥涵→交安→绿化），占比只决定写多少 |
+| M27 | ✅ | 附表渲染成真表格 | `v2_generation_service.py _is_appendix_title/_appendix_markdown`：附表节不走 LLM 空写，渲染成 Markdown 表格（总体作业计划表/劳动力计划表/临时占地计划表/外供电力需求计划表；施工总平面图为图占位），`markdown_to_docx` 转 docx 表格 |
+| M28 | ✅ | 占比详略加强 | `boq_service.py adjust_min_chars`：占比大加厚小压缩，主导分部分项最高 2.2 倍；基准 `_CONFIRMED_OUTLINE_TARGET_CHARS` 1500→2200，最低 `MIN_NODE_CONTENT_CHARS` 1200→1800 |
+| M29 | ✅ | 防废标"招标覆盖闸"（告警模式） | `v2_audit_service.py` + `prompts/coverage_audit_prompt.py`：交卷前逐条核"评分项是否正面响应/废标项是否实质规避"，并入 `full_audit`。判定优先 LLM 评标视角语义判定，**废标项绝不靠关键词/bigram 放行**（废标条款原文常被抄进承诺表，关键词重合会误判）；LLM 不可用时 bigram 只兜底放宽评分项。**当前告警模式**：`coverage_audit_block_invalid` 默认 False→废标漏判 major 不硬拦（"初步评审不通过/报价超限价"等规则类废标项任何标书都不会专门写段响应，硬拦会对每份标误锁死）；总开关 `enable_coverage_audit` 默认 True。定向补写：某节未响应→`content_writer.rewrite_node_for_compliance` 重写该节（best-effort） |
+| M30 | ✅ | 生成提示词最高准则置顶 | `prompts/generator_prompt.py`：写作规则置顶"最高准则=招标要求（评分项逐条响应/废标项一条不踩）> BOQ 占比详略 > 知识库骨架"，冲突以招标为准；评分项/废标项标题强化；工序步骤按施工先后排；知识库"公司同类施工方案"当骨架打底（沿用结构/工艺/深度，数据换本项目，严禁照搬旧项目数值/地名/项目名） |
+| - | ✅ | DB 连接池扩容 | `core/db.py` maxconn 10→20（缓解生成期并发占池） |
 | - | ✅ | 技术卷生成并行化 | 25 节逐节 LLM 改有界并发（`ThreadPoolExecutor`，`BID_WRITER_CONCURRENCY` 默认 5），约 25min→5-6min |
 | - | ✅ | 两卷重构 | 删除旧三卷拆分整链；`_assemble_two_volumes` 为唯一原格式导出路径 |
 | - | ✅ | 结构重构 + 工程化 | `api/main.py` 拆 router（1004→~75 行）、`project_service` 拆 `services/project/` 包（1396→~122 行门面）、抽 `core/llm_client`（统一 provider + LLM 重试退避）；新增 CI（`.github/workflows/ci.yml`,后端 pytest + 前端 typecheck/lint/test/build,已实跑通过)、前端 vitest 地基（覆盖 `lib/api.ts`）；后端测试 287→311 passed |
@@ -75,6 +87,8 @@ flowchart LR
 
 | 编号 | 优先级 | 内容 | 说明 |
 |------|--------|------|------|
+| M31 | P1 | 覆盖闸废标项分类后切硬拦 | 当前覆盖闸为告警模式（废标漏判 major 不硬拦）。待把废标项按"实质响应类 vs 规则约束类"分类后，对"实质响应类"切回硬拦（`coverage_audit_block_invalid=True`），规则约束类继续只告警，避免误锁死每份标 |
+| M32 | P1（可选） | TOC 服务端预填 | 技术卷目录(TOC)是 Word 域，文件已设打开自动更新；非 Word 预览软件需手动更新。可选改进：导出时服务端预填一份页码 TOC 文本，预览软件也能直接看到 |
 | M14 | P1 | 真实格式回归集 | 把 4 份招标文件的格式生成接入自动回归（现为手测） |
 | M17 | P1 | 内网部署包 | Docker Compose 单机版、Nginx、HTTPS、环境变量模板 |
 | M18 | P1 | 备份恢复和审计 | PostgreSQL/MinIO 备份、恢复演练、上传下载删除审计日志 |
@@ -88,16 +102,20 @@ flowchart LR
 - `backend/services/cloud_pdf_convert.py`：福昕国内云 PDF→可编辑 Word（`convert_pdf_to_docx_via_foxit` + 商务/附表包装）；纯 httpx 调用、SN 签名、create→轮询→download。
 - `backend/services/original_docx_format_service.py`：格式章复制与回退。DOCX 走 copy-then-prune；PDF 走 pdf2docx 可编辑 → 整页截图+域（`_bake_fill_values_on_page`）→ 纯整页图；`_find_format_page_range_in_pdf` / `_find_appendix_page_range_in_pdf` 定位商务/附表页区。
 - `backend/services/generation_service.py`：两卷装配 `_assemble_two_volumes`（商务=copy2 格式章+合规正文，技术=独立生成正文）+ `_append_docx`（docxcompose 把附表拼到技术卷末、先校验再原子替换）和导出。
-- `backend/services/v2_generation_service.py`：生成编排 + `_sections_from_confirmed_outline`（读人工确认的 `bid_outline_json` 驱动目录）+ `_collect_technical_sections`（旧回退：忠实跟招标，无则最小壳，不再展开 25 节）。
+- `backend/services/v2_generation_service.py`：生成编排 + `_sections_from_confirmed_outline`（读人工确认的 `bid_outline_json` 驱动目录）+ `_collect_technical_sections`（旧回退：忠实跟招标，无则最小壳，不再展开 25 节）+ `_is_appendix_title/_appendix_markdown`（附表节渲染成真表格，不走 LLM 空写）。
+- `backend/services/workflow_service.py`：技术卷大纲检索前重建——`_expand_thin_outline`（薄大纲重建总入口）/`_extract_tender_format_structure`（抽招标"编制要点+附表"）/`_tender_format_outline`（照招标目录搭）/`_boq_discipline_fallback`（无招标格式时按清单分部分项+标准章节兜底）/`_discipline_sections`（清单分部分项→工序章节，占比越大拆越多道工序）/`_construction_rank`（章节按施工逻辑排序）。
+- `backend/services/boq_service.py`：工程量清单解析 + `adjust_min_chars`（按占比定详略，主导 2.2 倍，硬底兜底）。
+- `backend/utils/file_parser.py`：`extract_text_from_xlsx`（openpyxl 读 .xlsx/.xlsm，.xls 走 LibreOffice）+ `SUPPORTED_EXTENSIONS` 含 Excel。
 - `backend/prompts/construction_plan_outline.py`：25 节标准施工组织设计深度大纲常量（对标真实中标标书）。
-- `backend/prompts/generator_prompt.py`：逐节写作 prompt（评分项/废标项/必覆盖要点/字数预算注入）。
+- `backend/prompts/generator_prompt.py`：逐节写作 prompt（评分项/废标项/必覆盖要点/字数预算注入；最高准则=招标>BOQ占比>知识库骨架，知识库当骨架打底严禁照搬旧项目数值）。
 - `backend/agents/content_writer_agent.py`：技术正文逐节生成、不达标重写、模型路由。
 - `backend/agents/parser_agent.py`：提取 `format_outline_tree` 和招标要求。
 - `backend/utils/docx_exporter.py`：Markdown→DOCX 排版（技术卷），含自动更新目录域。
 
 ## 审查相关代码责任
 
-- `backend/services/v2_audit_service.py`：V2 内置格式、内容、证据审查。
+- `backend/services/v2_audit_service.py`：V2 内置格式、内容、证据审查 + **招标覆盖闸**（逐条核评分项是否正面响应/废标项是否实质规避，并入 `full_audit`；废标漏=critical、评分漏=major；当前告警模式由 `coverage_audit_block_invalid` 默认 False 控制，总开关 `enable_coverage_audit`）。
+- `backend/prompts/coverage_audit_prompt.py`：覆盖闸 LLM 评标视角判定 prompt（废标项绝不靠关键词/bigram 放行）。
 - `backend/agents/reviewer_agent.py`：废标风险和响应性审查。
 - `backend/services/workflow_service.py`：状态流转、失败原因、审查报告、人工确认、导出调用。
 - `backend/agents/scoring_agent.py` / `response_matrix_agent.py`：评分预测、响应矩阵。
@@ -116,9 +134,15 @@ flowchart LR
 1. 启动本地服务，登录工作台。
 2. 上传招标文件（PDF/DOCX/TXT）并等待解析。
 3. 检查项目名称、招标人、工期、质量、资质、评分项、废标项和格式目录树，修正后确认。
-4. 在知识库选择本项目要用的公司资料、人员资料、业绩、施工方案和图片证据。
-5. 点击生成（系统复制商务格式章+烧录字段、写技术正文、三层审查）。
+4. 在知识库选择本项目要用的公司资料、人员资料、业绩、施工方案和图片证据；**上传本项目工程量清单（支持 Excel .xlsx/.xlsm/.xls）**，技术卷据此定章节详略。
+5. 点击生成（系统先算清单占比，再复制商务格式章+烧录字段、按招标格式搭技术卷目录并写正文、三层审查 + 招标覆盖闸防废标）。
 6. 查看实时状态；失败按原因修正后重试。
 7. 通过后看预览和审查报告，在线编辑人工填字段。
-8. 终审确认后下载**商务卷 + 技术卷 DOCX + 审查报告**（用 Word/Pages/新点打开）。
+8. 终审确认后下载**商务卷 + 技术卷 DOCX + 审查报告**（用 Word/Pages/新点打开）。**技术卷目录是 Word 域，文件已设打开自动更新；用非 Word 预览软件时若页码不对，请手动更新域。**
 9. **报价卷用造价软件单独做好**，与上面两卷一起进新点软件做最终电子标。
+
+## 已知非代码问题（2026-06-29）
+
+- **AI 账户余额**：调 LLM 报 402 时需充值，否则技术正文写作会失败。
+- **技术卷目录(TOC)页码**：是 Word 域，文件已设打开自动更新；非 Word 预览软件需手动更新域（见上 M32）。
+- **后端测试**：~428 passed；唯一失败 `test_assemble_two_volumes_commercial_copies_format_technical_is_prose` 是改前就存在的商务卷旧问题，与本轮无关。
