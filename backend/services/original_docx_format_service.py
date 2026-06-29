@@ -1031,42 +1031,111 @@ _PM_RESUME_LABELS: tuple[tuple[str, str], ...] = (
     ("职称", "职称"),
     ("性别", "性别"),
     ("专业", "专业"),
+    ("注册建造师", "建造师证号"),     # 注册建造师执业资格证书号
+    ("建造师执业资格", "建造师证号"),
+    ("建造师注册证", "建造师证号"),
 )
 
 
-def _fill_pm_resume_table(document: Any, resume: dict[str, Any]) -> int:
-    """填"项目经理(项目技术负责人)简历"表:姓名/年龄/学历/职称/拟任职务/毕业学校/专业。
-
-    只在简历表内(含"拟在本标段")按标签填右邻空格;经历/获奖等填不到的留白。返回填入格数。
-    """
+def _fill_one_resume_table(table: Any, resume: dict[str, Any]) -> int:
+    """把一个人的 resume 填进一张简历表:按标签找单元格、填其右邻空格(只填空格)。返回填入格数。"""
     if not resume or not resume.get("姓名"):
         return 0
     filled = 0
-    for table in document.tables:
-        full = " ".join(c.text for row in table.rows for c in row.cells)
-        if "拟在本标段" not in full:  # 唯一锚:只认简历表
-            continue
-        for row in table.rows:
-            cells = row.cells
-            for i, cell in enumerate(cells):
-                ctext = cell.text.strip()
-                key = next(
-                    (k for lbl, k in _PM_RESUME_LABELS if ctext.startswith(lbl) or ctext == lbl),
-                    None,
-                )
-                if not key:
+    for row in table.rows:
+        cells = row.cells
+        for i, cell in enumerate(cells):
+            ctext = cell.text.strip()
+            key = next(
+                (k for lbl, k in _PM_RESUME_LABELS if ctext.startswith(lbl) or ctext == lbl),
+                None,
+            )
+            if not key:
+                continue
+            val = str(resume.get(key, "") or "").strip()
+            if not val:
+                continue
+            for j in range(i + 1, len(cells)):
+                if cells[j]._tc is cell._tc:
                     continue
-                val = str(resume.get(key, "") or "").strip()
-                if not val:
-                    continue
-                for j in range(i + 1, len(cells)):
-                    if cells[j]._tc is cell._tc:
-                        continue
-                    if _is_blank_or_placeholder(cells[j].text.strip()):
-                        _set_cell_value(cells[j], val)
-                        filled += 1
-                    break
+                if _is_blank_or_placeholder(cells[j].text.strip()):
+                    _set_cell_value(cells[j], val)
+                    filled += 1
+                break
     return filled
+
+
+def _resume_table_role(table_text: str, heading_text: str) -> str:
+    """猜一张简历表属于项目经理还是总工(技术负责人):看表内文字 + 紧邻上方标题。"""
+    ctx = (heading_text or "") + " " + (table_text or "")
+    if any(k in ctx for k in ("技术负责人", "总工")):
+        return "tech"
+    if "项目经理" in ctx:
+        return "pm"
+    return ""
+
+
+def _fill_resume_tables(
+    document: Any,
+    pm_resume: dict[str, Any] | None,
+    tech_resume: dict[str, Any] | None = None,
+) -> int:
+    """填项目经理 + 总工两张简历表(各含"拟在本标段")。
+
+    按"表内/上方标题里的角色字样"把每张表分给对应的人;角色判不出、两人都在、且有多张表时,
+    末张归总工(总工表一般排项目经理之后)。只填空格,绝不动已填内容。返回填入格数。
+    """
+    from docx.oxml.ns import qn as _qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    pm_resume = pm_resume or {}
+    tech_resume = tech_resume or {}
+
+    # 按文档体顺序收集简历表 + 其紧邻上方标题(用于判角色)
+    targets: list[tuple[Any, str]] = []
+    last_heading = ""
+    for child in document.element.body.iterchildren():
+        if child.tag == _qn("w:p"):
+            t = Paragraph(child, document).text.strip()
+            if t and len(t) <= 30:
+                last_heading = t
+        elif child.tag == _qn("w:tbl"):
+            tb = Table(child, document)
+            full = " ".join(c.text for row in tb.rows for c in row.cells)
+            if "拟在本标段" in full:  # 唯一锚:只认简历表
+                targets.append((tb, _resume_table_role(full, last_heading)))
+    if not targets:
+        return 0
+
+    has_pm = bool(pm_resume.get("姓名"))
+    has_tech = bool(tech_resume.get("姓名"))
+
+    assign: list[tuple[Any, dict[str, Any] | None]] = []
+    tech_assigned = False
+    for tb, role in targets:
+        if role == "tech":
+            assign.append((tb, tech_resume if has_tech else None))
+            tech_assigned = tech_assigned or has_tech
+        else:  # pm 或判不出 → 默认项目经理
+            assign.append((tb, pm_resume if has_pm else None))
+    # 兜底:选了总工但没有一张被判成总工、且有多张简历表 → 末张改判给总工
+    if has_tech and not tech_assigned and len(targets) >= 2:
+        for idx in range(len(targets) - 1, -1, -1):
+            if targets[idx][1] == "":
+                assign[idx] = (targets[idx][0], tech_resume)
+                break
+
+    filled = 0
+    for tb, resume in assign:
+        if resume and resume.get("姓名"):
+            filled += _fill_one_resume_table(tb, resume)
+    return filled
+
+
+def _fill_pm_resume_table(document: Any, resume: dict[str, Any]) -> int:
+    """向后兼容入口:只填项目经理简历(单人)。多人/总工见 _fill_resume_tables。"""
+    return _fill_resume_tables(document, resume, None)
 
 
 def _fill_authorization_letter(document: Any, profile: dict[str, Any]) -> int:

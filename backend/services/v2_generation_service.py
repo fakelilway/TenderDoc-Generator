@@ -317,12 +317,17 @@ def generate_v2_bid_package(
 
     apply_fixed_fields(combined_profile)
 
-    # 项目经理简历表字段(选派的项目经理 → 台账职称 + 身份证/毕业证 OCR)
+    # 项目经理/总工简历表字段(选派的人 → 台账结构化信息 + 身份证/毕业证 OCR 兜底)
     pm_for_resume = str(
         combined_profile.get("project_manager_name") or combined_profile.get("project_manager") or ""
     ).strip()
     if pm_for_resume:
-        combined_profile["pm_resume"] = build_pm_resume_fields(pm_for_resume)
+        combined_profile["pm_resume"] = build_pm_resume_fields(pm_for_resume, role="项目经理")
+    tech_for_resume = str(combined_profile.get("tech_director_name") or "").strip()
+    if tech_for_resume:
+        combined_profile["tech_resume"] = build_pm_resume_fields(
+            tech_for_resume, role="项目技术负责人"
+        )
 
     # ── Phase 0: 招标商务格式章 PDF → 福昕云转可编辑 Word(唯一路径,无降级) ──
     built_format_docx: str | None = None
@@ -1533,43 +1538,69 @@ def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
     return "".join(blocks)
 
 
-def build_pm_resume_fields(pm_name: str) -> dict[str, str]:
-    """汇总项目经理简历表要填的字段:姓名/拟任职务/职称(台账) + 年龄性别(身份证OCR) +
-    学历/毕业学校/专业(毕业证OCR)。取不到的不放进去(留白,不瞎编)。"""
+def build_pm_resume_fields(pm_name: str, role: str = "项目经理") -> dict[str, str]:
+    """汇总项目经理/总工简历表要填的字段。
+
+    优先用**人员台账的结构化信息**(最稳):职称、由身份证号算年龄/性别、注册建造师证号+专业;
+    台账缺身份证号时才退身份证OCR;学历/毕业学校仍靠毕业证OCR(best-effort)。
+    role=拟任职务(项目经理 / 项目技术负责人)。取不到的字段不放进去(留白,不瞎编)。
+    """
     import datetime
     import re as _re
 
     name = (pm_name or "").strip()
     if not name:
         return {}
-    fields: dict[str, str] = {"姓名": name, "拟任职务": "项目经理"}
+    fields: dict[str, str] = {"姓名": name, "拟任职务": role}
 
-    # 台账职称
+    # 台账结构化信息:职称 + 身份证号(→年龄/性别) + 注册建造师证号/专业。比拍照OCR可靠。
     try:
         from services import personnel_roster_service
 
+        member = None
         for m in personnel_roster_service.get_personnel_roster().get("roster", []):
             if str(m.get("name")) == name:
-                if m.get("title"):
-                    fields["职称"] = str(m["title"])
+                member = m
                 break
+        if member:
+            if member.get("title"):
+                fields["职称"] = str(member["title"])
+            idn = str(member.get("id_number") or "")
+            if len(idn) >= 17 and idn[:17].isdigit():
+                fields["年龄"] = str(datetime.date.today().year - int(idn[6:10]))
+                fields["性别"] = "男" if int(idn[16]) % 2 == 1 else "女"
+            # 注册建造师证号 + 专业:优先取有证号的一级建造师,否则任一有证号的
+            certs = member.get("builder_certs") or []
+            best = None
+            for c in certs:
+                if not c.get("cert_no"):
+                    continue
+                if best is None or "一级" in str(c.get("level") or ""):
+                    best = c
+            if best:
+                fields["建造师证号"] = str(best.get("cert_no") or "")
+                if best.get("specialty"):
+                    fields.setdefault("专业", str(best["specialty"]))
+            if "专业" not in fields and member.get("title_specialty"):
+                fields["专业"] = str(member["title_specialty"])
     except Exception:
         pass
 
-    # 身份证 OCR → 年龄/性别(身份证号第7-14位=出生YYYYMMDD,第17位奇男偶女)
-    try:
-        from services import asset_resolver
-        from services.id_card_ocr import classify_id_card
+    # 身份证 OCR 兜底(台账无身份证号才走):身份证号第7-14位=出生YYYYMMDD,第17位奇男偶女。
+    if "年龄" not in fields or "性别" not in fields:
+        try:
+            from services import asset_resolver
+            from services.id_card_ocr import classify_id_card
 
-        for c in asset_resolver.pick_id_card_documents(name):
-            cls = classify_id_card(asset_resolver.read_asset_bytes(int(c["document_id"])))
-            idn = str(cls.get("id_number") or "")
-            if len(idn) >= 17:
-                fields.setdefault("年龄", str(datetime.date.today().year - int(idn[6:10])))
-                fields.setdefault("性别", "男" if int(idn[16]) % 2 == 1 else "女")
-                break
-    except Exception:
-        pass
+            for c in asset_resolver.pick_id_card_documents(name):
+                cls = classify_id_card(asset_resolver.read_asset_bytes(int(c["document_id"])))
+                idn = str(cls.get("id_number") or "")
+                if len(idn) >= 17:
+                    fields.setdefault("年龄", str(datetime.date.today().year - int(idn[6:10])))
+                    fields.setdefault("性别", "男" if int(idn[16]) % 2 == 1 else "女")
+                    break
+        except Exception:
+            pass
 
     # 毕业证 OCR → 学历/毕业学校/专业(best-effort)
     try:
