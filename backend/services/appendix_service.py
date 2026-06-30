@@ -39,6 +39,34 @@ def match_company_appendix(name: str) -> Path | None:
     return None
 
 
+def _number_company_appendix(src: Path, num: str, name: str, out: Path) -> Path:
+    """复制公司定稿附表,并给其首个标题前补"附表X "(让目录与正文页都显示招标的附表编号)。
+
+    公司文件标题是 Heading 2、文字如"劳动力计划表"(无编号);补成"附表三 劳动力计划表",
+    既进目录(带编号),正文页标题也带编号,与招标一致。原文件不动,只改副本。
+    """
+    from docx import Document
+
+    doc = Document(str(src))
+    heading = next(
+        (p for p in doc.paragraphs if p.style.name.startswith("Heading") and p.text.strip()),
+        None,
+    )
+    target = heading or next((p for p in doc.paragraphs if p.text.strip()), None)
+    if target and not target.text.strip().startswith("附表"):
+        prefix = f"附表{num} "
+        # 补到首个有文字的 run(标题可能拆成多 run),保住原文字的格式;都没文字才退整段
+        run = next((r for r in target.runs if r.text), None)
+        if run is not None:
+            run.text = prefix + run.text
+        elif target.runs:
+            target.runs[0].text = prefix + target.runs[0].text
+        else:
+            target.text = prefix + target.text
+    doc.save(str(out))
+    return out
+
+
 def _find_single_appendix_page_range(
     pdf_path: str, num: str, name: str
 ) -> tuple[int, int] | None:
@@ -121,8 +149,11 @@ def build_appendix_docx(
     for num, name in required:
         company = match_company_appendix(name)
         if company:
-            pieces.append(company)
-            logger.info("附表%s %s → 公司定稿文件 %s", num, name, company.name)
+            # 公司定稿表标题无编号(如"劳动力计划表"),补成"附表三 劳动力计划表"再拼——
+            # 否则目录(Word TOC 域抓标题)与正文页都只剩表名、丢了招标的"附表X"编号。
+            numbered = _number_company_appendix(company, num, name, tmp / f"_co_{num}.docx")
+            pieces.append(numbered)
+            logger.info("附表%s %s → 公司定稿文件 %s(已补编号)", num, name, company.name)
             continue
         tender = (
             _tender_appendix_docx(tender_pdf_path, num, name) if tender_pdf_path else None
