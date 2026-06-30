@@ -88,6 +88,32 @@ def test_inject_org_tables_copies_table(monkeypatch) -> None:
     assert "项目经理" in target.tables[-1].cell(0, 0).text
 
 
+def test_inject_org_tables_does_not_inject_fenbao(monkeypatch) -> None:
+    """回归:拟分包表不再注入(福昕格式章已带招标那张,避免重复变丑)。
+
+    即便资料库有拟分包 docx、目标里也有"拟分包"章节,也不应再注入第二张拟分包表。
+    """
+    src = Document()
+    src.add_table(rows=21, cols=4).cell(0, 0).text = "拟分包的工程项目"
+    buf = BytesIO()
+    src.save(buf)
+    fenbao_bytes = buf.getvalue()
+
+    from services import generation_service as g
+
+    # 只有"拟分包"源可取(组织机构图源返回 None);若拟分包仍是注入源,这里会注入1张
+    monkeypatch.setattr(
+        g, "_fetch_org_source_docx",
+        lambda kw: fenbao_bytes if "拟分包" in kw else None,
+    )
+    target = Document()
+    target.add_paragraph("六、拟分包项目情况表")
+    before = len(target.tables)
+    inserted = g._inject_org_tables(target)
+    assert inserted == 0  # 拟分包不再是注入源
+    assert len(target.tables) == before
+
+
 def test_strip_tender_page_numbers() -> None:
     from services.original_docx_format_service import _strip_tender_page_numbers
     doc = Document()

@@ -566,7 +566,9 @@ def _drop_empty_headings(lines: list[str]) -> str:
 # 图4(投标人企业组织结构框图=公司级)不再自动注入(用户明确不要它出现在(一))。
 _ORG_DOC_SOURCES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("组织机构图",), "项目管理机构"),
-    (("拟分包", "分包"), "拟分包"),
+    # 拟分包表**不再注入**:福昕格式章已忠实复制招标的"拟分包项目情况表"(空表+若无填无的注+
+    # 造价合计行)。再从资料库注入那张 21×4 空表,商务卷里就出现两张一模一样的拟分包表(重复、丑、
+    # 交不了工)。需要填写时,人工在福昕那张表里填(无分包计划则填"无")。
 )
 
 
@@ -620,7 +622,7 @@ def _find_section_paragraph(doc, keywords: tuple[str, ...]):
 
 
 def _inject_org_tables(doc) -> int:
-    """把资料库里的项目管理机构表/拟分包表/组织结构图(docx)复制进标书对应章节后。
+    """把资料库里的项目管理机构组织机构图(docx)复制进标书对应章节后(拟分包表不注入,见 _ORG_DOC_SOURCES)。
 
     复制 docx 正文里的**表格**与**含图段落**(跳过纯文字噪声);有锚点章节插其后,无则插卷尾。
     逐源容错,绝不因此崩或丢内容。返回插入的块数。
@@ -666,7 +668,7 @@ def _inject_org_tables(doc) -> int:
         except Exception:
             logger.warning("注入资料库图表失败(%s),跳过不阻断", fkw, exc_info=True)
     if inserted:
-        logger.info("资料库图表注入:%d 块(项目管理机构/拟分包/组织结构)", inserted)
+        logger.info("资料库图表注入:%d 块(项目管理机构组织机构图)", inserted)
     return inserted
 
 
