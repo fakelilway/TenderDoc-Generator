@@ -178,6 +178,7 @@ def convert_format_pages_via_cloud(
         _fill_resume_tables,
         _find_format_page_range_in_pdf,
         _log_unfilled_fields,
+        _normalize_split_labels,
         _replace_known_fields,
         _strip_seal_images,
         _strip_tender_page_numbers,
@@ -204,6 +205,7 @@ def convert_format_pages_via_cloud(
     # 字段自动填(复用现成四件套,无 LLM,按标签精确匹配)
     doc = Document(str(output_path))
     _drop_spurious_stream_tables(doc)
+    _normalize_split_labels(doc)  # 理顺福昕切开的两字标签(性 别→性别),须在填值前:标签干净才填得上
     _replace_known_fields(doc, profile or {})
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
     _fill_known_table_cells(doc, profile or {})

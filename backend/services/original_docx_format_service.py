@@ -1502,6 +1502,50 @@ def _drop_spurious_stream_tables(document: Any) -> int:
     return dropped
 
 
+# 福昕把招标里两字标签的字间空格照搬进来("性 别""电 话"),既丑、又害填空——填值靠"认标签",
+# 标签带空格就对不上、旁边的空填不进去。把这些**已知标签**去掉字间空格,理顺回"性别""电话"。
+# 只对**去空格后恰好等于已知标签**的格动手(精确等值,非包含),绝不碰投标人填的值(值几乎不会
+# 恰好等于某个标签词)。放在填值之前跑 → 标签干净 → 填空更准更多。
+_SPLIT_LABEL_WHITELIST = frozenset(
+    {
+        "性别", "年龄", "职务", "职称", "技术职称", "姓名", "电话", "传真", "联系人",
+        "联系方式", "邮政编码", "电子邮件", "法定代表人", "技术负责人", "注册地址",
+        "注册资本", "成立日期", "成立时间", "开户银行", "开户许可证", "账号", "账户",
+        "员工总人数", "统一社会信用代码", "企业资质等级", "经营范围", "其中", "备注",
+        "项目经理", "项目负责人", "高级职称人员", "中级职称人员", "初级职称人员", "技工",
+        "学历", "专业", "毕业学校", "投标人名称", "投标人", "拟在本标段", "序号", "名称",
+        "数量", "金额", "日期", "单位", "级别", "证号", "证书名称", "养老保险",
+    }
+)
+
+
+def _normalize_split_labels(document: Any) -> int:
+    """理顺福昕切开的两字标签("性 别"→"性别")。只动去空格后恰好=已知标签的段,值不碰。返回理顺数。"""
+
+    def _fix_paragraph(paragraph: Any) -> int:
+        text = paragraph.text
+        de = re.sub(r"[\s　]+", "", text)
+        if not de or de == text or de not in _SPLIT_LABEL_WHITELIST:
+            return 0
+        runs = paragraph.runs
+        if not runs:
+            return 0
+        runs[0].text = de  # 保住首个 run 的格式,其余清空
+        for run in runs[1:]:
+            run.text = ""
+        return 1
+
+    fixed = 0
+    for paragraph in document.paragraphs:
+        fixed += _fix_paragraph(paragraph)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    fixed += _fix_paragraph(paragraph)
+    return fixed
+
+
 def _find_format_page_range_in_pdf(pdf_path: str) -> tuple[int, int] | None:
     """Find zero-based, end-exclusive format chapter page range."""
     import fitz
