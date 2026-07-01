@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from sentence_transformers import CrossEncoder
 from core.config import settings
 from rag.embeddings import embed_text
 from rag.vector_store import _connect, format_vector
+
+logger = logging.getLogger(__name__)
 
 
 _cross_encoder_lock = threading.Lock()
@@ -104,6 +107,23 @@ def rerank_with_cross_encoder(
             zip(results, scores), key=lambda item: float(item[1]), reverse=True
         )
     ]
+
+
+def rerank_results(
+    query: str,
+    results: Iterable[RetrievalResult],
+) -> list[RetrievalResult]:
+    """生产用重排:优先**语义重排**(bge-reranker,懂"路基≈路床"这种同义),模型不可用
+    (未下载/加载失败等)则**自动回退**到关键词重排 —— 保证检索永不因此报错/变空。
+    """
+    results = list(results)
+    if not results:
+        return []
+    try:
+        return rerank_with_cross_encoder(query, results)
+    except Exception:
+        logger.warning("语义重排(bge-reranker)不可用,回退关键词重排", exc_info=True)
+        return rerank_by_keyword_overlap(query, results)
 
 
 def retrieve(
@@ -214,5 +234,5 @@ def retrieve_filtered(
         for row in rows
     ]
     if rerank:
-        return rerank_by_keyword_overlap(query, results)[:top_k]
+        return rerank_results(query, results)[:top_k]
     return results[:top_k]

@@ -148,3 +148,34 @@ def test_keyword_rerank_promotes_overlap() -> None:
     reranked = retriever.rerank_by_keyword_overlap("高层住宅施工组织设计", results)
 
     assert reranked[0].chunk_id == 2
+
+
+def test_rerank_results_uses_cross_encoder_when_available(monkeypatch) -> None:
+    """生产重排优先走语义模型:模型给第二条更高分 → 它排第一。"""
+    from rag import retriever
+
+    class _FakeModel:
+        def predict(self, pairs):
+            return [0.1, 0.9]  # 第二条分更高
+
+    monkeypatch.setattr(retriever, "_get_cross_encoder", lambda name: _FakeModel())
+    a = RetrievalResult(1, 1, "路基施工", {}, 0.1, 0.9)
+    b = RetrievalResult(2, 1, "沥青路面施工", {}, 0.2, 0.8)
+    out = retriever.rerank_results("路面工程", [a, b])
+    assert out[0] is b  # 语义分高的排前
+
+
+def test_rerank_results_falls_back_to_keyword_on_model_error(monkeypatch) -> None:
+    """语义模型加载/预测失败 → 自动回退关键词重排,绝不报错/变空。"""
+    from rag import retriever
+
+    def _boom(name):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(retriever, "_get_cross_encoder", _boom)
+    results = [
+        RetrievalResult(1, 1, "路面工程施工方案", {}, 0.1, 0.9),
+        RetrievalResult(2, 1, "企业资质证书", {}, 0.2, 0.8),
+    ]
+    out = retriever.rerank_results("路面工程施工方案", results)
+    assert len(out) == 2  # 回退成功,数量不丢
