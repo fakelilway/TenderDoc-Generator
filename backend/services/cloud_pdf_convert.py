@@ -206,6 +206,11 @@ def convert_format_pages_via_cloud(
     doc = Document(str(output_path))
     _drop_spurious_stream_tables(doc)
     _normalize_split_labels(doc)  # 理顺福昕切开的两字标签(性 别→性别),须在填值前:标签干净才填得上
+    # 填前体检:孤字归位(福昕把两列区右列标签劈成"性…"+"别："两半 → 拼回"性别："),
+    # 同样须在填值前:标签完整,性别/职务这类空才填得上。
+    from services.docx_format_doctor import run_format_doctor_prefill
+
+    run_format_doctor_prefill(doc)
     _replace_known_fields(doc, profile or {})
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
     _fill_known_table_cells(doc, profile or {})

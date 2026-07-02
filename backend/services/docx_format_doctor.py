@@ -197,10 +197,90 @@ def heal_underline_slots(document: Any, profile: dict[str, Any] | None = None) -
     return healed
 
 
+# ── 填空前 healer:孤字归位(拼回被福昕劈成两半的两字标签) ──────────────────
+# 病(真实文件实测,巢湖v7 身份证明两列区):招标原文两列布局
+#   姓 名：许明英 | 性 别：女
+# 福昕转完变成:左列一段"姓 名： 许明英[性]年 龄： 50[职]"(右列标签头字粘在值后),
+# "别："/"务："各自孤零零成段。→ 视觉错乱,且标签残缺导致"性别/职务"的空永远填不上。
+# 修:孤字(独立成 run 的单字)搬回下文"别："段首拼成"性别：",原位换成换行(恢复两行布局)。
+# 全文档字符一个不多一个不少,只是把福昕劈乱的字归位;须在**填值之前**跑(标签完整才填得上)。
+
+# 可拼回的两字标签(第一字=孤字,第二字+冒号=下文段首)。
+_REJOIN_LABELS = (
+    "性别", "职务", "职称", "电话", "传真", "姓名", "年龄", "学历", "专业", "备注",
+)
+
+
+def heal_orphan_split_labels(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """孤字归位:X 粘在已填值后 + 下文段首是"Y：" 且 XY 是已知两字标签 → X 搬回 Y 前。
+
+    "粘在值后"的精确特征 = 孤字 run 的前一个可见 run 带下划线(填空槽里的值)——
+    这一条挡住"姓 名："里的"姓"这类正常单字 run(它前面没有带线值),绝不误搬。
+    """
+    from docx.oxml import OxmlElement
+
+    paras = list(_iter_all_paragraphs(document))
+    healed = 0
+    for idx, paragraph in enumerate(paras):
+        runs = [r for r in paragraph.runs if r.text]
+        for k, run in enumerate(runs):
+            ch = run.text
+            if len(ch) != 1 or not ("一" <= ch <= "鿿") or _is_underlined(run):
+                continue
+            if k == 0 or not _is_underlined(runs[k - 1]) or not runs[k - 1].text.strip():
+                continue  # 前面不是带线的已填值 → 不是"粘在值后"的孤字
+            # 在后面最多4个非空段里找"另一半":段首正是 Y：且 X+Y 是已知标签
+            seen = 0
+            for j in range(idx + 1, len(paras)):
+                target = paras[j]
+                ttext = target.text
+                if not ttext.strip():
+                    continue
+                seen += 1
+                if seen > 4:
+                    break
+                if len(ttext) >= 2 and ttext[1] in ("：", ":") and (ch + ttext[0]) in _REJOIN_LABELS:
+                    t_run = target.runs[0] if target.runs else None
+                    if t_run is None or not t_run.text.startswith(ttext[0]):
+                        break
+                    t_ts = t_run._r.findall(qn("w:t"))
+                    if len(t_ts) != 1:
+                        break
+                    # 搬字:X 接到目标段首;原 run 清字、原位补换行(恢复两行布局;段尾孤字则不补)
+                    t_ts[0].text = ch + (t_ts[0].text or "")
+                    t_ts[0].set(qn("xml:space"), "preserve")
+                    for t_el in run._r.findall(qn("w:t")):
+                        run._r.remove(t_el)
+                    if k < len(runs) - 1:
+                        run._r.append(OxmlElement("w:br"))
+                    healed += 1
+                    break
+    return healed
+
+
+_PREFILL_HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
+    ("orphan_split_labels", heal_orphan_split_labels),
+)
+
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
     ("underline_slots", heal_underline_slots),
 )
+
+
+def run_format_doctor_prefill(document: Any) -> dict[str, int]:
+    """填值前的体检(标签修复类):孤字归位等。逐个容错,绝不阻断。"""
+    report: dict[str, int] = {}
+    for name, healer in _PREFILL_HEALERS:
+        try:
+            report[name] = healer(document, None)
+        except Exception:
+            logger.warning("格式体检(填前) healer %s 失败,跳过", name, exc_info=True)
+            report[name] = 0
+    fixed = {k: v for k, v in report.items() if v}
+    if fixed:
+        logger.info("格式体检(填前)修复: %s", fixed)
+    return report
 
 
 def run_format_doctor(document: Any, profile: dict[str, Any] | None = None) -> dict[str, int]:

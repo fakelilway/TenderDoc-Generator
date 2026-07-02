@@ -87,6 +87,45 @@ def test_hint_parenthetical_untouched() -> None:
     assert not p.runs[2].font.underline
 
 
+def test_orphan_split_labels_rejoined() -> None:
+    """孤字归位(巢湖v7身份证明实测病例):性/职 粘在带线值后 + 下文"别：/务："段 → 拼回。"""
+    import re
+
+    doc = Document()
+    p = _mk_para(doc, [
+        ("姓", False), (" ", False), ("名：", False), (" ", True), ("许明英", True),
+        ("性", False),
+        ("年", False), (" ", False), ("龄：", False), (" ", True), ("50", True),
+        ("职", False),
+    ])
+    p2 = _mk_para(doc, [("别：", False), (" ", True), ("\t", True)])
+    p3 = _mk_para(doc, [("务：", False), (" ", True), ("\t", True)])
+    from services.docx_format_doctor import heal_orphan_split_labels
+
+    before_chars = sorted(re.sub(r"\s+", "", p.text + p2.text + p3.text))
+    n = heal_orphan_split_labels(doc)
+    assert n == 2
+    assert p2.text.startswith("性别：")
+    assert p3.text.startswith("职务：")
+    assert "性" not in p.text.replace("姓", "") or "性年" not in p.text  # 孤字已搬走
+    assert "\n" in p.text  # 原位补了换行,姓名/年龄恢复两行
+    after_chars = sorted(re.sub(r"\s+", "", p.text + p2.text + p3.text))
+    assert before_chars == after_chars  # 非空白字符一个不多不少
+
+
+def test_orphan_guard_normal_single_char_not_moved() -> None:
+    """"姓 名："里的"姓"(前面没有带线值)绝不被搬走——哪怕后文恰有"名："段。"""
+    doc = Document()
+    p = _mk_para(doc, [("姓", False), (" ", False), ("名：", False), (" ", True), ("许明英", True)])
+    p2 = _mk_para(doc, [("名：", False), (" ", True)])
+    from services.docx_format_doctor import heal_orphan_split_labels
+
+    n = heal_orphan_split_labels(doc)
+    assert n == 0
+    assert p.text.startswith("姓 名：")
+    assert p2.text.startswith("名：")
+
+
 def test_run_format_doctor_never_raises(monkeypatch) -> None:
     """healer 崩了也不阻断出标,报告记 0。"""
     import services.docx_format_doctor as m
