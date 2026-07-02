@@ -57,6 +57,30 @@ def test_parse_tender_response_strips_markdown_and_trailing_commas() -> None:
     assert parsed.project_name == "测试项目"
 
 
+def test_parse_tender_response_backfills_missing_description() -> None:
+    """LLM 漏 description 只给 title(项目176实测)→ 回填 title,别炸整次解析。"""
+    content = """
+    {
+      "project_name": "某养护项目",
+      "qualification_list": [{"description": "具备养护资质"}],
+      "technical_score_items": [
+        {"title": "施工组织设计(25分):按内容完整性打分"},
+        {"title": "主要人员(12分)"}
+      ],
+      "invalid_bid_items": []
+    }
+    """
+
+    parsed = parse_tender_response(content)
+
+    items = parsed.technical_score_items
+    assert len(items) == 2
+    assert items[0].description == "施工组织设计(25分):按内容完整性打分"  # title 回填
+    assert items[1].title == "主要人员(12分)"
+    # 反向:只给 description 的,title 回填
+    assert parsed.qualification_list[0].title.startswith("具备养护资质")
+
+
 def test_parse_tender_response_carries_technical_outline() -> None:
     content = """
     {

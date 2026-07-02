@@ -825,8 +825,17 @@ def parse_tender_response(content: str) -> TenderRequirements:
         items = data.get(list_key)
         if isinstance(items, list):
             for item in items:
-                if isinstance(item, dict) and isinstance(item.get("source"), str):
+                if not isinstance(item, dict):
+                    continue
+                if isinstance(item.get("source"), str):
                     item["source"] = {"source_text": item["source"], "page_number": None}
+                # LLM 偶尔漏 description 只给 title(或反之)——互相回填,别让几个
+                # 评分项漏字段把整次解析炸掉(实测:项目176评标办法5项全漏description)。
+                title, desc = item.get("title"), item.get("description")
+                if not desc and title:
+                    item["description"] = str(title)
+                elif not title and desc:
+                    item["title"] = str(desc)[:30]
 
     result = TenderRequirements.model_validate(data)
     result.bid_format_requirements = ""
