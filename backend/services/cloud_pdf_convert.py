@@ -220,6 +220,12 @@ def convert_format_pages_via_cloud(
         (profile or {}).get("pm_resume") or {},
         (profile or {}).get("tech_resume") or {},
     )
+    # 格式体检:所有值都填完后,对整份文档做"只修格式、不改文字"的合理化
+    # (第一版治填空槽下划线断裂:值 run 未继承槽的下划线 → 线画一半)。
+    # 传 profile 当白名单:只认我们自己填的值,防止给"年/月/日"等招标原文标签误加线。
+    from services.docx_format_doctor import run_format_doctor
+
+    run_format_doctor(doc, profile or {})
     # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
     _strip_seal_images(doc)
     _strip_tender_page_numbers(doc)  # 清招标原件页码,标书用自己的页码
