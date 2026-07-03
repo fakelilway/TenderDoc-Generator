@@ -113,6 +113,29 @@ def test_orphan_split_labels_rejoined() -> None:
     assert before_chars == after_chars  # 非空白字符一个不多不少
 
 
+def test_orphan_rejoined_prefill_empty_slots() -> None:
+    """填前状态(槽还是带线空白、值未填)也要能归位——本 healer 就跑在填值前。
+
+    回归:曾要求孤字前是"带线的已填值",填前空槽不满足 → 生产上永不触发(萧县实测)。
+    """
+    doc = Document()
+    p = _mk_para(doc, [
+        ("姓", False), (" ", False), ("名：", False), (" \t", True),  # 空槽(带线空白)
+        ("性", False),
+        ("年", False), (" ", False), ("龄：", False), (" \t", True),
+        ("职", False),
+    ])
+    p2 = _mk_para(doc, [("别：", False), (" \t", True)])
+    p3 = _mk_para(doc, [("务：", False), (" \t", True)])
+    from services.docx_format_doctor import heal_orphan_split_labels
+
+    n = heal_orphan_split_labels(doc)
+    assert n == 2
+    assert p2.text.startswith("性别：")
+    assert p3.text.startswith("职务：")
+    assert "性" not in p.text and "职" not in p.text  # 孤字都搬走了
+
+
 def test_orphan_guard_normal_single_char_not_moved() -> None:
     """"姓 名："里的"姓"(前面没有带线值)绝不被搬走——哪怕后文恰有"名："段。"""
     doc = Document()

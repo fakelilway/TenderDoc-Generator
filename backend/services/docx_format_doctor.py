@@ -212,10 +212,12 @@ _REJOIN_LABELS = (
 
 
 def heal_orphan_split_labels(document: Any, profile: dict[str, Any] | None = None) -> int:
-    """孤字归位:X 粘在已填值后 + 下文段首是"Y：" 且 XY 是已知两字标签 → X 搬回 Y 前。
+    """孤字归位:X 粘在填空槽后 + 下文段首是"Y：" 且 XY 是已知两字标签 → X 搬回 Y 前。
 
-    "粘在值后"的精确特征 = 孤字 run 的前一个可见 run 带下划线(填空槽里的值)——
-    这一条挡住"姓 名："里的"姓"这类正常单字 run(它前面没有带线值),绝不误搬。
+    "粘在槽后"的精确特征 = 孤字 run 的前一个可见 run **带下划线**——填空前是带线空白槽、
+    填空后是带线的值,两种状态都算(本 healer 跑在填值前,此时槽还是空白;曾错误地额外要求
+    前 run 有非空文字=已填值,导致填前永不触发,萧县实测暴露)。段首单字(如"姓 名："的
+    "姓",k==0)前面没有带线 run,绝不误搬。
     """
     from docx.oxml import OxmlElement
 
@@ -227,8 +229,8 @@ def heal_orphan_split_labels(document: Any, profile: dict[str, Any] | None = Non
             ch = run.text
             if len(ch) != 1 or not ("一" <= ch <= "鿿") or _is_underlined(run):
                 continue
-            if k == 0 or not _is_underlined(runs[k - 1]) or not runs[k - 1].text.strip():
-                continue  # 前面不是带线的已填值 → 不是"粘在值后"的孤字
+            if k == 0 or not _is_underlined(runs[k - 1]):
+                continue  # 前面不是带线 run(空槽/已填值均可) → 不是"粘在槽后"的孤字
             # 在后面最多4个非空段里找"另一半":段首正是 Y：且 X+Y 是已知标签
             seen = 0
             for j in range(idx + 1, len(paras)):
