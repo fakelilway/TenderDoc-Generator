@@ -2,29 +2,20 @@
 
 import { ChangeEvent, DragEvent, FormEvent, useRef, useState } from "react";
 import { FileText, Loader2, Play, UploadCloud, X } from "lucide-react";
-import type { TemplateSummary } from "@/lib/types";
 
 export function UploadPanel({
   projectName,
   file,
   busy,
-  templates = [],
-  selectedTemplateId = null,
-  recommendedTemplateId = null,
   onProjectNameChange,
   onFileChange,
-  onTemplateChange,
   onSubmit
 }: {
   projectName: string;
   file: File | null;
   busy: boolean;
-  templates?: TemplateSummary[];
-  selectedTemplateId?: number | null;
-  recommendedTemplateId?: number | null;
   onProjectNameChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
-  onTemplateChange?: (templateId: number | null) => void;
   onSubmit: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -65,31 +56,6 @@ export function UploadPanel({
             placeholder="项目名称"
           />
         </label>
-
-        {templates.length > 0 && onTemplateChange ? (
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted">
-              公司风格案例{recommendedTemplateId != null ? "（有推荐，不自动套用）" : "（可选）"}
-            </span>
-            <select
-              value={selectedTemplateId ?? ""}
-              onChange={(event) =>
-                onTemplateChange(
-                  event.target.value ? Number(event.target.value) : null
-                )
-              }
-              className="h-11 w-full rounded-[16px] border border-black/[0.08] bg-white/68 px-3.5 text-sm text-[#1d1d1f] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]"
-            >
-              <option value="">不使用案例（推荐，完全按招标文件格式）</option>
-              {templates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                  {template.id === recommendedTemplateId ? "（推荐）" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
 
         <input
           ref={inputRef}

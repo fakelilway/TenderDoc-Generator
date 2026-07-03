@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, FileStack, FolderOpen, Users } from "lucide-react";
+import { Database, FolderOpen, Users } from "lucide-react";
 import { KnowledgePanel } from "@/components/KnowledgePanel";
 import { NavLinkButton } from "@/components/NavLinkButton";
 import { ViewShell } from "@/components/ViewShell";
@@ -26,14 +26,9 @@ export function KnowledgeView() {
             历史项目
           </NavLinkButton>
           {isAdmin ? (
-            <>
-              <NavLinkButton href="/templates" icon={FileStack}>
-                风格库
-              </NavLinkButton>
-              <NavLinkButton href="/admin/users" icon={Users}>
-                账号管理
-              </NavLinkButton>
-            </>
+            <NavLinkButton href="/admin/users" icon={Users}>
+              账号管理
+            </NavLinkButton>
           ) : null}
         </>
       }

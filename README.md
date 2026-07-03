@@ -92,7 +92,6 @@ flowchart TD
 - 招标文件支持 PDF/DOCX/TXT；工程量清单额外支持 Excel（`.xlsx`/`.xlsm`/`.xls`）；知识库支持 PDF/DOCX/TXT/JPG/JPEG/PNG 等资料入库和预览。
 - 公司档案维护：企业信息、资质、账户、拟派项目班子。
 - 知识库结构化标签：资料类别、册别、专业、地区、年份、证书类型、有效期、敏感级别、使用范围、核验状态、图片可插入等。
-- 公司风格案例库：用于参考技术正文深度、语气和图片位，不控制投标文件结构。
 - **商务卷 + 技术卷 DOCX + Markdown + 审查报告下载（两卷交付，报价卷由外部造价软件单独做）。**
 
 ## 本地启动
@@ -167,15 +166,14 @@ TenderDoc-Generator/
 │   ├── api/                 # FastAPI 应用装配（main.py）+ routers/ 按域分路由 + deps.py 共享依赖
 │   ├── core/                # config + llm_client（统一 LLM 客户端/重试退避）
 │   ├── rag/                 # embedding、pgvector 检索和过滤
-│   ├── scripts/             # 质量评估、知识库 manifest、风格案例导入
+│   ├── scripts/             # 质量评估、知识库 manifest、资料导入
 │   ├── schemas/             # Pydantic schema
 │   ├── services/            # workflow、generation、knowledge、template、company profile；project 为子包（services/project/）；docx_health_check（标书体检打分）、delivery_quality（出标自动打分）
-│   ├── templates/           # 公司风格案例和离线评估样本
 │   ├── utils/               # file parser、DOCX exporter、MinIO
 │   └── tests/
 ├── frontend/
 │   ├── app/                 # Next.js App Router 页面
-│   ├── components/          # 工作台（Tab化三栏）、知识库、风格库、预览和编辑组件
+│   ├── components/          # 工作台（Tab化三栏）、知识库、公司档案、预览和编辑组件
 │   └── lib/                 # API client、类型、Markdown 解析
 ├── docs/
 ├── scripts/

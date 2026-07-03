@@ -19,7 +19,6 @@ from api.routers import (
     knowledge as knowledge_router,
     performance_archive as performance_archive_router,
     project as project_router,
-    templates as templates_router,
 )
 from rag import retriever
 from services import (
@@ -27,11 +26,9 @@ from services import (
     company_profile_service,
     knowledge_service,
     project_service,
-    template_service,
     workflow_service,
 )
 from services.project_service import ProjectAccessError, ProjectNotFoundError
-from services.template_service import TemplateNotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -59,7 +56,6 @@ app.include_router(knowledge_router.router)
 app.include_router(performance_archive_router.router)
 app.include_router(cert_archive_router.router)
 app.include_router(project_router.router)
-app.include_router(templates_router.router)
 
 
 __all__ = [
@@ -70,10 +66,8 @@ __all__ = [
     "company_profile_service",
     "knowledge_service",
     "project_service",
-    "template_service",
     "workflow_service",
     "retriever",
     "ProjectAccessError",
     "ProjectNotFoundError",
-    "TemplateNotFoundError",
 ]

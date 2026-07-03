@@ -65,7 +65,6 @@ from services import (
     auth_service,
     knowledge_service,
     project_service,
-    template_service,
     workflow_service,
 )
 
@@ -77,7 +76,6 @@ router = APIRouter()
 async def create_project(
     name: str = Form(...),
     tender_file: UploadFile = File(...),
-    template_id: int | None = Form(None),
     current_user: UserProfile = Depends(auth_service.get_current_user),
 ) -> ProjectCreateResponse:
     # 招标文件只收 PDF/Word:真实招标文件均为此两种,系统按原格式(福昕)照抄;
@@ -95,7 +93,6 @@ async def create_project(
             filename=filename or "tender.pdf",
             content_type=tender_file.content_type,
             owner_user_id=current_user.id,
-            template_id=template_id,
         )
     except Exception as error:
         _raise_http_error(error)

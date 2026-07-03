@@ -26,16 +26,13 @@ def build_project_outline(project_id: int) -> dict[str, Any]:
     if not parsed_json:
         raise ValueError("Project has no parsed requirements")
     requirements = TenderRequirements.model_validate(parsed_json)
-    from services import template_service
-
-    bid_template = template_service.bid_template_for_project(project_id)
     outline = [
         section.model_dump()
-        for section in build_bid_outline(requirements, bid_template)
+        for section in build_bid_outline(requirements)
     ]
     document_outline = [
         section.model_dump()
-        for section in build_bid_document_outline(requirements, bid_template)
+        for section in build_bid_document_outline(requirements)
     ]
     return save_project_outline(
         project_id,
@@ -152,10 +149,7 @@ def _build_document_outline_for_saved_technical_outline(
     if not parsed_json:
         return []
     requirements = TenderRequirements.model_validate(parsed_json)
-    from services import template_service
-
-    bid_template = template_service.bid_template_for_project(project_id)
-    document_outline = build_bid_document_outline(requirements, bid_template)
+    document_outline = build_bid_document_outline(requirements)
     technical_children = [
         BidDocumentOutlineSection(
             title=item["title"],

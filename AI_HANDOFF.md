@@ -21,7 +21,7 @@
 6. **占比拆工序 + 施工逻辑排序（占比只决定"写多少"、逻辑决定"先后"）**：占比越大的分部拆成越多道工序、每道工序单独成节（各一次 LLM 调用，突破单节 ~5000 字上限）——`_subsection_count`：≥40%→5 节 / ≥25%→4 / ≥15%→3 / ≥5%→2 / else 1。章节按施工逻辑排序（`_construction_rank`：路基→排水→路面→桥涵→交安→绿化），不按占比排。篇幅另由 `boq_service.adjust_min_chars` 按占比加厚/压缩（主导分部最高 2.2x、占比极小 0.7x；生成端有 ~1800 字硬底 `MIN_NODE_CONTENT_CHARS`，基准目标 `_CONFIRMED_OUTLINE_TARGET_CHARS=2200`）。
 7. **防废标"招标覆盖闸"（交卷前最后一道，`v2_audit_service` 并入 `full_audit`）**：逐条核"评分项是否正面响应 / 废标项是否实质规避"。判定优先 LLM 评标视角语义判定（`prompts/coverage_audit_prompt`）；**废标项绝不靠关键词/bigram 放行**（废标条款原文常被抄进承诺表，关键词重合会把真违规误判成已覆盖）；LLM 不可用时 bigram 只兜底放宽评分项。废标漏=critical、评分漏=major。**当前为告警模式**：config `coverage_audit_block_invalid` 默认 False → 废标漏降为 major 不硬拦（因"初步评审不通过/报价超限价"等规则类废标项任何标书都不会专门写段响应，硬拦会对每份标误锁死）；待废标项按"实质响应类 vs 规则约束类"分类（P1）后设 True 切回硬拦。总开关 `enable_coverage_audit`。定向补写：某节未响应招标要求 → `content_writer.rewrite_node_for_compliance` 重写该节（best-effort）。
 8. **失败语义**：格式复制失败、技术正文写作失败 = 硬错误，直接 `raise ValueError`，不回退不占位。审查发现严重问题（audit critical）则软阻断：不抛错，置 `audit_blocked=True` 并保留已生成内容供人工预览。
-9. 公司风格案例和知识库不控制格式结构，只提供事实证据、技术素材和风格参考；**知识库"公司同类施工方案"当骨架打底**（沿用结构/工艺/深度，数据换本项目，严禁照搬旧项目数值/地名/项目名）。
+9. 知识库不控制格式结构，只提供事实证据与技术素材（**风格案例库已于 2026-07-03 整体删除**——从未接进写作提示词、大纲兜底被重建机制盖过）；**知识库"公司同类施工方案"当骨架打底**（沿用结构/工艺/深度，数据换本项目，严禁照搬旧项目数值/地名/项目名）。
 
 ## 当前关键文件
 
@@ -45,7 +45,7 @@
 - `backend/core/llm_client.py`：统一 provider 解析（`resolve_llm_config`，`error_cls` 可注入）+ `has_real_key` + `chat_completion`（LLM 调用瞬态错误重试 + 指数退避，stdlib 实现）。parser/content_writer 复用，reviewer 保留自有策略。
 - `backend/services/docx_health_check.py`：对落盘 `.docx` 做确定性体检，0-100 质量分（6 项加权：必填字段/表格填充/章节齐全/残留物/字体一致/篇幅响应）。`score_docx`（单卷）+ `score_delivery`（按卷拆分母：必填/表格量商务卷、章节/篇幅量技术卷、残留两卷取严、字体仅技术卷）。
 - `backend/services/delivery_quality.py`：`score_delivery_files` / `score_project_delivery`；出标后挂非阻断钩子，自动按卷打分并落 `backend/eval_results/project_{id}.json`（已 gitignore），打分失败绝不影响出标。
-- `backend/api/main.py`：已瘦身为 ~75 行装配层（app 构造 + lifespan + `/health` + `include_router`）；按域拆出 `backend/api/routers/{auth,admin,company,knowledge,project,templates}.py`（各 APIRouter），共享依赖 `authorized_project`/`_raise_http_error` 在 `backend/api/deps.py`，main.py re-export 这些名字保向后兼容。
+- `backend/api/main.py`：已瘦身为 ~75 行装配层（app 构造 + lifespan + `/health` + `include_router`）；按域拆出 `backend/api/routers/{auth,admin,company,knowledge,project,performance_archive,cert_archive}.py`（各 APIRouter），共享依赖 `authorized_project`/`_raise_http_error` 在 `backend/api/deps.py`，main.py re-export 这些名字保向后兼容。
 - `backend/services/project_service.py`：已瘦身为 ~122 行**门面**，真实逻辑拆进 `backend/services/project/` 子包（`errors/crud/parsing/outline/strategy/delivery/_helpers/_runtime` 共 8 模块），门面 re-export 全部公共名与异常类。
 - `frontend/components/TenderWorkspace.tsx`：工作台主组件（三栏 Tab、**两卷下载、无报价**）。
 - `backend/scripts/benchmark_vs_baseline.py` / `visual_regression.py`：质量/视觉度量。

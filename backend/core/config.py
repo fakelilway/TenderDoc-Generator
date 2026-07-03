@@ -96,7 +96,6 @@ class Settings(BaseSettings):
     rerank_model: str = Field("BAAI/bge-reranker-base", alias="RERANK_MODEL")
 
     company_name: str = Field("安徽正奇建设有限公司", alias="COMPANY_NAME")
-    bid_template_path: str = Field("", alias="BID_TEMPLATE_PATH")
 
     debug: bool = Field(False, alias="DEBUG")
     log_level: str = Field("INFO", alias="LOG_LEVEL")

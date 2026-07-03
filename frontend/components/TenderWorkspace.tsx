@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Download,
   FileText,
-  FileStack,
   Building2,
   FolderOpen,
   Database,
@@ -47,8 +46,6 @@ import {
   confirmParsedProject,
   confirmProject,
   createProject,
-  listTemplates,
-  recommendTemplates,
   getFinalChecklist,
   getProjectDeliveryPreview,
   getProjectDownload,
@@ -78,7 +75,6 @@ import type {
   ResponseMatrix,
   ReviewReport,
   ScorePrediction,
-  TemplateSummary,
   TenderRequirements,
   WorkflowState
 } from "@/lib/types";
@@ -314,11 +310,6 @@ export function TenderWorkspace({
   const [humanPromptOpen, setHumanPromptOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
-  const [recommendedTemplateId, setRecommendedTemplateId] = useState<number | null>(
-    null
-  );
   const autoStartedWorkflowProject = useRef<number | null>(null);
   const lastHumanPromptKey = useRef("");
   const autoAnalysisTriggered = useRef<Set<string>>(new Set());
@@ -731,38 +722,6 @@ export function TenderWorkspace({
   }, []);
 
   useEffect(() => {
-    if (initialProjectId) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = await listTemplates();
-        if (cancelled) return;
-        setTemplates(response.templates);
-        if (response.templates.length && projectName.trim()) {
-          const recommendation = await recommendTemplates({
-            projectName: projectName.trim(),
-            limit: 1
-          });
-          if (cancelled) return;
-          const top = recommendation.recommendations[0];
-          if (top && top.match_score > 0) {
-            setRecommendedTemplateId(top.template.id);
-          }
-        }
-      } catch {
-        // Template recommendation is best-effort; ignore failures.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Only run when entering the blank workspace (new project flow).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialProjectId]);
-
-  useEffect(() => {
     if (!projectId || busy || actionBusy || finalStatuses.has(status)) {
       return;
     }
@@ -872,11 +831,7 @@ export function TenderWorkspace({
 
     try {
       setStatus("uploading");
-      const created = await createProject(
-        projectName.trim(),
-        file,
-        selectedTemplateId
-      );
+      const created = await createProject(projectName.trim(), file);
       projectIdRef.current = created.project_id;
       setProjectId(created.project_id);
       window.history.pushState(null, "", `/project/${created.project_id}`);
@@ -1213,8 +1168,6 @@ export function TenderWorkspace({
     setCenterTab("parsed");
     setFile(null);
     setProjectName("演示技术标项目");
-    setSelectedTemplateId(null);
-    setRecommendedTemplateId(null);
 
     window.history.pushState(null, "", "/");
   }
@@ -1264,14 +1217,9 @@ export function TenderWorkspace({
                 公司档案
               </NavLinkButton>
               {isAdmin ? (
-                <>
-                  <NavLinkButton href="/templates" icon={FileStack}>
-                    风格库
-                  </NavLinkButton>
-                  <NavLinkButton href="/admin/users" icon={Users}>
-                    账号管理
-                  </NavLinkButton>
-                </>
+                <NavLinkButton href="/admin/users" icon={Users}>
+                  账号管理
+                </NavLinkButton>
               ) : null}
               {projectId ? (
                 <button
@@ -1473,12 +1421,8 @@ export function TenderWorkspace({
             projectName={projectName}
             file={file}
             busy={busy}
-            templates={templates}
-            selectedTemplateId={selectedTemplateId}
-            recommendedTemplateId={recommendedTemplateId}
             onProjectNameChange={setProjectName}
             onFileChange={handleFileChange}
-            onTemplateChange={setSelectedTemplateId}
             onSubmit={handleCreateAndRun}
           />
           <ProjectBOQPanel projectId={projectId} />

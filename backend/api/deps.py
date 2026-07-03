@@ -9,7 +9,6 @@ from core.config import settings
 from schemas.auth import UserProfile
 from services import auth_service, project_service
 from services.project_service import ProjectAccessError, ProjectNotFoundError
-from services.template_service import TemplateNotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 def _raise_http_error(error: Exception) -> None:
     if isinstance(error, HTTPException):
         raise error
-    if isinstance(error, (ProjectNotFoundError, TemplateNotFoundError)):
+    if isinstance(error, ProjectNotFoundError):
         raise HTTPException(status_code=404, detail=str(error)) from error
     if isinstance(error, ProjectAccessError):
         raise HTTPException(status_code=403, detail=str(error)) from error

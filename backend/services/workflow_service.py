@@ -163,22 +163,14 @@ def run_bid_workflow(
         project_status="processing",
     )
 
-    from services import template_service
-
-    bid_template = template_service.bid_template_for_project(project_id)
-    template_note = (
-        f"，参考公司风格案例：{bid_template.template_name}"
-        if bid_template
-        else "，未选择公司风格案例，完全按招标文件格式和确认目录生成"
-    )
     _append_trace(
         state,
         "generate",
         "running",
-        f"根据评分项、废标条款、招标文件格式要求和人工确认目录生成标书大纲{template_note}。",
+        "根据评分项、废标条款、招标文件格式要求和人工确认目录生成标书大纲。",
         project_status="processing",
     )
-    outline = _outline_from_project(project, requirements, bid_template)
+    outline = _outline_from_project(project, requirements)
     # 招标没识别出技术标结构 → 大纲会退化成"施工组织设计"一节占位,导致技术卷只生成一节(~7页)、
     # 占比详略与逐节知识库检索全部失效。这里按工程量清单分部分项+标准施组章节展开成完整多节大纲,
     # 让下面的"逐节检索知识库"和生成的"按占比定详略"都能真正落到每一节。
@@ -188,7 +180,7 @@ def run_bid_workflow(
     state.bid_outline = [section.model_dump() for section in outline]
     state.document_outline = project.get("document_outline_json") or [
         section.model_dump()
-        for section in build_bid_document_outline(requirements, bid_template)
+        for section in build_bid_document_outline(requirements)
     ]
     _append_trace(
         state,
@@ -642,12 +634,11 @@ def _ensure_parsed_requirements(
 def _outline_from_project(
     project: dict,
     requirements: TenderRequirements,
-    bid_template,
 ) -> list[BidSectionOutline]:
     outline_json = project.get("bid_outline_json") or []
     if outline_json:
         return [BidSectionOutline.model_validate(item) for item in outline_json]
-    return build_bid_outline(requirements, bid_template)
+    return build_bid_outline(requirements)
 
 
 # 标准施组"保证措施"章节(招标未写明结构时的兜底)。每条 (标题, 编写要点)。

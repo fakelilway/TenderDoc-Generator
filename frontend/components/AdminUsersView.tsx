@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, FileStack, FolderOpen, Users } from "lucide-react";
+import { Database, FolderOpen, Users } from "lucide-react";
 import { AdminUsersPanel } from "@/components/AdminUsersPanel";
 import { NavLinkButton } from "@/components/NavLinkButton";
 import { ViewShell } from "@/components/ViewShell";
@@ -28,11 +28,6 @@ export function AdminUsersView() {
           <NavLinkButton href="/knowledge" icon={Database}>
             知识库
           </NavLinkButton>
-          {isAdmin ? (
-            <NavLinkButton href="/templates" icon={FileStack}>
-              风格库
-            </NavLinkButton>
-          ) : null}
         </>
       }
     >

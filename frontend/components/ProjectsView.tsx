@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Database,
   Download,
-  FileStack,
   FolderOpen,
   Loader2,
   RefreshCw,
@@ -166,14 +165,9 @@ export function ProjectsView() {
             知识库
           </NavLinkButton>
           {isAdmin ? (
-            <>
-              <NavLinkButton href="/templates" icon={FileStack}>
-                风格库
-              </NavLinkButton>
-              <NavLinkButton href="/admin/users" icon={Users}>
-                账号管理
-              </NavLinkButton>
-            </>
+            <NavLinkButton href="/admin/users" icon={Users}>
+              账号管理
+            </NavLinkButton>
           ) : null}
         </>
       }
