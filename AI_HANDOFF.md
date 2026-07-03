@@ -4,9 +4,10 @@
 
 ## 当前状态
 
-日期：2026-06-29
+日期：2026-07-02
 当前生成内核：V2 原格式复制（两卷交付）
-当前目标：真单实测（AI 账户余额 402 待充值后跑通整链）、防废标"覆盖闸"P1（废标项分类后切回硬拦）、福昕云格式链与新点软件交付实测、本项目专用技术材料库。本轮已落地"工程量清单(BOQ)驱动技术卷 + 严格按招标投标文件格式重建目录与附表 + 占比拆工序 + 施工逻辑排序 + 招标覆盖闸防废标"。
+当前目标：等用户用清理好、命名规范的资料**重建知识库/公司档案**（现有本地库是临时测试数据，缺料不当缺口治），重建后陪跑整链验证；防废标"覆盖闸"P1（废标项分类后切回硬拦）；新点软件交付实测。近两周已落地"商务卷证据链（三大选派/证件业绩插图锚点落位/简历表台账填充）+ 格式医生（孤字归位/下划线断线）+ 技术卷附表逐张装配带附表X编号 + 拟分包去重 + RAG 语义重排接生产 + parser 评分项容错"。
+⚠️ **未解决的已知病：福昕把投标函签名行/身份证明右列/授权委托书开头/日期槽转成浮动文本框**（python-docx 的 document.paragraphs 看不见 → 填不上）。曾修过一版（浮件删除/克隆），用户不认可已整体回退，工作保存在分支 `backup/textbox-fill-c9ee38c`；重做前先弄清用户看到的具体毛病，并守"诊断纪律"（真实文件+渲染亲眼看）。
 
 ## 当前架构铁律
 
@@ -24,7 +25,11 @@
 
 ## 当前关键文件
 
-- `backend/services/cloud_pdf_convert.py`：福昕国内云 PDF→可编辑 Word。`convert_pdf_to_docx_via_foxit`（SN 签名 + `document/convert`→轮询 `task`→`download` 跟随302）、`convert_format_pages_via_cloud`（商务：切格式区→福昕→复用四件套填字段）、`convert_appendix_pages_via_cloud`（附表：切附表区→福昕，不填）。纯 httpx、无 SDK。
+- `backend/services/cloud_pdf_convert.py`：福昕国内云 PDF→可编辑 Word。`convert_pdf_to_docx_via_foxit`（SN 签名 + `document/convert`→轮询 `task`→`download` 跟随302）、`convert_format_pages_via_cloud`（商务：切格式区→福昕→**填空与体检管线**：标签理顺/孤字归位→字段自动填→格式医生→清红章页码→固定字段收尾）、`convert_appendix_pages_via_cloud`（附表：切附表区→福昕，不填）。纯 httpx、无 SDK。
+- `backend/services/docx_format_doctor.py`：**格式医生**（healer 注册制，铁律只改格式一字不改）。`run_format_doctor_prefill`（填前：孤字归位）+ `run_format_doctor(doc, profile)`（填后：下划线断线补齐，白名单+夹心兜底）。新格式病种往 `_HEALERS`/`_PREFILL_HEALERS` 加，别散落打补丁。
+- `backend/services/appendix_service.py`：技术卷附表逐张装配（公司定稿表补"附表X"编号 / 招标原表福昕转 / 占位页；`match_company_appendix`/`_number_company_appendix`/`build_appendix_docx`）。
+- `backend/services/asset_resolver.py` + `services/id_card_ocr.py`：按 owner_name/certificate_type 精确取证件图；身份证 OCR 判正反面（文件名分不出正反，必须 OCR）。
+- `backend/rag/retriever.py`：`rerank_results` 生产重排（优先 bge-reranker 语义、失败回退关键词）。
 - `backend/services/original_docx_format_service.py`：格式章复制与回退。`build_original_format_docx`（DOCX copy-then-prune）、`build_original_format_docx_from_pdf_editable`（pdf2docx 可编辑）、`build_original_format_docx_from_pdf_with_fields`（整页截图+值烧录）、`_find_format_page_range_in_pdf` / `_find_appendix_page_range_in_pdf`（商务/附表页区，跨引用"第X章"不误切 + 技术/报价卷边界识别）。
 - `backend/services/generation_service.py`：两卷装配 `_assemble_two_volumes`（+ `appendix_format_path`）+ `_append_docx`（docxcompose 拼附表到技术卷末、先临时件校验再原子替换）+ 导出 `export_markdown_for_project`（拆卷前不剥 tdg:volume 标记）。
 - `backend/services/v2_generation_service.py`：V2 编排 + Phase 0 格式复制阶梯（福昕→pdf2docx→图）+ `_audit_built_format_docx`（PDF 路径内容体检）+ `_sections_from_confirmed_outline`（读 `bid_outline_json` 驱动目录）+ `_collect_technical_sections`（旧回退：忠实跟招标，无则最小壳）+ `_distribute_requirement_items` + **附表渲染**（`_is_appendix_title`/`_appendix_markdown`：附表节不走 LLM 空写，渲染成 Markdown 表格——总体作业/进度计划表、劳动力计划表、临时占地计划表、外供电力需求计划表；施工总平面图为图占位）+ 覆盖闸触发定向补写 `rewrite_node_for_compliance`。技术卷各节 LLM 有界并发。
@@ -45,7 +50,22 @@
 - `frontend/components/TenderWorkspace.tsx`：工作台主组件（三栏 Tab、**两卷下载、无报价**）。
 - `backend/scripts/benchmark_vs_baseline.py` / `visual_regression.py`：质量/视觉度量。
 
-## 最近变更（本轮 2026-06-29，commit d404459，已合 main）
+## 最近变更（2026-06-30 ~ 07-02 窗口，1f27072..8cdc2d7，已合 main）
+
+围绕"商务卷证据链 + 格式体检 + 技术卷附表装配"：
+
+- **技术卷附表逐张装配**（1f27072 + a873d27，`services/appendix_service.py`）：按招标附表清单逐张定来源——公司定稿表（`backend/assets/company_appendices/`）原样拼并自动补"**附表X**"编号（目录=Word TOC 域抓标题，一处修两处对）→ 招标原表福昕转 → 占位页。教训：`_number_company_appendix` 曾"定义了没接线"导致附表二~五没编号。
+- **简历表按台账结构化信息填 + 总工对称 + 落位锚点补表头**（42a7ae4）：`build_pm_resume_fields(name, role)` 用台账（身份证号推年龄性别、builder_certs 取证号专业、职称），OCR 降为兜底；`_fill_resume_tables` 角色感知填项目经理+总工两张简历表；`_ANCHOR_SPECS` 三锚点（法定代表人身份证明/项目经理资历表/项目总工资历表）补表头关键词治"证件图掉卷尾"。
+- **商务卷拟分包表去重**（959a279）：`_ORG_DOC_SOURCES` 移除拟分包注入——福昕格式章已带招标那张，再注入资料库 21×4 空表=重复变丑；只保留项目管理机构组织机构图注入。
+- **切开标签理顺**（8ae120a，`_normalize_split_labels`）：福昕把"性 别""电 话"等两字标签塞了字间空格→填空认不出标签。只对"去空格后恰等于已知标签"的段去空格，填值前跑。
+- **RAG 语义重排接生产**（d7a84f7）：`rag/retriever.rerank_results`——生产检索原走关键词数格子（垃圾目录片段排第1、漏"沥青混凝土≈路面"）；改为优先 bge-reranker、失败自动回退关键词。模型已缓存本机（首载下载 ~5min，后秒级）。
+- **删 langchain 三包**（ab6eccf）：源码零引用，纯瘦身去攻击面。
+- **格式医生**（71481f0 + 212652b，`services/docx_format_doctor.py`，healer 注册制）：用户定的新架构——不在转换环节散打补丁，转换+填空前后各加一道全文档体检；铁律只改格式一字不改。填后 `heal_underline_slots` 治"下划线画一半"（白名单=profile 我们填的值+夹心兜底，挡"年/月/日"误加线）；填前 `heal_orphan_split_labels` 孤字归位（"性…"+"别："拼回"性别："，孤字特征=前一个可见 run 是带线已填值，字符守恒）。均在用户真实文件上渲染前后对比验收过。
+- **parser 评分项容错**（8cdc2d7）：LLM 漏 description 只给 title（项目176实测5项全漏）→ title/description 互相回填，不再炸整次解析。
+- 回退记录：c9ee38c（浮动文本框填充）被用户要求整体回退，存 `backup/textbox-fill-c9ee38c`；根因诊断仍有效（见"当前状态"⚠️）。
+- 测试基线：**431 passed / 2 skipped**（backend/venv 缺 openpyxl 时另有 3 个测试文件收集失败，属环境问题非代码）。
+
+## 上轮变更（2026-06-29，commit d404459，已合 main）
 
 围绕"工程量清单(BOQ)驱动技术卷 + 严格按招标投标文件格式 + 防废标"：
 
@@ -75,8 +95,9 @@
 
 ## 下个接手者优先看
 
-1. **AI 账户余额充值（402）**——当前余额不足，整链真单实测会在 LLM 调用处 402 失败。先充值，否则下面 2、3 都跑不通。
-2. **真单实测（充值后第一件事）**：重启后端 → 用一份真实招标 + 真实工程量清单(Excel/PDF) 跑通整链 → 验证技术卷目录是否严格照招标投标文件格式、附表是否真表格、占比大的分部是否拆多道工序并加厚、覆盖闸是否逐条核到评分/废标项。
+0. **先读记忆再动手**：`~/.claude/.../memory/MEMORY.md` 索引了两周的拍板与坑（知识库命名规范、福昕表格保真结论"竖线台阶=招标原样别捋直"、诊断纪律"真实文件+渲染亲眼看"、用户协作硬约束）。用户是不懂技术的业务方，说人话。
+1. **知识库重建（等用户）**：现有本地库=临时测试数据，缺料（养护资质/社保图/交安B级标注）**不当缺口治**；用户会用清理好、按规范命名的资料重跑导入脚本重建。命名规范见记忆 `kb-naming-and-resume-fill`。重建后陪跑整链，把"料齐了还填不上/插不上"的一次清干净。
+2. **真单实测**：用一份真实招标 + 工程量清单跑通整链 → 验证技术卷目录/附表编号、商务卷证件落位与简历表填充、格式医生效果（下划线/孤字）、覆盖闸逐条核到评分/废标项。生成期间后端用 `BACKEND_NO_RELOAD=1 bash scripts/dev_local.sh` 起（--reload 会在改文件时杀掉生成线程）。
 3. **覆盖闸 P1：废标项分类后切回硬拦**——当前 `coverage_audit_block_invalid=False`（告警模式）。需把废标项分成"实质响应类（如工期/质量/安全限值、要求的承诺资料）vs 规则约束类（初步评审不通过/报价超限价等任何标书都不会专门响应的）"，只对前者切回 critical 硬拦，再把开关设 True，做到"拦真该拦的、不误锁死每份标"。
 4. **整链格式实测（福昕开关已开）**：在 Pages/新点 验商务卷 + 附表可编辑且与招标一致；尤其 ⚠️ 附表横表方向、docxcompose 合并保真。
 5. **M20 新点软件交付实测**——两卷（福昕可编辑 DOCX + 技术正文）在新点能否导入/套打/出目录。
@@ -85,7 +106,7 @@
 
 ## 验证命令
 
-- 后端测试：`PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q -m "not live_llm"`（基线 ~428 passed；唯一失败 `test_assemble_two_volumes_commercial_copies_format_technical_is_prose` 是改前就存在的商务卷旧问题，与本轮无关）
+- 后端测试：`PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q -m "not live_llm"`（基线 **431 passed / 2 skipped**，2026-07-02；若用 backend/venv 会因缺 openpyxl 另有 3 个测试文件收集失败，属环境问题）
 - 前端类型：`cd frontend && npx tsc --noEmit`
 - 前端单测（vitest）：`pnpm --dir frontend test`
 - 质量对标：`backend/scripts/benchmark_vs_baseline.py compare --generated <稿> --baseline <中标标书>`

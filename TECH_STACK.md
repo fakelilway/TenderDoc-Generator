@@ -40,7 +40,8 @@
 - Content Writer：技术正文生成
 - Reviewer Agent：废标风险审查
 - BAAI/bge-large-zh-v1.5 embedding
-- BAAI/bge-reranker-base rerank
+- BAAI/bge-reranker-base rerank——**已接入生产检索**（`rag/retriever.rerank_results`：优先语义重排，模型不可用自动回退关键词重排，检索绝不因此报错）
+- 已删除从未使用的 langchain 三包（langchain/langchain-community/langchain-openai，源码零引用）
 
 ## Document Processing
 
@@ -49,6 +50,9 @@
 - docxcompose：把福昕可编辑附表拼接到技术卷末尾（保留真表格/图片关系）
 - pdf2docx：PDF→可编辑 Word 的离线回退（福昕云不可用时）
 - pypdf/pdfplumber：辅助 PDF 文本解析
+- `services/docx_format_doctor.py`：**格式医生**——福昕转换+填空前后的全文档格式体检（healer 注册制）。填前：孤字归位（"性…"+"别："拼回"性别："，字符守恒）；填后：填空槽下划线断线补齐（白名单+夹心兜底）。铁律：只改格式、绝不改文字
+- `services/appendix_service.py`：技术卷附表逐张装配——公司定稿表原样拼（补"附表X"编号）→ 招标原表福昕转 → 占位页
+- RapidOCR（rapidocr-onnxruntime）：证件扫描件 OCR；`services/id_card_ocr.py` 身份证正反面判定；`utils/image_orient.py` EXIF 摆正
 
 ## Current Generation Kernel
 
@@ -70,8 +74,9 @@ flowchart TD
 - DOCX 招标文件：copy-then-prune 复制格式章（保留页眉脚/图片）。
 - PDF 招标文件：**优先福昕国内云转可编辑 Word**（真段落/真表格，开关 `CLOUD_PDF_CONVERT=foxit`）+ 自动填公司档案字段；失败下沉 pdf2docx → 整页截图+域 → 纯整页图 → 硬报错。纯文字版招标最佳，扫描版需先 OCR。
 - 商务锁定格式：不由模型重画。
-- 技术正文：按**人工确认目录**由 Content Writer 逐节生成（有界并发），独立成文；技术附表（附表一~八）经福昕转可编辑空表、docxcompose 拼到技术卷末（数据格留空人工填）。
-- 审查：V2 格式/内容/证据审查 + workflow 废标风险审查。
+- 商务卷填空管线（`cloud_pdf_convert`，顺序固定）：福昕转换 → 标签理顺+孤字归位（填前体检）→ 按标签自动填（公司档案/选派人员台账/选中业绩；只填空格绝不覆盖已有内容）→ 格式医生（填后体检，治下划线断线）→ 清红章/招标页码 → 固定字段一致性收尾；证件/业绩图锚点落位到对应表后，没命中退卷尾绝不丢图。
+- 技术正文：按**人工确认目录**由 Content Writer 逐节生成（有界并发），独立成文；技术附表由 `appendix_service` 逐张装配（公司定稿表补"附表X"编号 / 招标原表福昕转 / 占位），docxcompose 拼到技术卷末。
+- 审查：V2 格式/内容/证据审查 + 招标覆盖闸 + workflow 废标风险审查。
 
 ## Environment Variables
 
