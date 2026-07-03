@@ -149,6 +149,33 @@ def _replace_known_fields(document: Document, profile: dict[str, Any]) -> None:
                     _replace_in_paragraph(paragraph, replacements)
 
 
+def _fill_textbox_placeholders(document: Document, profile: dict[str, Any]) -> int:
+    """浮动文本框里的占位符替换(实测:福昕把部分抬头如"致：（招标人名称）"转成浮动
+    文本框,document.paragraphs 看不见 → 正文替换够不着,占位符原样留在成品里)。
+
+    只对 w:txbxContent 内的段落跑同一套 _known_replacements 文字替换——**不动框、
+    不动线条、不增删任何元素**,只把框里的占位文字换成真值。返回替换的段数。
+    """
+    from docx.text.paragraph import Paragraph
+
+    replacements = {k: v for k, v in _known_replacements(profile).items() if v}
+    if not replacements:
+        return 0
+    filled = 0
+    for txbx in document.element.body.iter(qn("w:txbxContent")):
+        for p_el in txbx.iter(qn("w:p")):
+            para = Paragraph(p_el, document)
+            before = para.text
+            if not before.strip():
+                continue
+            _replace_in_paragraph(para, replacements)
+            if para.text != before:
+                filled += 1
+    if filled:
+        logger.info("浮动文本框占位符替换:%d 段", filled)
+    return filled
+
+
 def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
     project_name = str(profile.get("项目名称") or profile.get("project_name") or "")
     tenderer = str(profile.get("招标人") or profile.get("tenderer_name") or "")
@@ -645,8 +672,13 @@ def _fill_bid_date_today(document: Any, today: Any = None) -> int:
     parts = {"年": str(d.year), "月": str(d.month), "日": str(d.day)}
     filled = 0
     in_blank = False  # 联合体协议书/保证金章节内的日期不填(实时跟踪,lxml的id不稳)
+    prev_nonempty = ""  # 上一个非空段(识别福昕把"日期"劈成 '日'段+'期：…'段 的落款变体)
     for para in document.paragraphs:
         text = para.text
+        # 福昕落款常见劈法:上一段只有一个"日",本段是"期： 年 月 日"——合起来才是"日期"标签
+        split_date = prev_nonempty == "日" and re.sub(r"[\s　]", "", text).startswith("期")
+        if text.strip():
+            prev_nonempty = text.strip()
         in_blank = _blank_zone_step(text, in_blank)
         if in_blank:
             continue
@@ -657,9 +689,25 @@ def _fill_bid_date_today(document: Any, today: Any = None) -> int:
             continue
         residue = re.sub(r"[年月日\s　_．.、]", "", text)
         # 落款日期行:整段只剩年月日+空槽(residue空),或明确含"日期"标签
-        if not ("日期" in text or residue == ""):
+        # ("日 期："中间被塞空格也算——按去空白后的文本认);或上述"日/期："劈开变体。
+        compact = re.sub(r"[\s　]", "", text)
+        if not ("日期" in compact or residue == "" or (split_date and residue in ("期：", "期:"))):
             continue
         runs = para.runs
+
+        def _is_label_ri(idx: int) -> bool:
+            """runs[idx] 的首字'日'是"日 期"标签的开头(而非日期单位)——本 run 去空格后
+            紧跟'期',或下一个可见 run 以'期'开头。误判会把"日"的数字填到标签前(实测 p#182)。"""
+            s = re.sub(r"[\s　]", "", runs[idx].text)
+            if len(s) >= 2 and s[0] == "日" and s[1] == "期":
+                return True
+            if s == "日":
+                for j in range(idx + 1, len(runs)):
+                    nxt = re.sub(r"[\s　]", "", runs[j].text)
+                    if nxt:
+                        return nxt[0] == "期"
+            return False
+
         # ① 拆 run 结构(福昕转换件常见):"__"是空 run、"年"是另一 run → 填前面的空槽
         last_slot = None
         for i, r in enumerate(runs):
@@ -667,6 +715,9 @@ def _fill_bid_date_today(document: Any, today: Any = None) -> int:
             if stripped == "":
                 last_slot = i
             elif stripped[0] in parts:
+                if stripped[0] == "日" and _is_label_ri(i):
+                    last_slot = None  # "日 期"标签的"日",不是单位,别往前面槽里塞数字
+                    continue
                 if last_slot is not None and runs[last_slot].text.strip() == "":
                     runs[last_slot].text = parts[stripped[0]]
                     filled += 1

@@ -239,3 +239,58 @@ def test_performance_table_empty_when_no_selection() -> None:
     for c, v in enumerate(["业绩序号", "项目名称", "备注"]):
         t.cell(0, c).text = v
     assert o._fill_performance_table(d, {}) == 0
+
+
+def test_bid_date_fills_split_ri_qi_variant() -> None:
+    """福昕把"日期"劈成'日'段+'期：…'段的落款(实测v7有10处)→ 也要填今天。"""
+    import datetime
+    doc = Document()
+    doc.add_paragraph("日")
+    p = doc.add_paragraph()
+    for t in ["期：", " ", "\t", "年", " ", "\t", "月", " ", "\t", "日"]:
+        p.add_run(t)
+    n = o._fill_bid_date_today(doc, today=datetime.date(2026, 7, 4))
+    assert n >= 3
+    assert "2026" in p.text and "7月" in p.text.replace(" ", "") and "4日" in p.text.replace(" ", "")
+
+
+def test_bid_date_label_ri_not_mistaken_for_unit() -> None:
+    """签名和日期同段时,"日 期"标签的"日"不是日期单位——别把数字塞到标签前(实测p#182回归)。"""
+    import datetime
+    doc = Document()
+    p = doc.add_paragraph()
+    for t in ["投 标 人： 公司（盖单位章）", " ", "日", " 期：", " ", "年", " ", "月", " ", "日"]:
+        p.add_run(t)
+    o._fill_bid_date_today(doc, today=datetime.date(2026, 7, 4))
+    assert "）2026" not in p.text and "）4" not in p.text  # 标签前没被塞数字
+    compact = p.text.replace(" ", "")
+    assert "2026年" in compact and "7月" in compact and "4日" in compact
+
+
+def test_bid_date_leaves_unknown_data_dates() -> None:
+    """开立时间等数据型日期(非落款)不是"今天",保持留白。"""
+    import datetime
+    doc = Document()
+    doc.add_paragraph("开立时间： \t年 \t月 \t日")
+    n = o._fill_bid_date_today(doc, today=datetime.date(2026, 7, 4))
+    assert n == 0
+    assert "2026" not in doc.paragraphs[0].text
+
+
+def test_textbox_placeholder_replaced() -> None:
+    """浮动文本框里的（招标人名称）占位符也要被替换(正文替换够不着,实测p62)。"""
+    from docx.oxml import parse_xml
+    doc = Document()
+    xml = (
+        '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:v="urn:schemas-microsoft-com:vml"><w:r><w:pict><v:shape><v:textbox>'
+        "<w:txbxContent><w:p><w:r><w:t>（招标人名称）</w:t></w:r></w:p></w:txbxContent>"
+        "</v:textbox></v:shape></w:pict></w:r></w:p>"
+    )
+    doc.element.body.append(parse_xml(xml))
+    n = o._fill_textbox_placeholders(doc, {"招标人": "巢湖市栏杆集镇人民政府"})
+    assert n == 1
+    from docx.oxml.ns import qn
+    texts = [t.text for t in doc.element.body.iter(qn("w:t"))]
+    assert any("巢湖市栏杆集镇人民政府" in (t or "") for t in texts)
+    assert not any("（招标人名称）" in (t or "") for t in texts)

@@ -176,6 +176,7 @@ def convert_format_pages_via_cloud(
         _fill_performance_table,
         _fill_personnel_table,
         _fill_resume_tables,
+        _fill_textbox_placeholders,
         _find_format_page_range_in_pdf,
         _log_unfilled_fields,
         _normalize_split_labels,
@@ -212,6 +213,7 @@ def convert_format_pages_via_cloud(
 
     run_format_doctor_prefill(doc)
     _replace_known_fields(doc, profile or {})
+    _fill_textbox_placeholders(doc, profile or {})  # 浮动文本框里的占位符(致：（招标人名称）等),正文替换够不着
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
     _fill_known_table_cells(doc, profile or {})
     _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
