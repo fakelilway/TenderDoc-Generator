@@ -801,6 +801,11 @@ def _assemble_two_volumes(
     shutil.copy2(format_path, commercial_path)
     if commercial_markdown.strip():
         _append_prose_to_docx(commercial_path, commercial_markdown)
+    # 排版医生:治"尾巴页"(福昕段距撑松致一节溢出几行到下页,孤零零一页几个字)。
+    # 渲染反馈循环微收溢出节的段距/行距(≤15%,向招标原件行距回归);失败静默跳过。
+    from services.pagination_doctor import heal_stub_pages
+
+    heal_stub_pages(str(commercial_path))
 
     # 技术卷：独立成文的施工组织设计正文
     technical_path = tmp_path / f"project_{project_id}_technical.docx"
