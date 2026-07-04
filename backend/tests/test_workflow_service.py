@@ -558,3 +558,42 @@ def test_retrieve_for_outline_grounds_with_construction_plans(monkeypatch) -> No
     # 施组语料排在最前(写法接地优先),通用证据在后
     assert section[0].content == "公司公路工程施工方案片段"
     assert any(c.content == "通用证据片段" for c in section)
+
+
+def test_enrich_confirmed_outline_splits_plan_and_adds_appendices(monkeypatch) -> None:
+    """确认大纲兜底增补(#181实测病例):光秃方案单节按清单拆工序;无附表节从招标原文补。"""
+    from schemas.bid import BidSectionOutline
+    from services import workflow_service as w
+
+    outline = [
+        BidSectionOutline(title="总体施工组织布置及规划", required=True),
+        BidSectionOutline(title="主要工程项目的施工方案、方法与技术措施", required=True),
+        BidSectionOutline(title="工程质量管理体系及保证措施", required=True),
+    ]
+    fake_disc = [
+        BidSectionOutline(title="路基工程·路基填筑与压实", required=True),
+        BidSectionOutline(title="路面工程·水泥混凝土面板施工", required=True),
+    ]
+    monkeypatch.setattr(w, "_discipline_sections", lambda boq: list(fake_disc))
+    tender = "附表一 总体作业计划表\n附表二 施工总平面图\n"
+    out = w._enrich_confirmed_outline(outline, tender, "清单文本")
+    titles = [s.title for s in out]
+    assert "主要工程项目的施工方案、方法与技术措施" not in titles  # 单节被拆
+    assert "路基工程·路基填筑与压实" in titles
+    assert "总体施工组织布置及规划" in titles and "工程质量管理体系及保证措施" in titles  # 其余保留
+    assert any(t.startswith("附表一") for t in titles) and any(t.startswith("附表二") for t in titles)
+
+
+def test_enrich_confirmed_outline_keeps_already_rich_outline(monkeypatch) -> None:
+    """已含工序节(带·)且带附表的大纲:一动不动。"""
+    from schemas.bid import BidSectionOutline
+    from services import workflow_service as w
+
+    outline = [
+        BidSectionOutline(title="主要工程项目的施工方案、方法与技术措施", required=True),
+        BidSectionOutline(title="路基工程·路基填筑", required=True),
+        BidSectionOutline(title="附表一 总体作业计划表", required=True),
+    ]
+    monkeypatch.setattr(w, "_discipline_sections", lambda boq: [BidSectionOutline(title="X·Y", required=True)])
+    out = w._enrich_confirmed_outline(outline, "附表一 总体作业计划表", "")
+    assert [s.title for s in out] == [s.title for s in outline]

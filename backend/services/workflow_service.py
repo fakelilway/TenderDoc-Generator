@@ -838,6 +838,61 @@ def _tender_format_outline(
     return sections
 
 
+def _enrich_confirmed_outline(
+    real: list[BidSectionOutline],
+    tender_text: str,
+    boq_text: str,
+) -> list[BidSectionOutline]:
+    """确认大纲是"像样的多节"也不照单全收——两处只做加法的兜底:
+
+    ① 光秃秃的"主要工程项目的施工方案"**单节** → 按工程量清单拆成工序子节
+      (占比定详略的深度机制得以生效;已含"·"工序节的大纲不动);
+    ② 大纲里**没有附表节** → 从招标原文扫"附表一~五"补成附表节
+      (附表装配的数据源不再只信解析器)。
+    其余章节(编制要点/保证体系)原样保留:用户确认的结构只增不改。
+    """
+    out: list[BidSectionOutline] = []
+    has_discipline = any("·" in str(getattr(s, "title", "") or "") for s in real)
+    expanded = False
+    for s in real:
+        title = str(getattr(s, "title", "") or "")
+        if (
+            not expanded
+            and not has_discipline
+            and "施工方案" in title
+            and ("主要工程" in title or "工程项目" in title)
+        ):
+            try:
+                from services import boq_service
+
+                boq = boq_service.build_boq(tender_text or "", boq_text=boq_text or "")
+            except Exception:
+                boq = None
+            disciplines = _discipline_sections(boq)
+            if disciplines:
+                logger.info(
+                    "确认大纲的'%s'为单节:按工程量清单拆成 %d 道工序节",
+                    title[:24], len(disciplines),
+                )
+                out.extend(disciplines)
+                expanded = True
+                continue
+        out.append(s)
+    if not any(str(getattr(s, "title", "") or "").strip().startswith("附表") for s in out):
+        _, appendices = _extract_tender_format_structure(tender_text or "")
+        for num, name in appendices:
+            out.append(
+                BidSectionOutline(
+                    title=f"{num} {name}",
+                    required=True,
+                    focus_points=[f"按招标文件{num}格式的附表(表格),由投标人填写。"],
+                )
+            )
+        if appendices:
+            logger.info("确认大纲无附表节:从招标原文补 %d 张附表节", len(appendices))
+    return out
+
+
 def _boq_discipline_fallback(
     requirements: TenderRequirements, tender_text: str, boq_text: str
 ) -> list[BidSectionOutline]:
@@ -888,7 +943,9 @@ def _expand_thin_outline(
         for p in (getattr(s, "focus_points", None) or [])
     )
     if len(real) > 1 and not placeholder:
-        return outline  # 已是像样的多节大纲,尊重原样
+        # 像样的多节大纲:结构尊重原样,但做两处**兜底增补**(别赌解析器手气——实测#181:
+        # 解析器抽到8条编制要点但漏了附表清单 → 技术卷0附表、施工方案不拆节、字数-60%)。
+        return _enrich_confirmed_outline(real, tender_text, boq_text)
 
     points, appendices = _extract_tender_format_structure(tender_text)
     if points or appendices:
