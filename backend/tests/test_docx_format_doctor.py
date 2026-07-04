@@ -159,3 +159,21 @@ def test_run_format_doctor_never_raises(monkeypatch) -> None:
     monkeypatch.setattr(m, "_HEALERS", (("underline_slots", _boom),))
     report = m.run_format_doctor(Document())
     assert report == {"underline_slots": 0}
+
+
+def test_filler_blank_runs_collapsed_but_slots_kept() -> None:
+    """连续≥4个真空段压缩到2;带制表位的空槽段(日期下划线槽)绝不删。"""
+    from services.docx_format_doctor import heal_filler_blank_runs
+
+    doc = Document()
+    doc.add_paragraph("正文")
+    for _ in range(6):
+        doc.add_paragraph("")
+    slot = doc.add_paragraph()
+    slot.add_run("\t")  # 空槽段(只有制表位)
+    doc.add_paragraph("下一节")
+    n = heal_filler_blank_runs(doc)
+    assert n == 4  # 6个空段 → 留2删4
+    texts = [p.text for p in doc.paragraphs]
+    assert "正文" in texts and "下一节" in texts
+    assert any("\t" in p.text for p in doc.paragraphs)  # 空槽段还在

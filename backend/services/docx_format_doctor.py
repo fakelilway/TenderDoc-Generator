@@ -264,9 +264,48 @@ _PREFILL_HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]],
     ("orphan_split_labels", heal_orphan_split_labels),
 )
 
+def heal_filler_blank_runs(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """压缩福昕塞的大段连续空段(为凑原 PDF 版面塞的填充回车)。
+
+    实测(用户截图):表单签名后跟着 20+ 个空段,而下一节本就由"分节符(下一页)"另起新页
+    → 这些空段自己占满了一整页纯空白。规则:连续 ≥4 个**真空段**(无文字/无图/无换行符/
+    无制表位/不带分节符——日期空槽那类"只有下划线制表位"的段绝不算空)压缩到剩 2 个。
+    删的是零字符的空段,不碰任何内容。返回删除的空段数。
+    """
+    body = document.element.body
+
+    def _is_truly_blank(p_el) -> bool:
+        pPr = p_el.find(qn("w:pPr"))
+        if pPr is not None and pPr.find(qn("w:sectPr")) is not None:
+            return False  # 分节符段,动不得
+        for tag in ("w:drawing", "w:pict", "w:br", "w:tab"):
+            if next(iter(p_el.iter(qn(tag))), None) is not None:
+                return False
+        for t in p_el.iter(qn("w:t")):
+            if (t.text or "").strip():
+                return False
+        return True
+
+    removed = 0
+    run: list = []
+    for child in list(body) + [None]:
+        if child is not None and child.tag == qn("w:p") and _is_truly_blank(child):
+            run.append(child)
+            continue
+        if len(run) >= 4:
+            for extra in run[2:]:  # 留2个保分隔感
+                body.remove(extra)
+                removed += 1
+        run = []
+    if removed:
+        logger.info("格式体检:压缩福昕填充空段 %d 个", removed)
+    return removed
+
+
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
     ("underline_slots", heal_underline_slots),
+    ("filler_blank_runs", heal_filler_blank_runs),
 )
 
 

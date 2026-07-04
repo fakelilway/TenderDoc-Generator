@@ -83,3 +83,22 @@ def test_drop_empty_headings_removes_emptied_appendix() -> None:
     # 真有内容的标题保留
     out2 = _drop_empty_headings(["## 有内容的节", "正文一行", "### 子节", "子节正文"])
     assert "有内容的节" in out2 and "正文一行" in out2 and "子节" in out2
+
+
+def test_anchor_table_inserts_after_form_tail_not_table() -> None:
+    """业绩表锚点:附件插到表单末尾(注/说明/签名/日期之后),不劈开表格和注:(用户实测截图)。"""
+    from services.generation_service import _anchor_section_end_element
+
+    doc = Document()
+    t = doc.add_table(rows=2, cols=3)
+    t.cell(0, 0).text = "业绩序号"
+    t.cell(0, 1).text = "项目名称（合同名称）"
+    doc.add_paragraph("注：")
+    doc.add_paragraph("1.投标人应将用于资格审查的业绩在上表中列明，并附相应业绩证明材料。")
+    doc.add_paragraph("2.评标委员会应当按照上表列明的业绩序号先后顺序依次进行评审，且仅评审规定数量的业绩。")
+    doc.add_paragraph("投 标 人： 安徽正奇建设有限公司（盖单位章）")
+    date = doc.add_paragraph("日 期： 2026年 7月 4日")
+    nxt = doc.add_paragraph("2.项目总工近年完成的类似项目情况表（资格审查）")
+    el = _anchor_section_end_element(doc, "类似项目情况表")
+    assert el is date._p  # 表单末尾
+    assert el is not t._tbl and el is not nxt._p

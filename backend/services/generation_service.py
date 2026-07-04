@@ -466,10 +466,29 @@ def _anchor_section_end_element(doc, anchor: str):
     tbl_kw, para_kw, excl = _ANCHOR_SPECS.get(anchor, ((), (anchor,), ()))
     blocks = list(_iter_body_blocks(doc))
 
-    # 1) 表格优先:含表头关键词的表 → 紧接该表之后
-    for el, blk in blocks:
+    # 1) 表格优先:含表头关键词的表 → 该表所在**表单的末尾**。
+    #    不能"紧接表格之后"就插:招标表单=表格+注:+编号说明+签名/日期,一个整体;
+    #    楔在表格和注:中间会把人家的表单劈开(实测:业绩合同扫描件插进了类似项目
+    #    情况表和"注:"之间)。故跨过表单尾巴(注/说明/签名/日期/空段),撞到下一张表
+    #    或下一个表单标题(短行、无冒号、编号/含"情况表/信息表"字样)才停。
+    for i, (el, blk) in enumerate(blocks):
         if isinstance(blk, Table) and tbl_kw and any(k in _block_text(blk) for k in tbl_kw):
-            return el
+            last = el
+            for j in range(i + 1, min(i + 20, len(blocks))):
+                el2, blk2 = blocks[j]
+                if isinstance(blk2, Table):
+                    break  # 撞到下一张表
+                t = blk2.text.strip()
+                # 表单标题=短行、无冒号、**无句读**(注/说明是完整句子带。，;标题不带)
+                if t and len(t) < 50 and "：" not in t and not any(c in t for c in "。，；:") and (
+                    _SECTION_HEAD_RE.match(t)
+                    or re.match(r"^\d+[\.、].{0,40}(表|资料|材料)", t)
+                    or "情况表" in t
+                    or "信息表" in t
+                ):
+                    break  # 下一个表单标题
+                last = el2
+            return last
 
     # 2) 段落:含关键词、不含排除词 → 该节末尾元素之后
     start = None
