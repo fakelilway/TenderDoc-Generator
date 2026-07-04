@@ -801,6 +801,18 @@ def _assemble_two_volumes(
     shutil.copy2(format_path, commercial_path)
     if commercial_markdown.strip():
         _append_prose_to_docx(commercial_path, commercial_markdown)
+    # 商务卷页码:福昕搬来的招标原件页码已被清掉(_strip_tender_page_numbers),
+    # 这里给标书加**自己的**页码(右下角"第X页/共Y页",与技术卷同款);逐节写入,54节全覆盖。
+    try:
+        from docx import Document as _Doc
+
+        from utils.docx_exporter import ZHENGQI_PROFILE, _configure_header_footer
+
+        _cdoc = _Doc(str(commercial_path))
+        _configure_header_footer(_cdoc, None, True, ZHENGQI_PROFILE)
+        _cdoc.save(str(commercial_path))
+    except Exception:
+        logger.warning("商务卷页码添加失败,跳过(不阻断出标)", exc_info=True)
     # 排版医生:治"尾巴页"(福昕段距撑松致一节溢出几行到下页,孤零零一页几个字)。
     # 渲染反馈循环微收溢出节的段距/行距(≤15%,向招标原件行距回归);失败静默跳过。
     from services.pagination_doctor import heal_stub_pages

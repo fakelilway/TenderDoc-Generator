@@ -67,3 +67,20 @@ def test_locate_section_slice_walks_back_to_heading() -> None:
     start, end = sl
     assert start == 1  # 标题"一、投标函"之后
     assert end == 4
+
+
+def test_commercial_footer_page_numbers_all_sections() -> None:
+    """商务卷页码:逐节写入右下角"第X页/共Y页"(招标原件页码已清,标书用自己的)。"""
+    from docx.oxml.ns import qn
+
+    from utils.docx_exporter import ZHENGQI_PROFILE, _configure_header_footer
+
+    doc = Document()
+    doc.add_paragraph("第一节")
+    doc.add_section()
+    doc.add_paragraph("第二节")
+    _configure_header_footer(doc, None, True, ZHENGQI_PROFILE)
+    for sec in doc.sections:
+        fp = sec.footer.paragraphs[0]
+        assert "第" in fp.text and "页" in fp.text
+        assert any(True for _ in fp._p.iter(qn("w:fldChar")))  # PAGE 域真实存在
