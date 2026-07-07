@@ -446,6 +446,16 @@ _NEW_ITEM_RE = re.compile(
     r"|[注致][：:]|投\s*标\s*人|法\s*定\s*代\s*表\s*人|地\s*址|网\s*址|电\s*话"
     r"|传\s*真|邮\s*政\s*编\s*码|开\s*立\s*人)"
 )
+# "短标签+冒号"开头(单位性质：/成立时间：/性别：…)=表单行,同样不许被吞并
+_LABEL_START_RE = re.compile(r"^\s*[一-龥]{1,6}\s*[：:]")
+
+
+def _is_form_line(text: str) -> bool:
+    """短且带冒号的"标签：值"表单行。它天生不带句号,绝不能被句子合并当成
+    "没说完的话"往后吞——实测回归:"投标人：公司名"吞掉"单位性质：…"、
+    "地址：…"连吞"成立时间/经营期限",法定代表人身份证明整页挤成一坨。"""
+    t = (text or "").strip()
+    return bool(t) and len(t) <= 40 and ("：" in t or ":" in t)
 
 
 def _para_alignment(p_el: Any) -> str | None:
@@ -535,6 +545,7 @@ def _merge_split_in(body: Any) -> int:
             not text.strip()
             or text[-1] in _SENTENCE_END
             or text.lstrip().startswith("致")  # "致：xxx"抬头独立成行,不许吞下一段
+            or _is_form_line(text)  # 表单行不当宿主往后吞(短+带冒号)
             or _para_alignment(el) in ("center", "right", "end")
             or _para_left_indent(el) > 1500  # 视觉居中的标题段
             or el.find(f".//{qn('w:sectPr')}") is not None
@@ -576,6 +587,7 @@ def _merge_split_in(body: Any) -> int:
                 continue
             if (
                 _NEW_ITEM_RE.match(nxt_text)
+                or _LABEL_START_RE.match(nxt_text)  # "单位性质：/性别：…"表单行不许被吞
                 or _para_alignment(nxt) in ("center", "right", "end")
                 or _para_left_indent(nxt) > 1500
             ):
@@ -625,10 +637,11 @@ def heal_midsentence_breaks(document: Any, profile: dict[str, Any] | None = None
                     if br_type and br_type != "textWrapping":
                         continue  # 分页/分栏符,神圣不可侵犯
                     tail = prefix.rstrip()
-                    # 当前行(上一个换行之后的文字)是"致：/致:"抬头 → 换行是格式,保留
-                    # (实测回归:删了它,"致：xx管理服务中心"和"我公司…"连成一句)
+                    # 当前行(上一个换行之后的文字)是"致：/致:"抬头或表单行 → 换行是
+                    # 格式,保留(实测回归:"致：xx中心"和"我公司…"连成一句;
+                    # "投标人：公司名"和"单位性质：…"挤成一行)
                     cur_line = prefix.rsplit("\n", 1)[-1].strip()
-                    if cur_line.startswith("致"):
+                    if cur_line.startswith("致") or _is_form_line(cur_line):
                         prefix += "\n"
                         continue
                     if not tail or tail[-1] not in _SENTENCE_END:

@@ -53,7 +53,7 @@ function formatDate(value: string) {
 }
 
 const projectTypeOptions = ["公路工程", "市政道路", "桥梁涵洞", "交通安全设施", "养护维修", "改建扩建", "排水管网"];
-const documentCategoryOptions = ["公司证件", "企业证件", "人员证件", "业绩证明", "业绩", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
+const documentCategoryOptions = ["公司证件", "企业证件", "人员证件", "业绩证明", "业绩", "公司组件", "施工方案", "报价清单", "规范标准", "图片资料", "其他资料"];
 
 // 边界只认一条:「知识库」=施工组织设计语料(document_category=施工方案),其余一律归「公司档案」。
 // 用"只留施工方案"而非"排除某几类",避免业绩证明/企业证件/未分类等杂类漏进知识库。
@@ -61,8 +61,9 @@ const CORPUS_CATEGORIES = ["施工方案"];
 // 「知识库」入口:只有施工方案一类,不需要子分类标签
 const corpusCategoryTabs: string[] = [];
 const corpusCategoryOptions = ["施工方案"];
-// 「公司档案」入口:除施工方案外的全部公司固定资料(证件/人员/业绩…)
-const companyCategoryTabs = ["公司证件", "人员证件", "业绩证明", "业绩"];
+// 「公司档案」入口:除施工方案外的全部公司固定资料(证件/人员/业绩/公司组件…)。
+// 公司组件=员工做好的整块成品(组织结构框图/项目管理机构图),生成时按首格锚原样照搬。
+const companyCategoryTabs = ["公司证件", "人员证件", "业绩证明", "业绩", "公司组件"];
 const companyCategoryOptions = documentCategoryOptions.filter(
   (item) => !CORPUS_CATEGORIES.includes(item)
 );

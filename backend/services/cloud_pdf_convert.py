@@ -218,6 +218,11 @@ def convert_format_pages_via_cloud(
     from services.similar_project_fill_service import fill_similar_project_sections
 
     similar_result = fill_similar_project_sections(doc, profile or {})
+    # 公司组件照搬:员工做好的成品(组织结构框图/项目管理机构图)按首格锚整表替换空框,
+    # 一模一样(字体实化)。须在通用填表前:成品表绝不允许再被填值。
+    from services.company_component_service import fill_company_components
+
+    fill_company_components(doc)
     _replace_known_fields(doc, profile or {})
     _fill_textbox_placeholders(doc, profile or {})  # 浮动文本框里的占位符(致：（招标人名称）等),正文替换够不着
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)

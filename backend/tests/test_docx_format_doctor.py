@@ -266,3 +266,44 @@ def test_signature_wrap_kills_fuxin_giant_indent() -> None:
     assert ind3.get(_qn("w:left")) == "5486"        # 排得下的原样保真
     assert ind4.get(_qn("w:left")) == "5486"        # 左对齐段绝不碰
     assert p1.text == "投 标 人： 安徽正奇建设有限公司（盖单位章）"  # 文字红线
+
+
+def test_form_lines_never_merged() -> None:
+    """表单行两头保护(用户实测暴走回归):"投标人：公司名"不吞"单位性质：…",
+    "地址：…"不连吞"成立时间/经营期限";正文劈段照常合并。"""
+    from services.docx_format_doctor import heal_split_paragraphs
+
+    doc = Document()
+    doc.add_paragraph("投 标 人：安徽正奇建设有限公司")
+    doc.add_paragraph("单位性质：有限责任公司（自然人投资或控股）")
+    doc.add_paragraph("地    址：安徽省合肥市庐阳区蒙城北路1708室")
+    doc.add_paragraph("成立时间：2011年7月5日")
+    doc.add_paragraph("经营期限：2011年07月05日至2051年06月28日")
+    # 对照:真正的正文劈段(长句无冒号结尾断在半路)仍要合并
+    doc.add_paragraph("我方将按照合同附件提出的最低要求填报派驻本标段的其他管")
+    doc.add_paragraph("理和技术人员及主要机械设备，经你方审批后不再更换。")
+
+    n = heal_split_paragraphs(doc)
+    texts = [p.text for p in doc.paragraphs if p.text.strip()]
+    assert "投 标 人：安徽正奇建设有限公司" in texts          # 各自独立成行
+    assert "单位性质：有限责任公司（自然人投资或控股）" in texts
+    assert "成立时间：2011年7月5日" in texts
+    assert any("其他管理和技术人员" in t for t in texts)       # 正文劈段照常并
+    assert n == 1  # 只并了正文那一处
+
+
+def test_form_line_br_kept() -> None:
+    """段内 br 分隔的表单行(投标人：xx[br]单位性质：xx)换行保留,不被当句中断行删掉。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_midsentence_breaks
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("投标人名称：安徽正奇建设有限公司")
+    br_run = p.add_run()
+    br_run._r.append(OxmlElement("w:br"))
+    p.add_run("姓名：许明英")
+    n = heal_midsentence_breaks(doc)
+    assert n == 0  # 表单行换行一个不删
+    assert p._p.find(f".//{_qn('w:br')}") is not None
