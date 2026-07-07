@@ -25,8 +25,6 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from openpyxl import load_workbook
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
@@ -171,6 +169,10 @@ def _safe_segment(value: str) -> str:
 
 
 def parse_ledger(xlsx_path: str | Path, sheet_name: str = DEFAULT_SHEET) -> list[PerformanceRecord]:
+    # 惰性导入:金额/类型规则被 import_similar_project_info 复用,那条链不碰 xlsx,
+    # 不能因为顶层 import openpyxl 把只装了 python-docx 的环境拖崩。
+    from openpyxl import load_workbook
+
     workbook = load_workbook(Path(xlsx_path), read_only=True, data_only=True)
     if sheet_name not in workbook.sheetnames:
         raise ValueError(f"工作表 '{sheet_name}' 不存在;可选: {workbook.sheetnames}")

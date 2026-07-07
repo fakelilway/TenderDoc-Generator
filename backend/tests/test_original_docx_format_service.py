@@ -602,3 +602,38 @@ def test_inline_value_性别年龄_only_in_id_proof_context() -> None:
     assert _inline_value_for("年龄", prof, id_proof_context=False) == ""
     # 职务无据 → 任何语境都不填(留人工)
     assert _inline_value_for("职务", prof, id_proof_context=True) == ""
+
+
+def test_format_range_keeps_cover_page(tmp_path) -> None:
+    """商务卷页范围必须从'投标人：（盖单位章）'封面起,不能把封面当过场页跳掉。
+
+    真实病例(埇桥商务卷):封面页字少、无正文标记,历史 _skip_toc_pages 跳过它、
+    从目录起 → 整卷丢封面。封面含'盖单位章'(目录绝不含),据此保留。
+    """
+    import fitz
+    from services.original_docx_format_service import _find_format_page_range_in_pdf
+
+    F = "china-s"  # fitz 内置简体中文字体,否则中文渲染成方块无法提取
+    doc = fitz.open()
+    # p0: 封面(章标题 + 投标文件 + 盖单位章)
+    p0 = doc.new_page()
+    p0.insert_text((72, 100), "第九章 投标文件格式", fontname=F)
+    p0.insert_text((72, 300), "投 标 文 件（商务及技术文件）", fontname=F)
+    p0.insert_text((72, 500), "投标人： ____（盖单位章） 年 月 日", fontname=F)
+    # p1: 目录(点线,无盖单位章)
+    p1 = doc.new_page()
+    p1.insert_text((72, 100), "目 录", fontname=F)
+    p1.insert_text((72, 140), "一、投标函及投标函附录 ........................ 1", fontname=F)
+    p1.insert_text((72, 170), "二、授权委托书 ........................ 2", fontname=F)
+    p1.insert_text((72, 200), "三、联合体协议书 ........................ 3", fontname=F)
+    # p2: 投标函正文
+    p2 = doc.new_page()
+    p2.insert_text((72, 100), "一、投标函", fontname=F)
+    p2.insert_text((72, 140), "（招标人名称）：我方已仔细研究本次施工招标文件的全部内容", fontname=F)
+    path = tmp_path / "tender.pdf"
+    doc.save(str(path))
+    doc.close()
+
+    rng = _find_format_page_range_in_pdf(str(path))
+    assert rng is not None
+    assert rng[0] == 0, f"应从封面(第0页)起,实际从第{rng[0]}页起(封面被跳掉)"

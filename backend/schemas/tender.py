@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FormatOutlineNode(BaseModel):
@@ -9,6 +9,24 @@ class FormatOutlineNode(BaseModel):
         default_factory=list,
         description="子节点列表；叶子节点为空列表",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_node(cls, value):
+        # 解析 LLM 偶发把节点写成裸字符串,纠成 {"title": ...}
+        if isinstance(value, str):
+            return {"title": value}
+        return value
+
+    @field_validator("children", mode="before")
+    @classmethod
+    def _coerce_children(cls, value):
+        # 偶发把唯一子节点写成 dict 而非单元素列表
+        if value is None:
+            return []
+        if isinstance(value, (dict, str)):
+            return [value]
+        return value
 
 
 class SourceReference(BaseModel):
@@ -55,6 +73,22 @@ class TenderRequirements(BaseModel):
             "根节点是表单名，children是子表单/子条款。叶子节点children为空列表。"
         ),
     )
+
+    @field_validator("format_outline_tree", mode="before")
+    @classmethod
+    def _coerce_outline_tree(cls, value):
+        """解析 LLM 偶发把某卷目录写成单个根节点 dict(如 {'title':'投标文件商务卷',
+        'children':[...]}),而非节点列表——包一层列表兼容掉,别让整次解析报废。"""
+        if not isinstance(value, dict):
+            return value
+        coerced = {}
+        for key, nodes in value.items():
+            if nodes is None:
+                nodes = []
+            elif isinstance(nodes, (dict, str)):
+                nodes = [nodes]
+            coerced[key] = nodes
+        return coerced
     qualification_list: list[RequirementItem] = Field(default_factory=list)
     technical_score_items: list[RequirementItem] = Field(default_factory=list)
     invalid_bid_items: list[RequirementItem] = Field(default_factory=list)

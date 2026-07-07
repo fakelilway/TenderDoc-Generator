@@ -376,8 +376,11 @@ def _is_blank_or_placeholder(text: str) -> bool:
 # 都该正常填(用户实测要填);保证金金额/方式本无对应档案字段,本就填不上,无需特意留白。
 _LEAVE_BLANK_KEYWORDS = ()
 
-# 只有"联合体协议书"整章留白(单独投标无联合体,牵头人/成员名不填)。投标保证金不再整章留白。
-_BLANK_SECTION_TITLES = ("联合体协议", "联合体共同")
+# "联合体协议书"整章留白(单独投标无联合体);"保函示范文本"整章留白——那是给**银行**
+# 开保函用的模板(申请人/受益人/开立人及其地址电话都是银行方或业主方信息),我们无差别
+# 把裸"地址/电话"填成投标人自己的=乱填他方数据(埇桥p15实测:受益人地址被填成我司地址)。
+# 注意只圈"示范文本/格式如下"这类模板标题;各类承诺函有自己的编号标题、会正常退出并照填。
+_BLANK_SECTION_TITLES = ("联合体协议", "联合体共同", "保函示范文本", "保函格式", "保函（格式）")
 _BLANK_SECTION_END_RE = __import__("re").compile(
     r"^[（(][一二三四五六七八九十百]+[)）]"  # （七）...
     r"|^[一二三四五六七八九十百]+[、.，]"  # 七、...
@@ -738,16 +741,43 @@ def _fill_bid_date_today(document: Any, today: Any = None) -> int:
     return filled
 
 
+# "近年完成的类似项目信息表"竖表特征标签:首列命中 ≥3 个即认定。这种表说的是
+# **过去干过的工程**,项目名称/电话/项目经理都不是本项目的值——通用填表器碰它必错
+# (实测:项目名称被填成本次招标、发包人电话被填成联系人手机)。识别后整表绕行,
+# 由 similar_project_fill_service 按选派经理名下的业绩记录原样填。
+_SIMILAR_DETAIL_KEYS = (
+    "项目名称", "发包人名称", "发包人地址", "开工日期", "交工日期",
+    "承担的工作", "项目描述", "监理单位",
+)
+
+
+def _is_similar_project_detail_table(table: Any) -> bool:
+    """是否"类似项目信息表"式竖表(一业绩一张,标签|值两列)。"""
+    try:
+        labels = {
+            re.sub(r"[\s　]+", "", row.cells[0].text)
+            for row in table.rows
+            if row.cells
+        }
+    except Exception:
+        return False
+    hits = sum(1 for key in _SIMILAR_DETAIL_KEYS if any(key in lb for lb in labels))
+    return hits >= 3
+
+
 def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
     """基本情况表式网格自动填:标签格 → 同行右侧第一个空值格。
 
     只写空格、绝不覆盖、不改表结构(保真);未知标签和第二个人的子标签保持空白。
     支持标签被逐字拆进相邻格的"碎标签"(见 _row_label_at)。返回填入的格数。
+    "类似项目信息表"竖表整表绕行(它填的是历史工程,不是本项目字段)。
     """
     if not any(profile.get(key) for _, key in _TABLE_FILL_LABELS):
         return 0
     filled = 0
     for table in document.tables:
+        if _is_similar_project_detail_table(table):
+            continue
         for row in table.rows:
             cells = row.cells
             n = len(cells)
@@ -1335,11 +1365,15 @@ def _fill_personnel_table(document: Any, profile: dict[str, Any]) -> bool:
     return False
 
 
-def _fill_performance_table(document: Any, profile: dict[str, Any]) -> int:
+def _fill_performance_table(
+    document: Any, profile: dict[str, Any], skip_tables: set | None = None
+) -> int:
     """填"投标人业绩情况表"(业绩序号|项目名称（合同名称）|备注)的项目名称列,用选中的类似业绩。
 
     只填空格、首数据行已有内容则整表留人工(保真)。返回填入的行数。
     选中业绩来自 profile['selected_performance'](_apply_selected_project_manager 注入,已去重)。
+    skip_tables: similar_project_fill_service 已按节归属人处理过的表(w:tbl 元素),
+    这里绕行——尤其总工节留白的汇总表,不能拿项目经理的业绩名去凑。
     """
     perf = profile.get("selected_performance") or []
     names: list[str] = []
@@ -1355,6 +1389,8 @@ def _fill_performance_table(document: Any, profile: dict[str, Any]) -> int:
     filled = 0
     for table in document.tables:
         try:
+            if skip_tables and table._tbl in skip_tables:
+                continue  # 已由 similar_project_fill_service 按节归属处理(含"留白"决定)
             rows = table.rows
             n_cols = len(table.columns)
             if len(rows) < 2 or n_cols < 2:
@@ -1704,6 +1740,11 @@ def _skip_toc_pages(pdf: fitz.Document, from_page: int) -> int:
         if page_num >= pdf.page_count:
             return from_page
         text = pdf[page_num].get_text()
+        # 封面页("投标人：____（盖单位章）年月日")是投标文件正文的第一页,必须保留。
+        # 它字少、无正文标记,历史逻辑把它当过场页跳掉,导致整个商务卷丢了封面(用户实测)。
+        # 目录页绝不含"盖单位章",以此把封面认出来、从封面起。
+        if "盖单位章" in text or "盖单位公章" in text or "盖公章" in text:
+            return page_num
         # If page contains actual form content markers, it's not TOC
         if any(marker in text for marker in FORMAT_BODY_MARKERS):
             return page_num

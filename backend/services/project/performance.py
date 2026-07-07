@@ -12,7 +12,7 @@ from psycopg2.extras import Json, RealDictCursor
 
 from services.performance_selection_service import (
     derive_performance_requirement,
-    recommend_performance,
+    recommend_curated_performance,
 )
 
 from . import _runtime
@@ -21,11 +21,19 @@ from .errors import ProjectNotFoundError
 
 
 def recommend_project_performance(project_id: int) -> dict[str, Any]:
-    """派生招标类似业绩要求 + 从台账推荐匹配(含当前已选)。"""
+    """投标人业绩候选池:员工整理的《类似项目信息表》全部记录,按招标要求打分排序供多选。
+
+    用户选中哪几条,生成时"投标人近年完成的类似项目信息表"就原样填哪几条(字段全、
+    图片跟名走)。跟项目经理是谁无关——经理只决定经理表。附当前已选。"""
     project = _fetch_project(project_id)
-    requirement = derive_performance_requirement(_project_requirements(project))
-    recommendations = recommend_performance(requirement)
+    try:
+        requirement = derive_performance_requirement(_project_requirements(project))
+    except ValueError:
+        # 招标尚未解析:业绩候选不该被解析状态卡死,用空要求兜底(=不筛,列全部供选)
+        requirement = derive_performance_requirement(None)
     selected = project.get("selected_performance") or []
+    recommendations = recommend_curated_performance(requirement)
+
     return {
         "project_id": project_id,
         "requirement": requirement.model_dump(),

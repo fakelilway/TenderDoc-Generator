@@ -838,6 +838,15 @@ def _tender_format_outline(
     return sections
 
 
+# 该按工程量清单拆成工序子节的"方案主章":标题含"施工方案"且是**汇总性**方案章。
+# 各家招标叫法不一("主要工程项目的施工方案""重点、关键和难点工程的施工方案"
+# "主要分部分项工程施工方案"…),都指同一章;认这些标记即触发拆节。不含这些标记的
+# "质量/安全保证措施"等章不含"施工方案"字样,天然不受影响,不会被误拆。
+_PLAN_CHAPTER_MARKERS = (
+    "主要工程", "工程项目", "分部分项", "重点", "难点", "关键工程", "关键工序",
+)
+
+
 def _enrich_confirmed_outline(
     real: list[BidSectionOutline],
     tender_text: str,
@@ -845,7 +854,7 @@ def _enrich_confirmed_outline(
 ) -> list[BidSectionOutline]:
     """确认大纲是"像样的多节"也不照单全收——两处只做加法的兜底:
 
-    ① 光秃秃的"主要工程项目的施工方案"**单节** → 按工程量清单拆成工序子节
+    ① 光秃秃的"…工程的施工方案"**汇总单节** → 按工程量清单拆成工序子节
       (占比定详略的深度机制得以生效;已含"·"工序节的大纲不动);
     ② 大纲里**没有附表节** → 从招标原文扫"附表一~五"补成附表节
       (附表装配的数据源不再只信解析器)。
@@ -860,7 +869,7 @@ def _enrich_confirmed_outline(
             not expanded
             and not has_discipline
             and "施工方案" in title
-            and ("主要工程" in title or "工程项目" in title)
+            and any(m in title for m in _PLAN_CHAPTER_MARKERS)
         ):
             try:
                 from services import boq_service
@@ -993,6 +1002,26 @@ def _apply_selected_project_manager(company_profile, project):
             cert_no = str((builder_certs[0]).get("cert_no") or "").strip()
             if cert_no:
                 profile["project_manager_cert"] = cert_no
+    # 员工整理的《类似项目信息表》记录注入 → 商务卷"近年完成的类似项目"六种节填表
+    # (similar_project_fill_service 消费):投标人节按 selected_performance 从 _all 按名补全;
+    # 项目经理/总工节各按选派人名下的项目填。
+    try:
+        from services import similar_project_info_service
+
+        # 全部信息表记录:供投标人节按选中业绩的项目名补全全字段(与经理是谁无关)
+        profile["similar_projects_all"] = (
+            similar_project_info_service.list_similar_project_records()
+        )
+        if pm_ok:
+            profile["similar_projects_pm"] = (
+                similar_project_info_service.records_for_manager(selected["name"])
+            )
+        if tech_ok:
+            profile["similar_projects_td"] = (
+                similar_project_info_service.records_for_tech_leader(tech["name"])
+            )
+    except Exception:
+        logger.warning("读取业绩信息表失败,类似项目信息表将留白待人工", exc_info=True)
     # 总工(项目技术负责人)选派 → 覆盖档案默认,下游商务卷人员表 + 证件插图自动用选定人
     if tech_ok:
         profile["tech_director_name"] = tech["name"]

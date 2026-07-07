@@ -610,8 +610,8 @@ export type PerformanceItem = {
 
 export type PerformanceRecommendation = PerformanceItem & {
   manager?: string;
-  has_evidence: boolean;
-  score: number;
+  has_evidence?: boolean; // 经理业绩候选无台账打分,故可选
+  score?: number;
   matched: string[];
   gaps: string[];
 };
@@ -619,6 +619,7 @@ export type PerformanceRecommendation = PerformanceItem & {
 export type PerformanceRecommendationResponse = {
   project_id: number;
   requirement: PerformanceRequirement;
+  // 候选=员工整理的《类似项目信息表》全部记录,按招标要求打分排序;选中即原样填进投标人业绩表
   recommendations: PerformanceRecommendation[];
   selected: PerformanceItem[];
 };

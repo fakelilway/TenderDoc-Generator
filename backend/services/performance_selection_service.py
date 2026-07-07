@@ -108,3 +108,40 @@ def recommend_performance(
         scored.append(_score(item, requirement, has_ev))
     scored.sort(key=lambda r: (-r["score"], str(r["name"])))
     return scored[:limit]
+
+
+def _curated_as_item(record: dict[str, Any]) -> dict[str, Any]:
+    """员工整理的信息表记录 → 打分/展示用的统一条目形状。"""
+    amount_wan = record.get("amount_wan")
+    return {
+        "name": record.get("project_name") or "",
+        "year": str(record.get("project_year") or ""),
+        "amount": (
+            f"{amount_wan}万元" if amount_wan is not None
+            else str(record.get("contract_price") or "")
+        ),
+        "type": record.get("project_type") or "",
+        "manager": record.get("project_manager") or "",
+        "document_id": record.get("document_id"),
+    }
+
+
+def recommend_curated_performance(
+    requirement: PerformanceRequirement,
+) -> list[dict[str, Any]]:
+    """投标人业绩候选池:员工整理的《类似项目信息表》全部记录,按招标要求打分排序。
+
+    这些记录字段全(发包人三要素/合同价/监理/工期…),选中即可把"投标人近年完成的
+    类似项目信息表"填满,故用它们而非台账当候选。与项目经理是谁无关。
+    """
+    from services import similar_project_info_service as spi
+
+    records = spi.list_similar_project_records()
+    evidence_norms = {pa._norm(name) for name in pa.list_evidence_groups()}
+    scored = []
+    for record in records:
+        item = _curated_as_item(record)
+        has_ev = pa._norm(item["name"]) in evidence_norms
+        scored.append(_score(item, requirement, has_ev))
+    scored.sort(key=lambda r: (-r["score"], str(r["name"])))
+    return scored

@@ -41,7 +41,15 @@ type RoleConfig = {
   emptyHint: string;
 };
 
-function RoleSelector({ projectId, role }: { projectId: number; role: RoleConfig }) {
+function RoleSelector({
+  projectId,
+  role,
+  onSelected
+}: {
+  projectId: number;
+  role: RoleConfig;
+  onSelected?: () => void;
+}) {
   const [reqText, setReqText] = useState<string>("");
   const [recommendations, setRecommendations] = useState<PMRecommendation[]>([]);
   const [selected, setSelected] = useState<PersonnelMember | null>(null);
@@ -79,13 +87,14 @@ function RoleSelector({ projectId, role }: { projectId: number; role: RoleConfig
       try {
         const res = await role.saveSel(projectId, member);
         setSelected((res.selected?.[role.selectedKey] as PersonnelMember) ?? null);
+        onSelected?.(); // 通知外层:业绩跟经理走,业绩面板要刷新显示自动带出的选中项
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
       } finally {
         setBusy(false);
       }
     },
-    [projectId, role]
+    [projectId, role, onSelected]
   );
 
   return (
@@ -234,10 +243,16 @@ const TECH_ROLE: RoleConfig = {
   emptyHint: "名册里没有符合要求的总工候选。可在公司证件库补充职称证后重导名册。"
 };
 
-export function PersonnelPanel({ projectId }: { projectId: number }) {
+export function PersonnelPanel({
+  projectId,
+  onPmSelected
+}: {
+  projectId: number;
+  onPmSelected?: () => void;
+}) {
   return (
     <div className="space-y-3">
-      <RoleSelector projectId={projectId} role={PM_ROLE} />
+      <RoleSelector projectId={projectId} role={PM_ROLE} onSelected={onPmSelected} />
       <RoleSelector projectId={projectId} role={TECH_ROLE} />
     </div>
   );

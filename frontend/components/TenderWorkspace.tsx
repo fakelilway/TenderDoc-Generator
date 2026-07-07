@@ -261,6 +261,8 @@ export function TenderWorkspace({
   initialProjectId?: number | null;
 }) {
   const [projectName, setProjectName] = useState("演示技术标项目");
+  // 选派项目经理后 bump:业绩跟经理走(后端自动带出),业绩面板要重拉选中项
+  const [performanceRefresh, setPerformanceRefresh] = useState(0);
   const [file, setFile] = useState<File | null>(null);
   const [projectId, setProjectId] = useState<number | null>(initialProjectId);
   const [status, setStatus] = useState("idle");
@@ -1523,10 +1525,16 @@ export function TenderWorkspace({
               {centerTab === "outline" ? (
                 <div className="space-y-4">
                   {projectId != null ? (
-                    <PersonnelPanel projectId={projectId} />
+                    <PersonnelPanel
+                      projectId={projectId}
+                      onPmSelected={() => setPerformanceRefresh((v) => v + 1)}
+                    />
                   ) : null}
                   {projectId != null ? (
-                    <PerformancePanel projectId={projectId} />
+                    <PerformancePanel
+                      projectId={projectId}
+                      refreshToken={performanceRefresh}
+                    />
                   ) : null}
                   {projectId != null ? (
                     <ProjectMaterialPanel projectId={projectId} />

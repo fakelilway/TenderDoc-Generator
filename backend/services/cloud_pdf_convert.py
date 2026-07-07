@@ -212,6 +212,12 @@ def convert_format_pages_via_cloud(
     from services.docx_format_doctor import run_format_doctor_prefill
 
     run_format_doctor_prefill(doc)
+    # "近年完成的类似项目"六种节(投标人/项目经理/项目总工 × 资格审查/详细评审):
+    # 按选派经理名下的业绩信息表记录原样填 汇总情况表+一业绩一张的详细信息表(克隆/裁剪)。
+    # 必须在通用填表之前:真值先落格,总工节留白的表进 handled 名单、通用逻辑绕行。
+    from services.similar_project_fill_service import fill_similar_project_sections
+
+    similar_result = fill_similar_project_sections(doc, profile or {})
     _replace_known_fields(doc, profile or {})
     _fill_textbox_placeholders(doc, profile or {})  # 浮动文本框里的占位符(致：（招标人名称）等),正文替换够不着
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
@@ -221,7 +227,9 @@ def convert_format_pages_via_cloud(
     _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
     _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
     _fill_personnel_table(doc, profile or {})
-    _fill_performance_table(doc, profile or {})  # 投标人业绩情况表 → 填选中的类似业绩项目名
+    _fill_performance_table(  # 投标人业绩情况表 → 填选中的类似业绩项目名(按节处理过的表绕行)
+        doc, profile or {}, skip_tables=similar_result.get("handled_tables")
+    )
     _fill_resume_tables(  # 项目经理 + 总工简历表(各填选派那个人的台账信息)
         doc,
         (profile or {}).get("pm_resume") or {},

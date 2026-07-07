@@ -584,6 +584,33 @@ def test_enrich_confirmed_outline_splits_plan_and_adds_appendices(monkeypatch) -
     assert any(t.startswith("附表一") for t in titles) and any(t.startswith("附表二") for t in titles)
 
 
+def test_enrich_confirmed_outline_splits_key_difficult_plan_variant(monkeypatch) -> None:
+    """方案主章的常见变体'重点、关键和难点工程的施工方案'也要触发拆节(项目189实测漏拆)。
+
+    历史触发条件要求标题含'主要工程'或'工程项目',该变体两者皆无→被漏拆,技术卷只剩
+    8个光杆章、内容严重偏薄。放宽后含'重点/难点/关键工程'的方案章同样按清单拆工序;
+    只含'关键工程'但无'施工方案'的保证措施章不受影响、不被误拆。"""
+    from services import workflow_service as w
+
+    outline = [
+        BidSectionOutline(title="1、总体施工组织布置及规划", required=True),
+        BidSectionOutline(title="2、重点、关键和难点工程的施工方案", required=True),
+        BidSectionOutline(title="4、关键工程质量保证措施", required=True),
+        BidSectionOutline(title="5、安全保证措施", required=True),
+    ]
+    fake_disc = [
+        BidSectionOutline(title="路基工程·路基挖方与土方调配", required=True),
+        BidSectionOutline(title="路面工程·水泥混凝土面板施工", required=True),
+    ]
+    monkeypatch.setattr(w, "_discipline_sections", lambda boq: list(fake_disc))
+    out = w._enrich_confirmed_outline(outline, "", "清单文本")
+    titles = [s.title for s in out]
+    assert "2、重点、关键和难点工程的施工方案" not in titles  # 方案变体章被拆
+    assert "路基工程·路基挖方与土方调配" in titles
+    assert "4、关键工程质量保证措施" in titles  # 保证措施章原样保留,没被误拆
+    assert "5、安全保证措施" in titles
+
+
 def test_enrich_confirmed_outline_keeps_already_rich_outline(monkeypatch) -> None:
     """已含工序节(带·)且带附表的大纲:一动不动。"""
     from schemas.bid import BidSectionOutline

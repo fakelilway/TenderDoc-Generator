@@ -26,10 +26,18 @@ function reqText(req: PerformanceRequirement | null): string {
   return bits.length ? `招标要求:${bits.join(" / ")}` : "招标未明确类似业绩要求,列全部台账供选";
 }
 
-export function PerformancePanel({ projectId }: { projectId: number }) {
+export function PerformancePanel({
+  projectId,
+  refreshToken = 0
+}: {
+  projectId: number;
+  refreshToken?: number; // 外层选派项目经理后 bump → 重拉服务端自动带出的选中业绩
+}) {
   const [requirement, setRequirement] = useState<PerformanceRequirement | null>(null);
   const [recommendations, setRecommendations] = useState<PerformanceRecommendation[]>([]);
-  const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
+  // 全量选中项(名字→完整条目):不能只存名字集合再从推荐列表反查——自动带出的业绩
+  // 可能不在推荐列表里(推荐来自台账打分截断),那样任意一次勾选就会把它们静默冲掉
+  const [selectedItems, setSelectedItems] = useState<Map<string, PerformanceItem>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -39,7 +47,7 @@ export function PerformancePanel({ projectId }: { projectId: number }) {
       const res = await getPerformanceRecommendations(projectId);
       setRequirement(res.requirement);
       setRecommendations(res.recommendations);
-      setSelectedNames(new Set((res.selected || []).map((s) => s.name)));
+      setSelectedItems(new Map((res.selected || []).map((s) => [s.name, s])));
       setError(null);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -55,27 +63,25 @@ export function PerformancePanel({ projectId }: { projectId: number }) {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshToken]);
 
   const toggle = useCallback(
     async (rec: PerformanceRecommendation) => {
-      const next = new Set(selectedNames);
+      const next = new Map(selectedItems);
       if (next.has(rec.name)) next.delete(rec.name);
-      else next.add(rec.name);
-      setSelectedNames(next);
+      else
+        next.set(rec.name, {
+          name: rec.name,
+          year: rec.year,
+          amount: rec.amount,
+          type: rec.type,
+          document_id: rec.document_id ?? null
+        });
+      setSelectedItems(next);
       setBusy(true);
       setError(null);
       try {
-        const items: PerformanceItem[] = recommendations
-          .filter((r) => next.has(r.name))
-          .map((r) => ({
-            name: r.name,
-            year: r.year,
-            amount: r.amount,
-            type: r.type,
-            document_id: r.document_id ?? null
-          }));
-        await savePerformanceSelection(projectId, items);
+        await savePerformanceSelection(projectId, Array.from(next.values()));
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
         void refresh(); // 失败回滚到服务端真值
@@ -83,11 +89,11 @@ export function PerformancePanel({ projectId }: { projectId: number }) {
         setBusy(false);
       }
     },
-    [projectId, recommendations, selectedNames, refresh]
+    [projectId, selectedItems, refresh]
   );
 
   const need = requirement?.min_count || 0;
-  const picked = selectedNames.size;
+  const picked = selectedItems.size;
 
   return (
     <section className="ios-panel rounded-[26px] border p-4">
@@ -98,7 +104,9 @@ export function PerformancePanel({ projectId }: { projectId: number }) {
           </span>
           <div>
             <h2 className="text-sm font-semibold text-[#1d1d1f]">类似业绩选择（多选）</h2>
-            <p className="text-[11px] text-[#8e8e93]">{reqText(requirement)}</p>
+            <p className="text-[11px] text-[#8e8e93]">
+              {reqText(requirement)}
+            </p>
           </div>
         </div>
         <span
@@ -116,14 +124,18 @@ export function PerformancePanel({ projectId }: { projectId: number }) {
 
       {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
 
+      <p className="mt-2 rounded-[10px] bg-[#34c759]/[0.06] px-2.5 py-1.5 text-[11px] text-[#1f9d4d]">
+        选中的业绩会原样填进「投标人近年完成的类似项目信息表」，证明图片一并带上。
+      </p>
+
       <div className="mt-3 max-h-[420px] space-y-1.5 overflow-auto">
         {loaded && !error && recommendations.length === 0 ? (
           <p className="rounded-[14px] border border-dashed border-black/[0.08] bg-white/54 px-3 py-3 text-center text-xs text-[#8e8e93]">
-            台账里没有业绩记录。可在公司档案补充业绩后重导。
+            档案库里没有类似项目信息表记录。可让员工整理后重导入。
           </p>
         ) : null}
         {recommendations.map((rec) => {
-          const isSel = selectedNames.has(rec.name);
+          const isSel = selectedItems.has(rec.name);
           return (
             <button
               key={rec.name}

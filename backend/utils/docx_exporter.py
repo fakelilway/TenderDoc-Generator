@@ -812,7 +812,12 @@ def _add_table(
 ) -> None:
     is_zhengqi = style_profile == ZHENGQI_PROFILE
     rows = [_split_table_row(line) for line in table_lines]
-    rows = [row for row in rows if row and not all(set(cell) <= {"-"} for cell in row)]
+    # 分隔行的格子可能是 ---、:---、---: 或 :---:(对齐记号),都得滤掉,
+    # 否则 ':---' 会原样出现在正式标书的表格里(埇桥p87实测)
+    rows = [
+        row for row in rows
+        if row and not all(set(cell) <= {"-", ":", " "} for cell in row)
+    ]
     if not rows:
         return
 
@@ -842,7 +847,9 @@ def _add_table(
 
 def _split_table_row(line: str) -> list[str]:
     stripped = line.strip().strip("|")
-    return [cell.strip() for cell in stripped.split("|")]
+    # 剥掉 markdown 加粗记号:LLM 爱在表格里写 **资质等级**,写进正式标书就是
+    # 星号裸奔(埇桥p87实测)。丢加粗样式换文字干净,值得。
+    return [re.sub(r"\*\*(.+?)\*\*", r"\1", cell).strip() for cell in stripped.split("|")]
 
 
 VOLUME_MARKERS = {

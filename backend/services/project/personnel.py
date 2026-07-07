@@ -102,7 +102,11 @@ def _save_selected_role(
 def save_selected_project_manager(
     project_id: int, member: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """存本项目选定的项目经理(member=名册里的一条记录;None=清空选派)。"""
+    """存本项目选定的项目经理(member=名册里的一条记录;None=清空选派)。
+
+    经理只决定"项目经理近年完成的类似项目"表填谁、以及人员表里的经理名/证件;
+    **不碰用户在业绩面板选的类似业绩**(投标人业绩表跟用户选的走,见 similar_project_fill_service)。
+    """
     return _save_selected_role(project_id, "project_manager", member)
 
 
