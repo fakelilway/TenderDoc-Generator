@@ -573,21 +573,49 @@ def _style_paragraph_runs(
         _set_run_font(run, cjk_font, size_pt)
 
 
+def _split_markdown_bold(text: str) -> list[tuple[str, bool]]:
+    """把 **加粗** 切成 (文本, 是否加粗) 段;成对的 ** 去掉、内容标加粗,其余原样。
+    LLM 常在正文写"**重点工程**："当小标题,不转就星号裸露进标书(埇桥实测)。"""
+    out: list[tuple[str, bool]] = []
+    last = 0
+    for m in re.finditer(r"\*\*(.+?)\*\*", text):
+        if m.start() > last:
+            out.append((text[last:m.start()], False))
+        out.append((m.group(1), True))
+        last = m.end()
+    if last < len(text):
+        out.append((text[last:], False))
+    return out or [(text, False)]
+
+
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
 def _add_text_with_underlined_blanks(
     paragraph,
     text: str,
     cjk_font: str,
     size_pt: float | None = None,
 ) -> None:
-    """Render ________ placeholders as actual underlined fill-in space."""
-    parts = re.split(r"([_＿]{3,})", text)
-    for part in parts:
-        if not part:
-            continue
-        run = paragraph.add_run(" " * max(4, len(part)) if re.fullmatch(r"[_＿]{3,}", part) else part)
-        _set_run_font(run, cjk_font, size_pt)
-        if re.fullmatch(r"[_＿]{3,}", part):
-            run.underline = True
+    """Render ________ placeholders as underlined fill-in space; **x** as bold;
+    <br> 换行标记渲染成真换行(LLM 在表格单元格里写 <br> 分行,不转就把字面 <br> 印进
+    标书——巢湖 p74-86 实测)。"""
+    # 先按 <br> 切成多"视觉行",行间插真正的换行;<br> 记号本身不进正文
+    segments = _BR_RE.split(text)
+    for seg_idx, seg in enumerate(segments):
+        if seg_idx > 0:
+            paragraph.add_run().add_break()
+        for chunk, is_bold in _split_markdown_bold(seg):
+            for part in re.split(r"([_＿]{3,})", chunk):
+                if not part:
+                    continue
+                is_blank = bool(re.fullmatch(r"[_＿]{3,}", part))
+                run = paragraph.add_run(" " * max(4, len(part)) if is_blank else part)
+                _set_run_font(run, cjk_font, size_pt)
+                if is_blank:
+                    run.underline = True
+                if is_bold:
+                    run.font.bold = True
 
 
 def _apply_form_paragraph_alignment(paragraph) -> None:

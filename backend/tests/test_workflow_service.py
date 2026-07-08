@@ -578,7 +578,10 @@ def test_enrich_confirmed_outline_splits_plan_and_adds_appendices(monkeypatch) -
     tender = "附表一 总体作业计划表\n附表二 施工总平面图\n"
     out = w._enrich_confirmed_outline(outline, tender, "清单文本")
     titles = [s.title for s in out]
-    assert "主要工程项目的施工方案、方法与技术措施" not in titles  # 单节被拆
+    # 章标题保留作概述引子(编号不断),工序节挂其后
+    assert "主要工程项目的施工方案、方法与技术措施" in titles
+    idx_chapter = titles.index("主要工程项目的施工方案、方法与技术措施")
+    assert titles[idx_chapter + 1] == "路基工程·路基填筑与压实"  # 工序紧跟章标题
     assert "路基工程·路基填筑与压实" in titles
     assert "总体施工组织布置及规划" in titles and "工程质量管理体系及保证措施" in titles  # 其余保留
     assert any(t.startswith("附表一") for t in titles) and any(t.startswith("附表二") for t in titles)
@@ -605,7 +608,10 @@ def test_enrich_confirmed_outline_splits_key_difficult_plan_variant(monkeypatch)
     monkeypatch.setattr(w, "_discipline_sections", lambda boq: list(fake_disc))
     out = w._enrich_confirmed_outline(outline, "", "清单文本")
     titles = [s.title for s in out]
-    assert "2、重点、关键和难点工程的施工方案" not in titles  # 方案变体章被拆
+    # 章标题"2、…"保留(编号1→2→…不断,评委按招标编制要点逐条对号),工序节紧跟其后
+    assert "2、重点、关键和难点工程的施工方案" in titles
+    idx = titles.index("2、重点、关键和难点工程的施工方案")
+    assert titles[idx + 1] == "路基工程·路基挖方与土方调配"
     assert "路基工程·路基挖方与土方调配" in titles
     assert "4、关键工程质量保证措施" in titles  # 保证措施章原样保留,没被误拆
     assert "5、安全保证措施" in titles
