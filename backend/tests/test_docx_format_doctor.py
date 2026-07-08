@@ -547,3 +547,81 @@ def test_cover_columns_ignores_non_cover_document() -> None:
     fixed = heal_cover_columns(doc)
     assert fixed == 0
     assert sect.find(_qn("w:cols")).get(_qn("w:num")) == "2"  # 原样保留
+
+
+def test_checklist_table_widths_reallocates_columns() -> None:
+    """合规自查核对表(7列,表头含核对项/判定/处置)默认等宽→按内容重分配列宽。"""
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_checklist_table_widths
+
+    doc = Document()
+    table = doc.add_table(rows=2, cols=7)
+    for c, t in zip(
+        table.rows[0].cells,
+        ["核对项", "出处", "招标要求", "我方/取值", "判定", "处置", "备注"],
+    ):
+        c.text = t
+    fixed = heal_checklist_table_widths(doc)
+    assert fixed == 1
+    tblpr = table._tbl.find(_qn("w:tblPr"))
+    assert tblpr.find(_qn("w:tblLayout")).get(_qn("w:type")) == "fixed"
+    grid = table._tbl.find(_qn("w:tblGrid"))
+    widths = [int(g.get(_qn("w:w"))) for g in grid.findall(_qn("w:gridCol"))]
+    assert widths[6] > widths[4]  # 备注列比判定列宽(长文本给足)
+
+
+def test_checklist_table_widths_leaves_other_tables() -> None:
+    """普通表格(非核对表)一律不碰。"""
+    from services.docx_format_doctor import heal_checklist_table_widths
+
+    doc = Document()
+    table = doc.add_table(rows=1, cols=3)
+    for c, t in zip(table.rows[0].cells, ["序号", "名称", "数量"]):
+        c.text = t
+    assert heal_checklist_table_widths(doc) == 0
+
+
+def _add_big_image_paragraph(doc, cy_pt):
+    """造一个含"大图"的段落(用 wp:extent 声明显示尺寸)。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+
+    p = doc.add_paragraph()
+    r = p.add_run()
+    drawing = OxmlElement("w:drawing")
+    extent = OxmlElement("wp:extent")
+    extent.set("cx", "3600000")
+    extent.set("cy", str(int(cy_pt * 12700)))
+    drawing.append(extent)
+    r._r.append(drawing)
+    return p
+
+
+def test_evidence_caption_binding_sets_keepnext() -> None:
+    """业绩扫描大图 + 紧跟的证据图注 → 给图段加 keepNext(图与图注同页)。"""
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_evidence_caption_binding
+
+    doc = Document()
+    p_img = _add_big_image_paragraph(doc, 500)
+    doc.add_paragraph("2022年农村公路建设项目（萧县村道安全防护工程）三标段-合同（1）")
+
+    fixed = heal_evidence_caption_binding(doc)
+    assert fixed == 1
+    ppr = p_img._p.find(_qn("w:pPr"))
+    assert ppr is not None and ppr.find(_qn("w:keepNext")) is not None
+
+
+def test_evidence_caption_binding_ignores_non_caption() -> None:
+    """大图后面不是证据图注(普通正文)→ 不加 keepNext。"""
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_evidence_caption_binding
+
+    doc = Document()
+    p_img = _add_big_image_paragraph(doc, 500)
+    doc.add_paragraph("这是一段普通的正文说明文字，与证据材料无关。")
+
+    fixed = heal_evidence_caption_binding(doc)
+    assert fixed == 0
+    ppr = p_img._p.find(_qn("w:pPr"))
+    assert ppr is None or ppr.find(_qn("w:keepNext")) is None

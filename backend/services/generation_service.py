@@ -838,6 +838,20 @@ def _assemble_two_volumes(
 
     heal_stub_pages(str(commercial_path))
 
+    # 成品级格式修复:核对表列宽(等宽→按内容分配,长文本列不再挤成细条)+ 业绩证据图与图注
+    # 绑定(keepNext,防分页拆散/错配)。这两样是拼卷后才有的,格式副本阶段的 run_format_doctor
+    # 碰不到,故在成品上单独跑。best-effort,失败静默跳过不阻断出标。
+    try:
+        from docx import Document as _Doc
+
+        from services.docx_format_doctor import run_format_doctor_assembled
+
+        _fdoc = _Doc(str(commercial_path))
+        run_format_doctor_assembled(_fdoc)
+        _fdoc.save(str(commercial_path))
+    except Exception:
+        logger.warning("成品级格式修复(核对表列宽/业绩图注)失败,跳过", exc_info=True)
+
     # 技术卷：独立成文的施工组织设计正文
     technical_path = tmp_path / f"project_{project_id}_technical.docx"
     if technical_markdown.strip():

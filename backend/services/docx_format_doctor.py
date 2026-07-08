@@ -1080,6 +1080,150 @@ def heal_signature_block_layout(document: Any, profile: dict[str, Any] | None = 
     return fixed
 
 
+# ↓↓↓ 成品级 healer:只在**拼卷后的成品商务卷**上跑(核对表/业绩证据图是拼卷才加的,
+# 格式副本阶段没有,所以不进 _HEALERS,由 run_format_doctor_assembled 单独调)。
+
+# 合规自查核对表列宽(7列,合计≈9765twips):核对项/出处/招标要求/我方取值 给足文字宽,
+# 判定/处置(✅一致、填/留空)收窄,备注最宽。等宽会把长文本挤成4字/行的细条(用户实测)。
+_CHECKLIST_HEADERS = ("核对项", "判定", "处置")
+_CHECKLIST_COL_WIDTHS = (1150, 1500, 1450, 1750, 900, 780, 2235)
+
+
+def heal_checklist_table_widths(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """治合规自查核对表(markdown 转表默认等宽)的窄列:按内容重分配列宽,长文本列不再竖成细条。
+
+    只认表头含 核对项+判定+处置 且正好 7 列的那张系统自查表,范围极窄;别的表一律不碰。
+    只改列宽(tblLayout=fixed + gridCol + tcW),一个字不动(红线)。返回修的表数。
+    """
+    fixed = 0
+    for table in document.tables:
+        if not table.rows:
+            continue
+        header = [c.text.strip() for c in table.rows[0].cells]
+        if not all(h in header for h in _CHECKLIST_HEADERS):
+            continue
+        if len(table.columns) != len(_CHECKLIST_COL_WIDTHS):
+            continue
+        widths = _CHECKLIST_COL_WIDTHS
+        tbl = table._tbl
+        tblpr = tbl.find(qn("w:tblPr"))
+        if tblpr is None:
+            tblpr = OxmlElement("w:tblPr")
+            tbl.insert(0, tblpr)
+        lay = tblpr.find(qn("w:tblLayout"))
+        if lay is None:
+            lay = OxmlElement("w:tblLayout")
+            tblpr.append(lay)
+        lay.set(qn("w:type"), "fixed")
+        tw = tblpr.find(qn("w:tblW"))
+        if tw is None:
+            tw = OxmlElement("w:tblW")
+            tblpr.append(tw)
+        tw.set(qn("w:w"), str(sum(widths)))
+        tw.set(qn("w:type"), "dxa")
+        grid = tbl.find(qn("w:tblGrid"))
+        if grid is not None:
+            for gc, w in zip(grid.findall(qn("w:gridCol")), widths):
+                gc.set(qn("w:w"), str(w))
+        for row in table.rows:
+            for cell, w in zip(row.cells, widths):
+                tcpr = cell._tc.find(qn("w:tcPr"))
+                if tcpr is None:
+                    tcpr = OxmlElement("w:tcPr")
+                    cell._tc.insert(0, tcpr)
+                tcw = tcpr.find(qn("w:tcW"))
+                if tcw is None:
+                    tcw = OxmlElement("w:tcW")
+                    tcpr.append(tcw)
+                tcw.set(qn("w:w"), str(w))
+                tcw.set(qn("w:type"), "dxa")
+        fixed += 1
+    if fixed:
+        logger.info("格式体检:重排合规核对表列宽 %d 张", fixed)
+    return fixed
+
+
+_EVIDENCE_CAPTION_MARKERS = (
+    "中标通知书", "合同", "证书", "营业执照", "资质", "安全生产许可", "业绩证明",
+)
+
+
+def _has_big_image(el: Any) -> bool:
+    """段落含"大图"(显示高>150pt=业绩扫描件,非页眉细线/句中小图)。"""
+    if el.tag != qn("w:p"):
+        return False
+    for ext in el.iter():
+        if ext.tag.endswith("}extent"):
+            try:
+                if int(ext.get("cy") or 0) / 12700 > 150:
+                    return True
+            except (TypeError, ValueError):
+                pass
+    return False
+
+
+def heal_evidence_caption_binding(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """治业绩证据"扫描图+图注"被分页拆散/图注错配:给图段加 keepNext,让图与它下方图注同页。
+
+    结构(实测):一张业绩扫描图(大图段) 紧跟一行图注(如"…合同（1）")。分页时图注会漂到
+    别页、或某页出现"上一张图+下一张图注"的错配。给**图段**加 keepNext,把图和它的图注绑住。
+    只认紧跟证据图注(含中标通知书/合同/证书等标记)的大图段,范围极窄。只加段属性,不改文字。
+    """
+    body = document.element.body
+    kids = list(body.iterchildren())
+    fixed = 0
+    for i, el in enumerate(kids):
+        if not _has_big_image(el):
+            continue
+        j = i + 1
+        while (
+            j < len(kids)
+            and kids[j].tag == qn("w:p")
+            and not _p_text(kids[j]).strip()
+            and not _has_big_image(kids[j])
+        ):
+            j += 1
+        if j >= len(kids) or kids[j].tag != qn("w:p"):
+            continue
+        cap = _p_text(kids[j]).strip()
+        if not cap or len(cap) > 120:
+            continue
+        if not any(m in cap for m in _EVIDENCE_CAPTION_MARKERS):
+            continue
+        for k in range(i, j):  # 图段+中间空段都 keepNext,链住到图注
+            if kids[k].tag != qn("w:p"):
+                continue
+            ppr = kids[k].find(qn("w:pPr"))
+            if ppr is None:
+                ppr = OxmlElement("w:pPr")
+                kids[k].insert(0, ppr)
+            if ppr.find(qn("w:keepNext")) is None:
+                ppr.insert(0, OxmlElement("w:keepNext"))
+        fixed += 1
+    if fixed:
+        logger.info("格式体检:绑定业绩证据图与图注(keepNext) %d 处", fixed)
+    return fixed
+
+
+def run_format_doctor_assembled(document: Any) -> dict[str, int]:
+    """成品级体检:只跑拼卷后成品才需要的 healer(核对表列宽、业绩图注绑定)。
+    逐个容错,单个崩不阻断出标。"""
+    report: dict[str, int] = {}
+    for name, healer in (
+        ("checklist_table_widths", heal_checklist_table_widths),
+        ("evidence_caption_binding", heal_evidence_caption_binding),
+    ):
+        try:
+            report[name] = healer(document, None)
+        except Exception:
+            logger.warning("成品级格式体检 healer %s 失败,跳过", name, exc_info=True)
+            report[name] = 0
+    fixed = {k: v for k, v in report.items() if v}
+    if fixed:
+        logger.info("成品级格式体检修复: %s", fixed)
+    return report
+
+
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
     ("underline_slots", heal_underline_slots),
