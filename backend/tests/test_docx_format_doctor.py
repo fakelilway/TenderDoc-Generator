@@ -307,3 +307,243 @@ def test_form_line_br_kept() -> None:
     n = heal_midsentence_breaks(doc)
     assert n == 0  # 表单行换行一个不删
     assert p._p.find(f".//{_qn('w:br')}") is not None
+
+
+def test_signature_block_layout_splits_and_rejoins() -> None:
+    """落款3行修复(巢湖实测):①投标人+法代挤一段→拆开;②"日"与"期："拆两段→合回;
+    ③三行对齐同一缩进。文字一字不改。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_signature_block_layout
+
+    doc = Document()
+
+    def _p(text, left=5096, tabs_before=None):
+        p = doc.add_paragraph()
+        ppr = p._p.get_or_add_pPr()
+        ind = OxmlElement("w:ind"); ind.set(_qn("w:left"), str(left)); ppr.append(ind)
+        for seg in (text if isinstance(text, list) else [text]):
+            if seg == "\t":
+                r = OxmlElement("w:r"); r.append(OxmlElement("w:tab")); p._p.append(r)
+            else:
+                p.add_run(seg)
+        return p
+
+    # ① 投标人+法代挤在同一段
+    p_merge = _p(["投 标 人： 安徽正奇建设有限公司（盖单位章） ", "法定代表人：", "\t", "（签字或盖章）"])
+    doc.add_paragraph("")
+    # ② 日期被拆成"日" + 空段 + "期：__年__月__日"
+    _p("日")
+    doc.add_paragraph("")
+    _p(["期：", "\t", "年", "\t", "月", "\t", "日"], left=0)
+
+    n = heal_signature_block_layout(doc)
+    texts = [p.text for p in doc.paragraphs if p.text.strip()]
+    joined = "".join(texts).replace(" ", "").replace("\t", "")
+    # ① 投标人行与法代行分开成两段
+    assert any(t.strip().startswith("投") and "盖单位章" in t and "法定代表人" not in t for t in texts)
+    assert any(t.strip().startswith("法定代表人") and "签字或盖章" in t for t in texts)
+    # ② 日期合回一段(不再有单独的"日"段)
+    assert not any(t.strip() == "日" for t in texts)
+    assert any(t.strip().startswith("日期") and "年" in t and "月" in t for t in texts)
+    # 文字红线:所有字仍在
+    assert "投标人：安徽正奇建设有限公司（盖单位章）" in joined
+    assert "法定代表人：（签字或盖章）" in joined
+    assert "日期：年月日" in joined
+    assert n >= 2
+
+
+def test_signature_block_layout_leaves_normal_paragraphs_alone() -> None:
+    """普通正文/单独的投标人行(不含法代)不被拆;正文一个字不动。"""
+    from services.docx_format_doctor import heal_signature_block_layout
+
+    doc = Document()
+    doc.add_paragraph("我方已仔细研究招标文件的全部内容，愿意按合同约定完成承包工程。")
+    doc.add_paragraph("投 标 人：安徽正奇建设有限公司（盖单位章）")  # 单独一行,无法代→不拆
+    doc.add_paragraph("这是正常段落，不含任何签署标记，绝不能被动。")
+    before = [p.text for p in doc.paragraphs]
+    heal_signature_block_layout(doc)
+    after = [p.text for p in doc.paragraphs]
+    assert before == after  # 一段没动
+
+
+def test_signature_date_wrap_labeled_and_bare() -> None:
+    """填好的日期行折行修复(埇桥实测):带标签"日期：2026年7月8日"和光日期
+    "2026年 7月 8日"在大缩进下会折→缩到排得下;与投标人行同块则一起对齐。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_signature_block_layout, _usable_width_twips
+
+    doc = Document()
+    avail = _usable_width_twips(doc)
+    big = avail - 600  # 大到日期一定会折
+
+    def _p(text, left):
+        p = doc.add_paragraph(text)
+        ppr = p._p.get_or_add_pPr()
+        ind = OxmlElement("w:ind"); ind.set(_qn("w:left"), str(left)); ppr.append(ind)
+        return p
+
+    p_bid = _p("投 标 人： 安徽正奇建设有限公司（盖单位章）", big)
+    p_date = _p("日期：2026年7月8日", big)
+    heal_signature_block_layout(doc)
+    # 两行都缩到排得下(缩进 + 文字宽 <= 可用宽)
+    def _left(p):
+        return int(p._p.find(_qn("w:pPr")).find(_qn("w:ind")).get(_qn("w:left")))
+    def _w(t):
+        return sum(290 if ord(c) > 0x2E80 else 145 for c in t)
+    assert _left(p_bid) + _w(p_bid.text) <= avail
+    assert _left(p_date) + _w(p_date.text) <= avail
+    assert _left(p_bid) == _left(p_date)  # 同块对齐
+
+
+def test_signature_cover_no_wrap_untouched() -> None:
+    """不折的封面落款(投标人+日期都排得下)一律不碰,缩进原样。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_signature_block_layout
+
+    doc = Document()
+    def _p(text, left):
+        p = doc.add_paragraph(text)
+        ppr = p._p.get_or_add_pPr()
+        ind = OxmlElement("w:ind"); ind.set(_qn("w:left"), str(left)); ppr.append(ind)
+        return p
+    p_bid = _p("投标人： 安徽正奇建设有限公司（盖单位章）", 1767)
+    p_date = _p("2026年 7月 8日", 3303)
+    heal_signature_block_layout(doc)
+    assert int(p_bid._p.find(_qn("w:pPr")).find(_qn("w:ind")).get(_qn("w:left"))) == 1767
+    assert int(p_date._p.find(_qn("w:pPr")).find(_qn("w:ind")).get(_qn("w:left"))) == 3303
+
+
+def _add_cols_section(doc, num, col_widths):
+    """给最后一段挂一个分栏 sectPr(段内),模拟福昕导出的分节。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+
+    ppr = doc.paragraphs[-1]._p.get_or_add_pPr()
+    sect = OxmlElement("w:sectPr")
+    cols = OxmlElement("w:cols")
+    cols.set(_qn("w:num"), str(num))
+    for w in col_widths:
+        c = OxmlElement("w:col"); c.set(_qn("w:w"), str(w)); cols.append(c)
+    sect.append(cols)
+    ppr.append(sect)
+    return sect
+
+
+def test_signature_columns_straightens_fake_two_col() -> None:
+    """福昕给"日期：..年..月..日"单独起假两栏(第一栏太窄)导致日期折行→拉回单栏。
+    实测巢湖:日期行独占一节且设 num=2,第一栏仅 5336twips(~267pt)。"""
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_signature_columns
+
+    doc = Document()
+    doc.add_paragraph("日期： 2026年 7月 9日")
+    sect = _add_cols_section(doc, 2, [5336, 3707])
+
+    fixed = heal_signature_columns(doc)
+    assert fixed == 1
+    cols = sect.find(_qn("w:cols"))
+    assert cols.get(_qn("w:num")) == "1"
+    assert cols.findall(_qn("w:col")) == []  # 窄栏定义清掉
+
+
+def test_signature_columns_leaves_real_body_columns() -> None:
+    """真正的大段两栏正文(辖段多、无落款标记)一律不碰。"""
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_signature_columns
+
+    doc = Document()
+    for i in range(12):
+        doc.add_paragraph(f"这是正文第{i}段,双栏排版的普通段落内容,没有任何落款标记。")
+    sect = _add_cols_section(doc, 2, [4800, 4800])
+
+    fixed = heal_signature_columns(doc)
+    assert fixed == 0
+    assert sect.find(_qn("w:cols")).get(_qn("w:num")) == "2"  # 原样保留
+
+
+def _cover_pair_section(doc, left_text, right_text, col_widths):
+    """造一对被福昕拆两栏的封面行:左半段 + 空br段 + 右半段(挂两栏 continuous sectPr)。
+    封面节都是 continuous(福昕实测),healer 靠"第一个非continuous节"定位封面结束。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+
+    doc.add_paragraph(left_text)
+    br_p = doc.add_paragraph()
+    br_p.add_run()._r.append(OxmlElement("w:br"))
+    doc.add_paragraph(right_text)
+    sect = _add_cols_section(doc, 2, col_widths)
+    typ = OxmlElement("w:type"); typ.set(_qn("w:val"), "continuous")
+    sect.insert(0, typ)
+    return sect
+
+
+def _mark_next_page_section(doc):
+    """给最后一段挂一个"下一页"分节,模拟封面之后目录起点。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+
+    ppr = doc.paragraphs[-1]._p.get_or_add_pPr()
+    sect = OxmlElement("w:sectPr")
+    typ = OxmlElement("w:type"); typ.set(_qn("w:val"), "nextPage"); sect.append(typ)
+    ppr.append(sect)
+    return sect
+
+
+def test_cover_columns_merges_split_title_and_bidder() -> None:
+    """福昕把封面"项目名|标段招标""投标人|盖单位章"拆两栏→合并成一行、拉直居中,竖向铺开。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_cover_columns
+
+    doc = Document()
+    # 标题对(两栏)
+    _cover_title_sect = _cover_pair_section(
+        doc, "巢湖市2026年农村公路养护工程（栏杆集镇周岗路等8条路）", " \t标段招标", [5138, 4207]
+    )
+    doc.add_paragraph("投标文件")
+    doc.add_paragraph("（商务文件）")
+    # 投标文件/商务文件自成一节(单栏 continuous),与投标人对隔开(福昕实测结构)
+    _mid = _add_cols_section(doc, 1, [])
+    _mid_typ = OxmlElement("w:type"); _mid_typ.set(_qn("w:val"), "continuous")
+    _mid.insert(0, _mid_typ)
+    # 投标人对(两栏)
+    _cover_bidder_sect = _cover_pair_section(
+        doc, "投标人：安徽正奇建设有限公司", "（盖单位章）", [2853, 2570]
+    )
+    doc.add_paragraph("2026年 7月 8日")
+    _mark_next_page_section(doc)  # 封面结束标记
+
+    fixed = heal_cover_columns(doc)
+    assert fixed == 2  # 两对都合并
+    # 两栏都拉直
+    assert _cover_title_sect.find(_qn("w:cols")).get(_qn("w:num")) == "1"
+    assert _cover_bidder_sect.find(_qn("w:cols")).get(_qn("w:num")) == "1"
+    # 标题行合并了"标段招标"、且居中
+    title = next(p for p in doc.paragraphs if "标段招标" in p.text)
+    assert "巢湖市" in title.text and "标段招标" in title.text  # 项目名+标段招标同一段
+    assert title._p.find(_qn("w:pPr")).find(_qn("w:jc")).get(_qn("w:val")) == "center"
+    # 投标人行合并了盖单位章
+    bidder = next(p for p in doc.paragraphs if "投标人" in p.text)
+    assert "盖单位章" in bidder.text
+    # 投标文件行补了段前距(竖向铺开)
+    tf = next(p for p in doc.paragraphs if p.text.strip() == "投标文件")
+    sp = tf._p.find(_qn("w:pPr")).find(_qn("w:spacing"))
+    assert sp is not None and int(sp.get(_qn("w:before"))) >= 1000
+
+
+def test_cover_columns_ignores_non_cover_document() -> None:
+    """不含封面特征(标段招标/投标文件/盖单位章)的文档:一律不碰。"""
+    from docx.oxml.ns import qn as _qn
+    from services.docx_format_doctor import heal_cover_columns
+
+    doc = Document()
+    doc.add_paragraph("普通正文标题")
+    sect = _cover_pair_section(doc, "左边内容", "右边内容", [5000, 4000])
+    _mark_next_page_section(doc)
+
+    fixed = heal_cover_columns(doc)
+    assert fixed == 0
+    assert sect.find(_qn("w:cols")).get(_qn("w:num")) == "2"  # 原样保留

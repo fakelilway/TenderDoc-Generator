@@ -23,6 +23,7 @@ import re
 from copy import deepcopy
 from typing import Any, Callable, Iterable
 
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 logger = logging.getLogger(__name__)
@@ -711,6 +712,374 @@ def heal_phantom_images(document: Any, profile: dict[str, Any] | None = None) ->
     return removed
 
 
+_SIG_SECTION_MARKERS = ("盖单位章", "法定代表人", "签字或盖章", "签章", "日期", "日 期", "日  期")
+
+# 封面日期行:"2026年7月8日" 或 未填的 "__年__月__日"
+_COVER_DATE_RE = re.compile(r"^[\s\d_＿]*年[\s\d_＿]*月[\s\d_＿]*日\s*$")
+
+
+def _flatten_cols(cols: Any) -> None:
+    """把分栏元素拉回单栏:num=1,删掉每栏 <w:col> 定义。"""
+    cols.set(qn("w:num"), "1")
+    for c in list(cols.findall(qn("w:col"))):
+        cols.remove(c)
+    cols.set(qn("w:equalWidth"), "1")
+
+
+def _center_paragraph(p_el: Any) -> None:
+    """段落居中,并清掉左/首行/右缩进(福昕给封面标题留的巨缩进)。"""
+    ppr = p_el.find(qn("w:pPr"))
+    if ppr is None:
+        ppr = OxmlElement("w:pPr")
+        p_el.insert(0, ppr)
+    jc = ppr.find(qn("w:jc"))
+    if jc is None:
+        jc = OxmlElement("w:jc")
+        ppr.append(jc)
+    jc.set(qn("w:val"), "center")
+    ind = ppr.find(qn("w:ind"))
+    if ind is not None:
+        ind.set(qn("w:left"), "0")
+        ind.set(qn("w:firstLine"), "0")
+        ind.set(qn("w:right"), "0")
+
+
+def _set_space_before(p_el: Any, twips: int) -> None:
+    """设段前距(封面竖向铺开用)。spacing 须在 pPr 里 rPr 之后、ind/jc 之前的合适位置;
+    已有 spacing 就改属性,没有则新建插到 pPr 头部(rPr 之后)。"""
+    ppr = p_el.find(qn("w:pPr"))
+    if ppr is None:
+        ppr = OxmlElement("w:pPr")
+        p_el.insert(0, ppr)
+    sp = ppr.find(qn("w:spacing"))
+    if sp is None:
+        sp = OxmlElement("w:spacing")
+        rpr = ppr.find(qn("w:rPr"))
+        if rpr is not None:
+            rpr.addnext(sp)
+        else:
+            ppr.insert(0, sp)
+    sp.set(qn("w:before"), str(twips))
+
+
+def heal_cover_columns(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """治福昕把商务/技术卷**封面**切成假两栏:标题被塞进窄左栏(整页只用一半宽、挤成4行)、
+    "标段招标""（盖单位章）"甩到右栏飘着——用户实测"乱七八糟"。
+
+    根因同落款(福昕拿两栏并排复刻原 PDF 的横向位置):原版封面本是
+        （招标项目名称）____标段招标      ← 一行,项目名+标段招标并排
+        投标人：____（盖单位章）          ← 一行
+    福昕转出来把每行的左右两半各塞进两栏的左/右栏。项目名短时(原版占位符)一行排得下;
+    换成真项目名(长)就在窄左栏里挤成三四行,右栏的"标段招标"孤零零飘着。
+
+    修法(只在**明确识别出标准封面**时动手,非封面一律不碰):
+      ① 封面区 = 文档开头到第一个"下一页"分节(通常是目录起点)之前,且必须同时含
+         "标段招标"+"投标文件"+"盖单位章"三特征,否则判定不是标准封面直接返回;
+      ② 封面区内每个两栏小节:两段非空的=被拆开的一对,把右半 run 合并进左半、删中间空段、
+         拉直单栏、整行居中(还原"项目名____标段招标"一行);一段非空的直接拉直;
+      ③ 合并会让内容上移挤在页顶 → 给"投标文件"行和日期行补段前距,让封面竖向铺开(对齐原版)。
+    只挪 run/改分栏对齐/加间距,一个字不改(红线)。返回处理的封面小节数。
+    """
+    body = document.element.body
+    kids = list(body.iterchildren())
+
+    def _sectpr_of(ch: Any) -> Any:
+        if ch.tag == qn("w:sectPr"):
+            return ch
+        if ch.tag == qn("w:p"):
+            ppr = ch.find(qn("w:pPr"))
+            if ppr is not None:
+                return ppr.find(qn("w:sectPr"))
+        return None
+
+    # ① 定位封面结束:第一个非 continuous 分节(默认/nextPage=翻页,通常目录起点)
+    cover_end = None
+    for i, ch in enumerate(kids):
+        sectpr = _sectpr_of(ch)
+        if sectpr is None:
+            continue
+        typ = sectpr.find(qn("w:type"))
+        typv = typ.get(qn("w:val")) if typ is not None else "nextPage"
+        if typv != "continuous":
+            cover_end = i
+            break
+    if cover_end is None:
+        return 0
+    cover_paras = [
+        kids[j] for j in range(0, cover_end + 1) if kids[j].tag == qn("w:p")
+    ]
+    cover_text = "".join(_p_text(p) for p in cover_paras)
+    if not ("标段招标" in cover_text and "盖单位章" in cover_text and "投标文件" in cover_text):
+        return 0  # 不是标准封面,红线:不碰
+
+    fixed = 0
+    prev = -1
+    for i in range(0, cover_end + 1):
+        sectpr = _sectpr_of(kids[i])
+        if sectpr is None:
+            continue
+        cols = sectpr.find(qn("w:cols"))
+        try:
+            num = int(cols.get(qn("w:num")) or "1") if cols is not None else 1
+        except ValueError:
+            num = 1
+        if cols is None or num < 2:
+            prev = i
+            continue
+        seg_paras = [
+            kids[j] for j in range(prev + 1, i + 1) if kids[j].tag == qn("w:p")
+        ]
+        nonempty = [p for p in seg_paras if _p_text(p).strip()]
+        if len(nonempty) == 2:
+            # 被拆开的一对:右半合并进左半
+            host, donor = nonempty[0], nonempty[1]
+            for r in donor.findall(qn("w:r")):
+                host.append(r)  # lxml append 把 run 从 donor 移到 host 行尾
+            _center_paragraph(host)
+            hi, di = seg_paras.index(host), seg_paras.index(donor)
+            for k in range(hi + 1, di):  # 删两半之间的空 br 段
+                mid = seg_paras[k]
+                if not _p_text(mid).strip() and mid.getparent() is not None:
+                    mid.getparent().remove(mid)
+            _flatten_cols(cols)
+            fixed += 1
+        elif len(nonempty) <= 1:
+            _flatten_cols(cols)
+            fixed += 1
+        prev = i
+
+    # ③ 竖向铺开:投标文件行、日期行补段前距(合并后内容会挤在页顶)
+    if fixed:
+        for p in cover_paras:
+            if p.getparent() is None:
+                continue
+            t = _p_text(p).strip()
+            if t == "投标文件":
+                _set_space_before(p, 2400)
+            elif _COVER_DATE_RE.match(t):
+                _set_space_before(p, 2400)
+
+    if fixed:
+        logger.info("格式体检:理顺福昕给封面误造的假两栏 %d 节", fixed)
+    return fixed
+
+
+def heal_signature_columns(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """治福昕把落款/日期行单独塞进"假两栏"小节,导致日期在整页有大片空白时还折行。
+
+    根因(巢湖实测,查了半天才逮到):福昕复刻原 PDF 时,会给"日期：__年__月__日"
+    这一行单独起一个 `<w:sectPr>` 且设成 `<w:cols w:num="2">`——第一栏只有 5336
+    twips(≈267pt)宽。日期文字左缩进 151pt 起、排到 319pt 正好撞上这窄栏的右边界,
+    "日"就被挤到下一行。跟字宽/缩进/下划线全无关,纯是这个假两栏把整页 488pt 压成 267pt。
+
+    修法:凡是**辖段很少(≤8 段非空)且内容含落款/日期专属标记**的多栏小节,一律拉回
+    单栏(删掉 `<w:col>` 子元素、num 置 1)。范围极窄:大段真两栏正文(辖段多)一律不碰,
+    只逮福昕给落款/日期误造的这种小节。只改分栏,一个字不动(红线)。返回改回单栏的节数。
+    """
+    body = document.element.body
+    fixed = 0
+    prev = -1
+    kids = list(body.iterchildren())
+    for i, ch in enumerate(kids):
+        sectpr = None
+        if ch.tag == qn("w:sectPr"):
+            sectpr = ch
+        elif ch.tag == qn("w:p"):
+            ppr = ch.find(qn("w:pPr"))
+            if ppr is not None:
+                sectpr = ppr.find(qn("w:sectPr"))
+        if sectpr is None:
+            continue
+        cols = sectpr.find(qn("w:cols"))
+        try:
+            num = int(cols.get(qn("w:num")) or "1") if cols is not None else 1
+        except ValueError:
+            num = 1
+        if cols is None or num < 2:
+            prev = i
+            continue
+        # 该节所辖:prev+1 .. i,统计非空段与文字
+        seg_paras = [
+            kids[j] for j in range(prev + 1, i + 1) if kids[j].tag == qn("w:p")
+        ]
+        nonempty = [p for p in seg_paras if _p_text(p).strip()]
+        seg_text = "".join(_p_text(p) for p in nonempty)
+        has_sig = any(m in seg_text for m in _SIG_SECTION_MARKERS)
+        if has_sig and len(nonempty) <= 8:
+            cols.set(qn("w:num"), "1")
+            for c in list(cols.findall(qn("w:col"))):
+                cols.remove(c)
+            cols.set(qn("w:equalWidth"), "1")
+            fixed += 1
+        prev = i
+    if fixed:
+        logger.info("格式体检:拉直福昕给落款/日期误造的假两栏 %d 节", fixed)
+    return fixed
+
+
+def heal_signature_block_layout(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """治福昕把落款3行(投标人/法定代表人/日期)搞乱,只认落款专属标记,范围极窄。
+
+    招标原样(巢湖实测):
+        投 标 人：____（盖单位章）
+        法定代表人：____（签字或盖章）
+        日  期：__年__月__日
+    福昕转出来:①投标人行和法定代表人行被并进**同一段**(填了公司名后还折行);
+    ②"日 期："被切成"日"一段、"期：__年__月__日"另一段(中间还夹空段)。
+    两处修复只挪 run/断段,一个字不改:
+      ① 一段里同时含 盖单位章 + 法定代表人 + (签字或盖章|签章) → 在"法定代表人"run处拆成两段;
+      ② 整段就是"日" + 后面(跳空段)首段以"期"打头 → 把"期…"并回"日"段同一行。
+    """
+    body = document.element.body
+    avail = _usable_width_twips(document)
+    fixed = 0
+
+    # ① 拆:投标人行 | 法定代表人行
+    split_groups: list[list[Any]] = []
+    for p_el in list(body.iterchildren(qn("w:p"))):
+        text = _p_text(p_el)
+        if not (
+            "盖单位章" in text
+            and "法定代表人" in text
+            and ("签字或盖章" in text or "签章" in text)
+        ):
+            continue
+        runs = p_el.findall(qn("w:r"))
+        split_idx = next(
+            (
+                i
+                for i, r in enumerate(runs)
+                if "".join(t.text or "" for t in r.findall(qn("w:t"))).startswith("法定")
+            ),
+            None,
+        )
+        if not split_idx:  # None 或 0 都不拆
+            continue
+        new_p = OxmlElement("w:p")
+        ppr = p_el.find(qn("w:pPr"))
+        if ppr is not None:
+            new_p.append(deepcopy(ppr))
+        for r in runs[split_idx:]:
+            new_p.append(r)  # lxml append 把 r 从原段移走
+        # 投标人行尾残留的纯空白 run 去掉
+        for r in reversed(p_el.findall(qn("w:r"))):
+            rt = "".join(t.text or "" for t in r.findall(qn("w:t")))
+            if rt.strip() == "" and r.find(qn("w:tab")) is None and r.find(qn("w:br")) is None:
+                p_el.remove(r)
+            else:
+                break
+        p_el.addnext(new_p)
+        split_groups.append([p_el, new_p])
+        fixed += 1
+
+    # ② 合:"日" + "期：…" → 同一行
+    kids = list(body.iterchildren())
+    for i, el in enumerate(kids):
+        if el.tag != qn("w:p") or _p_text(el).strip() != "日":
+            continue
+        j = i + 1
+        while j < len(kids) and kids[j].tag == qn("w:p") and not _p_text(kids[j]).strip():
+            j += 1
+        if (
+            j >= len(kids)
+            or kids[j].tag != qn("w:p")
+            or not _p_text(kids[j]).strip().startswith("期")
+        ):
+            continue
+        host, donor = el, kids[j]
+        for r in donor.findall(qn("w:r")):
+            host.append(r)  # 期… 并回"日"段行尾
+        for k in range(i + 1, j + 1):
+            if kids[k].getparent() is not None:
+                kids[k].getparent().remove(kids[k])
+        fixed += 1
+
+    # ③ 落款块统一左缩进:同一块的 投标人/法代/日期 对齐到同一 x,且缩到能排下最长行
+    #    只动"真会折行"的块(某行在当前缩进下排不下),整块对齐;不折的块(如封面)一律不碰。
+    _DATE_ONLY_RE = re.compile(r"^\s*\d{4}\s*年\s*\d{1,2}\s*月\s*\d{0,2}\s*日?\s*$")
+
+    def _ntab(p_el: Any) -> int:  # 制表符是独立 w:tab 元素,不在 w:t 文字里,单独数
+        return sum(len(r.findall(qn("w:tab"))) for r in p_el.findall(qn("w:r")))
+
+    def _line_need(p_el: Any) -> int:  # 该行文字宽(制表符按紧凑槽宽1000估)
+        return _est_text_twips(_p_text(p_el)) + _ntab(p_el) * 1000
+
+    def _left_of(p_el: Any) -> int:
+        ppr = p_el.find(qn("w:pPr"))
+        ind = ppr.find(qn("w:ind")) if ppr is not None else None
+        try:
+            return int(ind.get(qn("w:left")) or 0) if ind is not None else 0
+        except ValueError:
+            return 0
+
+    def _is_sig_line(p_el: Any) -> bool:
+        t = _p_text(p_el)
+        ts = t.lstrip()
+        return (
+            ("盖单位章" in ts and ts[:4].startswith("投"))
+            or (("签字或盖章" in ts or "签章" in ts) and ts.startswith("法定"))
+            or ts.startswith(("日期", "日 期", "日  期"))
+            or bool(_DATE_ONLY_RE.match(t))  # 光日期行"2026年 7月 8日"(填好的,无标签)
+        )
+
+    sig_paras = list(body.iterchildren(qn("w:p")))
+    i = 0
+    while i < len(sig_paras):
+        if not _is_sig_line(sig_paras[i]):
+            i += 1
+            continue
+        block = [sig_paras[i]]
+        k = i + 1
+        while k < len(sig_paras):
+            if _is_sig_line(sig_paras[k]):
+                block.append(sig_paras[k])
+                k += 1
+            elif not _p_text(sig_paras[k]).strip():
+                k += 1  # 跳块内空段
+            else:
+                break
+        # 只在**至少一行会折**时才动整块。留 400 余量:字宽是估算,宁可多修不可漏(实测
+        # 埇桥"日期：2026年7月8日"带标签的行就卡在临界点上折了)。
+        wraps = any(_left_of(p) + _line_need(p) > avail - 400 for p in block)
+        if wraps:
+            fixed += 1
+            max_need = max(_line_need(p) for p in block)
+            # 目标缩进:既排得下最长行(再留500余量),又不超过块里原最小缩进(不把任何行往右推)
+            target = max(0, min(min(_left_of(p) for p in block), avail - max_need - 500))
+            for p in block:
+                ppr = p.find(qn("w:pPr"))
+                if ppr is None:
+                    ppr = OxmlElement("w:pPr")
+                    p.insert(0, ppr)
+                ind = ppr.find(qn("w:ind"))
+                if ind is None:
+                    ind = OxmlElement("w:ind")
+                    ppr.append(ind)
+                ind.set(qn("w:left"), str(target))
+                # 日期行的制表符默认跳页面绝对制表位→撑宽;给紧凑自定义制表位
+                ntab = _ntab(p)
+                if ntab and _p_text(p).lstrip().startswith(("日期", "日 期", "日  期")):
+                    old = ppr.find(qn("w:tabs"))
+                    if old is not None:
+                        ppr.remove(old)
+                    tabs = OxmlElement("w:tabs")
+                    for m in range(ntab):
+                        tb = OxmlElement("w:tab")
+                        tb.set(qn("w:val"), "left")
+                        tb.set(qn("w:pos"), str(target + 1200 + m * 1150))
+                        tabs.append(tb)
+                    anchor_el = ppr.find(qn("w:spacing")) or ppr.find(qn("w:ind"))
+                    if anchor_el is not None:
+                        anchor_el.addprevious(tabs)
+                    else:
+                        ppr.append(tabs)
+        i = k
+
+    if fixed:
+        logger.info("格式体检:理顺福昕搞乱的落款3行 %d 处", fixed)
+    return fixed
+
+
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
     ("underline_slots", heal_underline_slots),
@@ -718,6 +1087,9 @@ _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = 
     ("phantom_images", heal_phantom_images),
     ("split_paragraphs", heal_split_paragraphs),
     ("midsentence_breaks", heal_midsentence_breaks),
+    ("cover_columns", heal_cover_columns),
+    ("signature_columns", heal_signature_columns),
+    ("signature_block_layout", heal_signature_block_layout),
     ("line_spacing", heal_line_spacing),
     ("signature_wrap", heal_signature_wrap),
 )
