@@ -1,0 +1,14 @@
+# 别把本地虚拟环境/缓存/密钥拷进镜像
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+# .env 不进镜像:配置一律通过容器环境变量注入(docker-compose)
+.env
+.env.*
+temp/
+*.log
+tests/

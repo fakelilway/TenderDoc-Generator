@@ -25,6 +25,24 @@ class MinioClient:
             secure=secure,
         )
 
+        # 预签名(下载/预览)专用客户端:只用来"签"URL,不发起连接。
+        # 当配置了 minio_public_url 时,签出来的链接主机指向服务器局域网 IP,
+        # 让其他电脑的浏览器能真正访问到文件;否则复用上面的内部连接客户端。
+        # 注意:S3 签名会把主机名算进签名,所以签名用的主机必须与浏览器实际访问的
+        # 主机一致(都用局域网 IP),MinIO 才认这个签名。
+        public_url = (settings.minio_public_url or "").strip()
+        if public_url:
+            parsed_public = urlparse(public_url)
+            public_endpoint = parsed_public.netloc or parsed_public.path
+            self.presign_client = Minio(
+                public_endpoint,
+                access_key=settings.minio_root_user,
+                secret_key=settings.minio_root_password,
+                secure=parsed_public.scheme == "https",
+            )
+        else:
+            self.presign_client = self.client
+
     def _ensure_bucket(self, bucket: str) -> None:
         if bucket in _verified_buckets:
             return
@@ -75,7 +93,7 @@ class MinioClient:
                     f"attachment; filename*=UTF-8''{encoded}"
                 )
             }
-        return self.client.presigned_get_object(
+        return self.presign_client.presigned_get_object(
             bucket,
             object_name,
             expires=timedelta(seconds=expiry),

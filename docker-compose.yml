@@ -1,3 +1,12 @@
+# TenderDoc 局域网一键部署
+# 用法见 docs/局域网部署指南.md。核心:先在同目录 .env 里填 SERVER_LAN_IP,
+# 再 `docker compose up -d --build`。其他电脑用浏览器访问 http://<SERVER_LAN_IP>:3000
+#
+# 端口暴露策略(安全起见):
+#   - 3000 前端网页        -> 开放给局域网(其他电脑访问入口)
+#   - 9000 MinIO 文件下载  -> 开放给局域网(浏览器下载/预览文件要用)
+#   - 5432/6379/9001       -> 只绑本机 127.0.0.1,不外露(仅本机排障用)
+
 services:
   # PostgreSQL + pgvector 数据库
   postgres:
@@ -8,9 +17,11 @@ services:
       POSTGRES_USER: tenderuser
       POSTGRES_PASSWORD: tenderpwd
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # 首次启动(数据卷为空)时自动建表 + 装 vector 扩展
+      - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tenderuser -d tenderdb"]
       interval: 10s
@@ -26,7 +37,7 @@ services:
     container_name: tender-redis
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,17 +49,17 @@ services:
     networks:
       - tender-network
 
-  # MinIO 对象存储
+  # MinIO 对象存储(公司档案图片、生成的标书文件都存这里)
   minio:
     image: minio/minio:latest
     container_name: tender-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:9000"                 # 文件下载口:开放给局域网
+      - "127.0.0.1:9001:9001"       # 管理台:只本机
     volumes:
       - minio_data:/data
     healthcheck:
@@ -60,12 +71,80 @@ services:
     networks:
       - tender-network
 
+  # 后端 API(FastAPI + AI 生成 + OCR + 向量检索)
+  # 归入 "app" 场景:本地开发时 `docker compose up -d` 只起上面三个基础部件,不受影响;
+  # 服务器部署时 .env 里的 COMPOSE_PROFILES=app 才会把后端/前端一并拉起。
+  backend:
+    profiles: ["app"]
+    build:
+      context: ./backend
+    container_name: tender-backend
+    # AI/福昕/模型等密钥沿用你现有的 backend/.env(拷到服务器即可,不用重填)
+    env_file:
+      - ./backend/.env
+    # 下面这些"部署相关"的值覆盖 .env 里的本机地址,指向容器内部服务与服务器局域网 IP
+    environment:
+      DATABASE_URL: postgresql://tenderuser:tenderpwd@postgres:5432/tenderdb
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: tenderdb
+      POSTGRES_USER: tenderuser
+      POSTGRES_PASSWORD: tenderpwd
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_API_URL: http://minio:9000                        # 后端在容器内连 MinIO
+      MINIO_PUBLIC_URL: http://${SERVER_LAN_IP:-127.0.0.1}:9000   # 发给浏览器的下载链接(关键!部署必须在 .env 填对局域网IP)
+      MINIO_CONSOLE_URL: http://${SERVER_LAN_IP:-127.0.0.1}:9001
+      MINIO_BUCKET: tender-files
+      TEMP_DIR: /app/temp
+      DEBUG: "false"
+      CLOUD_PDF_CONVERT: foxit                                # 用福昕云做可编辑 PDF 转换
+      # 留空/默认值时后端会拒绝启动(见 validate_security_settings);.env.example 已预置一串
+      JWT_SECRET: ${JWT_SECRET:-}
+      # 国内拉 AI 向量模型走镜像站(首次启动会下载约 1.5GB 模型,存进 hf_cache 卷,只下一次)
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+    volumes:
+      - hf_cache:/root/.cache/huggingface   # 模型缓存:重启不必重下
+      - backend_temp:/app/temp              # 生成过程临时文件
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - tender-network
+
+  # 前端网页(Next.js);其他电脑访问的就是它
+  frontend:
+    profiles: ["app"]
+    build:
+      context: ./frontend
+    container_name: tender-frontend
+    environment:
+      # 前端在容器内把 /api 请求转发给后端容器(浏览器只跟前端说话)
+      BACKEND_API_BASE_URL: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"       # 局域网访问入口
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - tender-network
+
 volumes:
   postgres_data:
     driver: local
   redis_data:
     driver: local
   minio_data:
+    driver: local
+  hf_cache:
+    driver: local
+  backend_temp:
     driver: local
 
 networks:

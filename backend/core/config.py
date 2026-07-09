@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     minio_api_url: str = Field(..., alias="MINIO_API_URL")
     minio_console_url: str = Field(..., alias="MINIO_CONSOLE_URL")
     minio_bucket: str = Field(..., alias="MINIO_BUCKET")
+    # 浏览器实际访问 MinIO 的地址(用于生成"下载/预览"预签名链接)。
+    # 局域网/容器部署时:后端在容器内用 minio_api_url(如 http://minio:9000)连接,
+    # 但发给别人浏览器的下载链接必须指向服务器局域网 IP(如 http://192.168.1.50:9000),
+    # 否则别台电脑的 localhost 指向它自己→下载失败。留空则回退用 minio_api_url。
+    minio_public_url: str = Field("", alias="MINIO_PUBLIC_URL")
 
     deepseek_api_key: str = Field("", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
@@ -121,11 +126,11 @@ def validate_security_settings(current: Settings) -> None:
     is still the hardcoded default and debug is off; logs a prominent warning
     when debug is on.
     """
-    if current.jwt_secret != DEFAULT_JWT_SECRET:
+    if current.jwt_secret and current.jwt_secret != DEFAULT_JWT_SECRET:
         return
     if not current.debug:
         raise RuntimeError(
-            "JWT_SECRET is still set to the insecure built-in default. "
+            "JWT_SECRET is empty or still the insecure built-in default. "
             "Set a strong, random JWT_SECRET before running with DEBUG=false."
         )
     logger.warning(
