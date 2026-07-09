@@ -4,8 +4,9 @@
 
 ## 当前状态
 
-日期：2026-07-02
+日期：2026-07-09
 当前生成内核：V2 原格式复制（两卷交付）
+🚀 **部署（2026-07-09 新增，本地化局域网落地）：** 已加"全部打包一键起"的局域网部署。`docker-compose.yml` 扩成五件套（postgres/redis/minio 基础设施 + backend/frontend 也进 Docker，后两者挂 `profiles:["app"]`，本地开发 `docker compose up -d` 仍只起三基础部件不受影响；服务器靠根 `.env` 的 `COMPOSE_PROFILES=app` 起全套）。新增 `backend/Dockerfile`、`frontend/Dockerfile`（Next standalone）、各自 `.dockerignore`、根 `.env.example`（部署只需填 `SERVER_LAN_IP`）、`docs/局域网部署指南.md`（大白话步骤）。**修坑：** MinIO 预签名下载/预览链接原写死 localhost → 别台电脑必失败；新增 `MINIO_PUBLIC_URL` 解耦"容器内连接（minio:9000）"与"发给浏览器的下载地址（局域网IP:9000）”，改 `backend/core/config.py`+`backend/utils/minio_client.py`（JWT 为空也拒绝以 DEBUG=false 启动）。目标 Windows 主机作内网服务器、能上网走外部 AI，暂不开公网；已本机验证 compose 配置合法+profile 隔离，**未做**真实镜像构建/跑通（待 Windows 机实测）。
 当前目标：等用户用清理好、命名规范的资料**重建知识库/公司档案**（现有本地库是临时测试数据，缺料不当缺口治），重建后陪跑整链验证；防废标"覆盖闸"P1（废标项分类后切回硬拦）；新点软件交付实测。近两周已落地"商务卷证据链（三大选派/证件业绩插图锚点落位/简历表台账填充）+ 格式医生（孤字归位/下划线断线）+ 技术卷附表逐张装配带附表X编号 + 拟分包去重 + RAG 语义重排接生产 + parser 评分项容错"。
 ⚠️ **未解决的已知病：福昕把投标函签名行/身份证明右列/授权委托书开头/日期槽转成浮动文本框**（python-docx 的 document.paragraphs 看不见 → 填不上）。曾修过一版（浮件删除/克隆），用户不认可已整体回退，工作保存在分支 `backup/textbox-fill-c9ee38c`；重做前先弄清用户看到的具体毛病，并守"诊断纪律"（真实文件+渲染亲眼看）。
 
