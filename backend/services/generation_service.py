@@ -393,12 +393,19 @@ def _append_prose_plaintext(docx_path: Path, prose_markdown: str) -> None:
 # 绕开目录误命中);否则匹配"含段落关键词且不含排除词"的段落。关键词都选目录里不会出现、章节/
 # 表格独有的字样(表头'投标人名称'/'投标人情况说明'、附件行'法定代表人身份证复印件')。
 # 覆盖多家招标的不同措辞(萧县/长丰…):同一锚点给多个候选关键词,往通用靠。
-_ANCHOR_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = {
+# 值为 (表头关键词, 段落关键词, 排除词[, 停止词]):停止词是可选第4元,只有个人业绩节
+# 这类"节内标题会重复、节尾靠撞下一节字样收边"的锚点才需要。
+_ANCHOR_SPECS: dict[str, tuple] = {
     "基本情况表": (("投标人名称",), ("投标人基本情况表",), ()),
+    # 公司业绩节:段落模式优先+停止词收边(与经理/总工锚点同法)——业绩图要落在
+    # **整节末尾**(情况表+逐条克隆的信息表之后),不能楔在情况表和信息表中间
+    # (2026-07-12 用户定:三张类似项目信息表后都附对应业绩扫描件)。排除词挡住
+    # 经理/总工的同名标题;找不到标题段时仍走表头"业绩序号"的表格兜底。
     "类似项目情况表": (
         ("业绩序号",),
         ("近年完成的类似", "类似工程项目情况表", "类似项目情况表", "投标人业绩情况表"),
-        (),
+        ("项目经理", "项目总工", "技术负责人"),
+        ("项目经理", "项目总工", "技术负责人", "信誉", "资历表", "简历"),
     ),
     "信誉情况表": (
         ("投标人情况说明",),
@@ -426,6 +433,22 @@ _ANCHOR_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]
         ("技术负责人", "项目总工", "总工程师"),
         ("项目技术负责人", "项目总工", "总工程师简历", "技术负责人简历"),
         (),
+    ),
+    # 项目经理/总工个人的"近年完成的类似项目"节后附其业绩证明扫描(员工意见第10条)。
+    # 只走段落模式(表头"业绩序号"三节共有,表格模式会全命中第一节);第4元=停止词:
+    # 个人节内克隆的信息表标题会重复出现同样关键词,靠"撞到下一角色/下一表单的字样"收边。
+    # 有停止词的锚点取**最后一个**匹配段(跳过目录条目和逐张克隆标题,直达节尾那张)。
+    "项目经理类似项目表": (
+        (),
+        ("项目经理近年完成的类似",),
+        (),
+        ("项目总工", "技术负责人", "信誉", "资历表", "简历", "投标人近年完成"),
+    ),
+    "项目总工类似项目表": (
+        (),
+        ("项目总工近年完成的类似", "技术负责人近年完成的类似"),
+        (),
+        ("信誉", "资历表", "简历", "项目管理机构", "投标人近年完成", "项目经理近年完成"),
     ),
 }
 _SECTION_HEAD_RE = re.compile(
@@ -463,56 +486,73 @@ def _anchor_section_end_element(doc, anchor: str):
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
-    tbl_kw, para_kw, excl = _ANCHOR_SPECS.get(anchor, ((), (anchor,), ()))
+    spec = _ANCHOR_SPECS.get(anchor, ((), (anchor,), ()))
+    tbl_kw, para_kw, excl = spec[0], spec[1], spec[2]
+    stop_kw: tuple[str, ...] = spec[3] if len(spec) > 3 else ()
     blocks = list(_iter_body_blocks(doc))
 
-    # 1) 表格优先:含表头关键词的表 → 该表所在**表单的末尾**。
-    #    不能"紧接表格之后"就插:招标表单=表格+注:+编号说明+签名/日期,一个整体;
-    #    楔在表格和注:中间会把人家的表单劈开(实测:业绩合同扫描件插进了类似项目
-    #    情况表和"注:"之间)。故跨过表单尾巴(注/说明/签名/日期/空段),撞到下一张表
-    #    或下一个表单标题(短行、无冒号、编号/含"情况表/信息表"字样)才停。
-    for i, (el, blk) in enumerate(blocks):
-        if isinstance(blk, Table) and tbl_kw and any(k in _block_text(blk) for k in tbl_kw):
-            last = el
-            for j in range(i + 1, min(i + 20, len(blocks))):
-                el2, blk2 = blocks[j]
-                if isinstance(blk2, Table):
-                    break  # 撞到下一张表
-                t = blk2.text.strip()
-                # 表单标题=短行、无冒号、**无句读**(注/说明是完整句子带。，;标题不带)
-                if t and len(t) < 50 and "：" not in t and not any(c in t for c in "。，；:") and (
-                    _SECTION_HEAD_RE.match(t)
-                    or re.match(r"^\d+[\.、].{0,40}(表|资料|材料)", t)
-                    or "情况表" in t
-                    or "信息表" in t
-                ):
-                    break  # 下一个表单标题
-                last = el2
-            return last
-
-    # 2) 段落:含关键词、不含排除词 → 该节末尾元素之后
-    start = None
-    for idx, (_el, blk) in enumerate(blocks):
-        if not isinstance(blk, Paragraph):
-            continue
-        t = blk.text
-        if not (para_kw and any(k in t for k in para_kw)):
-            continue
-        if excl and any(x in t for x in excl):
-            continue
-        start = idx
-        break
-    if start is None:
+    def _by_table():
+        # 表格模式:含表头关键词的表 → 该表所在**表单的末尾**。
+        # 不能"紧接表格之后"就插:招标表单=表格+注:+编号说明+签名/日期,一个整体;
+        # 楔在表格和注:中间会把人家的表单劈开(实测:业绩合同扫描件插进了类似项目
+        # 情况表和"注:"之间)。故跨过表单尾巴(注/说明/签名/日期/空段),撞到下一张表
+        # 或下一个表单标题(短行、无冒号、编号/含"情况表/信息表"字样)才停。
+        for i, (el, blk) in enumerate(blocks):
+            if isinstance(blk, Table) and tbl_kw and any(k in _block_text(blk) for k in tbl_kw):
+                last = el
+                for j in range(i + 1, min(i + 20, len(blocks))):
+                    el2, blk2 = blocks[j]
+                    if isinstance(blk2, Table):
+                        break  # 撞到下一张表
+                    t = blk2.text.strip()
+                    # 表单标题=短行、无冒号、**无句读**(注/说明是完整句子带。，;标题不带)
+                    if t and len(t) < 50 and "：" not in t and not any(c in t for c in "。，；:") and (
+                        _SECTION_HEAD_RE.match(t)
+                        or re.match(r"^\d+[\.、].{0,40}(表|资料|材料)", t)
+                        or "情况表" in t
+                        or "信息表" in t
+                    ):
+                        break  # 下一个表单标题
+                    last = el2
+                return last
         return None
-    end = start
-    for idx in range(start + 1, min(start + 30, len(blocks))):
-        _el, blk = blocks[idx]
-        if isinstance(blk, Paragraph):
-            t = blk.text.strip()
-            if t and len(t) < 30 and _SECTION_HEAD_RE.match(t):
-                break  # 撞到下一节标题,停在它之前
-        end = idx
-    return blocks[end][0]
+
+    def _by_paragraph():
+        # 段落模式:含关键词、不含排除词 → 该节末尾元素之后。
+        # 有停止词的锚点取最后一个匹配段(目录条目在前、克隆的逐张信息表标题在中,
+        # 取最后即节尾那张的标题,再往后走到停止词/下一节标题前)。
+        start = None
+        for idx, (_el, blk) in enumerate(blocks):
+            if not isinstance(blk, Paragraph):
+                continue
+            t = blk.text
+            if not (para_kw and any(k in t for k in para_kw)):
+                continue
+            if excl and any(x in t for x in excl):
+                continue
+            start = idx
+            if not stop_kw:
+                break  # 无停止词的老锚点保持原行为:取第一个匹配
+        if start is None:
+            return None
+        end = start
+        window = 120 if stop_kw else 30
+        for idx in range(start + 1, min(start + window, len(blocks))):
+            _el, blk = blocks[idx]
+            if isinstance(blk, Paragraph):
+                t = blk.text.strip()
+                if t and stop_kw and any(k in t for k in stop_kw):
+                    break  # 撞到下一角色/下一表单的字样,停在它之前
+                if t and len(t) < 30 and _SECTION_HEAD_RE.match(t):
+                    break  # 撞到下一节标题,停在它之前
+            end = idx
+        return blocks[end][0]
+
+    # 有停止词的锚点(个人/公司业绩节):段落模式优先——要落到**整节末尾**(逐条克隆的
+    # 信息表之后),表格模式只会停在第一张表的表单尾、楔进节中间;找不到标题段再退表格兜底。
+    if stop_kw:
+        return _by_paragraph() or _by_table()
+    return _by_table() or _by_paragraph()
 
 
 def _insert_image_after(after_el, doc, document_id, caption, width_cm):
@@ -877,6 +917,18 @@ def _assemble_two_volumes(
             _append_docx(technical_path, appendix_format_path)
         except Exception:
             logger.warning("附表拼接到技术卷失败,技术卷不含附表", exc_info=True)
+
+    # 技术卷也跑成品级格式修复(表格行防拆页等)。best-effort,失败不阻断出标。
+    try:
+        from docx import Document as _Doc
+
+        from services.docx_format_doctor import run_format_doctor_assembled
+
+        _tdoc = _Doc(str(technical_path))
+        run_format_doctor_assembled(_tdoc)
+        _tdoc.save(str(technical_path))
+    except Exception:
+        logger.warning("技术卷成品级格式修复失败,跳过", exc_info=True)
 
     shutil.copy2(technical_path, main_docx_path)
 

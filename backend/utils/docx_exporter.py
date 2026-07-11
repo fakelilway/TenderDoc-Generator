@@ -197,6 +197,9 @@ def _render_markdown_body(
 ) -> None:
     lines = markdown_text.splitlines()
     index = 0
+    # 章(##)另起一页:员工反馈第6条"不同章节直接续写未分段"。跟踪"当前页是否
+    # 还没有内容",刚分过页/文档开头就不再插分页符,避免空白页。
+    at_page_start = True
     while index < len(lines):
         line = lines[index].rstrip()
         if not line:
@@ -205,18 +208,21 @@ def _render_markdown_body(
 
         if _is_pagebreak_marker(line):
             document.add_page_break()
+            at_page_start = True
             index += 1
             continue
 
         table_marker = _parse_tdg_table_marker(line)
         if table_marker:
             _add_tdg_table(document, table_marker, style_profile)
+            at_page_start = False
             index += 1
             continue
 
         image_marker = _parse_knowledge_image_marker(line)
         if image_marker:
             _add_knowledge_image(document, image_marker, image_resolver, style_profile)
+            at_page_start = False
             index += 1
             continue
 
@@ -226,13 +232,18 @@ def _render_markdown_body(
                 table_lines.append(lines[index].strip())
                 index += 1
             _add_table(document, table_lines, style_profile)
+            at_page_start = False
             continue
 
         if line.startswith("#"):
             level = min(len(line) - len(line.lstrip("#")), 3)
             title = line.lstrip("#").strip()
             if title:
+                # 二级标题=章:另起一页(当前页已有内容时才分,防连续分页出空白页)
+                if level == 2 and not at_page_start:
+                    document.add_page_break()
                 document.add_heading(title, level=level)
+                at_page_start = False
         elif line.startswith(("- ", "* ")):
             paragraph = document.add_paragraph(style="List Bullet")
             _add_text_with_underlined_blanks(
@@ -262,6 +273,7 @@ def _render_markdown_body(
                 _body_size_pt(style_profile) * 2
             )
             _apply_form_paragraph_alignment(paragraph)
+        at_page_start = False
         index += 1
 
 
@@ -670,6 +682,8 @@ def _configure_styles(document: Document, style_profile: str | None) -> None:
         )  # avoid the default blue heading colour
         style.paragraph_format.space_before = Pt(18 if is_zhengqi else 6)
         style.paragraph_format.space_after = Pt(12 if is_zhengqi else 6)
+        # 标题与下文同页:标题不孤悬页底(员工反馈第3条"内容被分段"的一种形态)
+        style.paragraph_format.keep_with_next = True
         if is_zhengqi and style_name == "Heading 1":
             style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
         elif is_zhengqi:

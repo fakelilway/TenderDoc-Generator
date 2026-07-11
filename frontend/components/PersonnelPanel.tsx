@@ -243,6 +243,28 @@ const TECH_ROLE: RoleConfig = {
   emptyHint: "名册里没有符合要求的总工候选。可在公司证件库补充职称证后重导名册。"
 };
 
+// 拆开导出:工作区里两个选派块之间要各插一块"该角色业绩勾选"面板(RolePerformancePanel),
+// 顺序=公司业绩→选经理→勾经理业绩→选总工→勾总工业绩,故不能捆在一个面板里渲染。
+export function PmRoleSelector({
+  projectId,
+  onSelected
+}: {
+  projectId: number;
+  onSelected?: () => void;
+}) {
+  return <RoleSelector projectId={projectId} role={PM_ROLE} onSelected={onSelected} />;
+}
+
+export function TechRoleSelector({
+  projectId,
+  onSelected
+}: {
+  projectId: number;
+  onSelected?: () => void;
+}) {
+  return <RoleSelector projectId={projectId} role={TECH_ROLE} onSelected={onSelected} />;
+}
+
 export function PersonnelPanel({
   projectId,
   onPmSelected
@@ -252,8 +274,8 @@ export function PersonnelPanel({
 }) {
   return (
     <div className="space-y-3">
-      <RoleSelector projectId={projectId} role={PM_ROLE} onSelected={onPmSelected} />
-      <RoleSelector projectId={projectId} role={TECH_ROLE} />
+      <PmRoleSelector projectId={projectId} onSelected={onPmSelected} />
+      <TechRoleSelector projectId={projectId} />
     </div>
   );
 }

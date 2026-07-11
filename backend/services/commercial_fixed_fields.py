@@ -10,7 +10,9 @@
   (法人性别/法人职务/...)。值就是要直接写进商务标的最终文字。
 - 公司名权威值锁定「安徽正奇建设有限公司」;PDF 法人证明里那处「安徽正气建设有限公司」
   是错别字,生成时统一纠正(见 enforce_company_name_consistency)。
-- 换公司 / 换项目要改这里(用户明确:这些字段全固定,不随招标要求变)。
+- 换公司 / 换项目要改这里。
+- 例外:「质量」等 TENDER_FIRST_FALLBACK_FIELDS 字段是"招标优先、固定兜底"——
+  优先用招标解析值,解析不到才用固定值(2026-07-11 员工反馈后用户拍板改的)。
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ COMPANY_NAME_TYPOS: tuple[str, ...] = ("安徽正气建设有限公司",)
 # 固定字段规则:键=引擎 profile 键,值=直接落进商务标的文字。
 COMMERCIAL_FIXED_FIELDS: dict[str, str] = {
     # —— 投标函 ——
-    "质量": "合格",                       # 工程质量
     "安全": "无安全事故",                  # 安全目标
     "company_name": AUTHORITATIVE_COMPANY_NAME,   # 投标人 / 投标人名称 / 名称
     "legal_representative": "许明英",      # 法定代表人或其委托代理人 / 姓名
@@ -39,6 +40,13 @@ COMMERCIAL_FIXED_FIELDS: dict[str, str] = {
     "法人联系方式": "13305691967",
 }
 
+# 招标优先、固定值兜底的字段:优先用招标文件(parser)解析出的值,解析不到才用这里的
+# 固定值。2026-07-11 员工反馈"工程质量:合格 与前附表要求不一致"后,用户拍板把
+# 质量从全固定改为招标优先(此前的"全固定"决策就此作废)。
+TENDER_FIRST_FALLBACK_FIELDS: dict[str, str] = {
+    "质量": "合格",                       # 工程质量:招标前附表有要求就用它,否则填"合格"
+}
+
 # 一致性检查里要"全文一致"核对的字段(键 → 中文名,仅用于告警可读)。
 _CONSISTENCY_FIELDS: tuple[tuple[str, str], ...] = (
     ("company_name", "公司名称"),
@@ -51,9 +59,13 @@ def apply_fixed_fields(profile: dict[str, Any]) -> dict[str, Any]:
     """把固定字段规则以最高优先级覆盖进 profile(就地修改并返回)。
 
     必须在公司档案、招标 parser 派生字段、法人 OCR 推导都装配完之后再调用,
-    以保证「固定规则 > 其它来源」。
+    以保证「固定规则 > 其它来源」。招标优先字段(TENDER_FIRST_FALLBACK_FIELDS)
+    例外:招标解析出的值保留,只在空缺时补固定兜底值。
     """
     profile.update(COMMERCIAL_FIXED_FIELDS)
+    for key, fallback in TENDER_FIRST_FALLBACK_FIELDS.items():
+        if not str(profile.get(key) or "").strip():
+            profile[key] = fallback
     return profile
 
 

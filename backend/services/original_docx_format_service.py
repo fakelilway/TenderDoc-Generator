@@ -1070,14 +1070,19 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                         if after.startswith(unit) and value.endswith(unit):
                             value = value[: -len(unit)].strip()
                             break
-                    if j == k:  # 空槽 → 在 j 处插入值
-                        if j < n:
-                            ri, li = owner[j]
+                    # 冒号后连排≥2个空格视为书写槽的一部分,填值时一并吃掉让值紧贴
+                    # 冒号(员工反馈第2条:长空格把值推开、打乱原有版式);单个空格当
+                    # 正常间隔保留。
+                    lead = j - (i + 1)
+                    span_start = i + 1 if lead >= 2 else j
+                    if span_start == k:  # 空槽 → 原位插入值
+                        if k < n:
+                            ri, li = owner[k]
                         else:
                             ri, li = len(runs) - 1, len(runs[-1].text)
                         edits.append((ri, li, li, value))
-                    else:  # 留白槽 → 替换 s[j:k]
-                        rj, lj = owner[j]
+                    else:  # 留白槽 → 替换 s[span_start:k]
+                        rj, lj = owner[span_start]
                         rk, lk = owner[k - 1]
                         if rj == rk:
                             edits.append((rj, lj, lk + 1, value))
@@ -1163,8 +1168,11 @@ def _fill_resume_tables(
 ) -> int:
     """填项目经理 + 总工两张简历表(各含"拟在本标段")。
 
-    按"表内/上方标题里的角色字样"把每张表分给对应的人;角色判不出、两人都在、且有多张表时,
-    末张归总工(总工表一般排项目经理之后)。只填空格,绝不动已填内容。返回填入格数。
+    按"表内/上方标题里的角色字样"把每张表分给对应的人。角色判不出的表只做两种有把握的
+    推断:项目经理还没占表时首张无名表归他(单表模板常见);总工还没占表时末张无名表归他
+    (总工表惯例排后)。**其余判不出的表一律留空给人工**——绝不默认填项目经理,防止把
+    项目经理信息灌进其他人员的简历表(员工反馈第11条的真实事故)。
+    只填空格,绝不动已填内容。返回填入格数。
     """
     from docx.oxml.ns import qn as _qn
     from docx.table import Table
@@ -1193,19 +1201,27 @@ def _fill_resume_tables(
     has_tech = bool(tech_resume.get("姓名"))
 
     assign: list[tuple[Any, dict[str, Any] | None]] = []
+    pm_assigned = False
     tech_assigned = False
     for tb, role in targets:
         if role == "tech":
             assign.append((tb, tech_resume if has_tech else None))
             tech_assigned = tech_assigned or has_tech
-        else:  # pm 或判不出 → 默认项目经理
+        elif role == "pm":
             assign.append((tb, pm_resume if has_pm else None))
-    # 兜底:选了总工但没有一张被判成总工、且有多张简历表 → 末张改判给总工
-    if has_tech and not tech_assigned and len(targets) >= 2:
-        for idx in range(len(targets) - 1, -1, -1):
-            if targets[idx][1] == "":
-                assign[idx] = (targets[idx][0], tech_resume)
-                break
+            pm_assigned = pm_assigned or has_pm
+        else:  # 判不出的表先留空,下面只做两种有把握的推断
+            assign.append((tb, None))
+    unassigned = [i for i, (_, role) in enumerate(targets) if role == ""]
+    # 推断①:项目经理没占到表 → 首张无名表归他(单表/表头无角色字样的模板)
+    if has_pm and not pm_assigned and unassigned:
+        idx = unassigned.pop(0)
+        assign[idx] = (targets[idx][0], pm_resume)
+    # 推断②:选了总工但没占到表 → 末张无名表归他(总工表惯例排项目经理后)
+    if has_tech and not tech_assigned and unassigned:
+        idx = unassigned.pop()
+        assign[idx] = (targets[idx][0], tech_resume)
+    # 其余无名表保持留空:宁可人工补,不张冠李戴(员工反馈第11条)
 
     filled = 0
     for tb, resume in assign:

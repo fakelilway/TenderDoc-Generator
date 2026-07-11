@@ -75,3 +75,29 @@ def close_pool() -> None:
     if _pool is not None and not _pool.closed:
         _pool.closeall()
     _pool = None
+
+
+# 代码新增而 init_db.sql 只在 Postgres 首次建库时执行的列:已部署的库(局域网盒子)
+# 更新镜像后不会重放建表脚本,漏列会让 _fetch_project 的显式 SELECT 整个报错。
+# 启动时补齐(全幂等)。新增列时同步维护这里和 init_db.sql。
+_SCHEMA_GUARDS = (
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_pm_performance JSONB",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_td_performance JSONB",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_evidence_pages JSONB",
+)
+
+
+def ensure_schema() -> None:
+    """启动时把代码依赖的新列补进已存在的库(幂等;失败只告警不拦启动)。"""
+    import logging
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                for statement in _SCHEMA_GUARDS:
+                    cur.execute(statement)
+            conn.commit()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "启动补列失败(数据库可能未就绪),依赖新列的功能在补列前不可用", exc_info=True
+        )

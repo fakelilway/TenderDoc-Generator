@@ -88,6 +88,8 @@ def test_fill_clones_detail_tables_per_record_and_extends_summary() -> None:
     profile = {
         "similar_projects_pm": records,
         "selected_performance": [{"name": r["project_name"]} for r in records],
+        # 全部人工手选:经理表也要显式勾选才填(2026-07-11拍板,不默认全填名下)
+        "selected_pm_performance": [{"name": r["project_name"]} for r in records],
         "similar_projects_td": [],
     }
     result = fill_similar_project_sections(doc, profile)
@@ -398,6 +400,97 @@ def test_multi_pair_row_fills_correct_cells() -> None:
     assert t.cell(1, 1).text.strip() == "2021.1.1"
     assert t.cell(1, 3).text.strip() == "2021.12.1"
     assert filled >= 3
+
+
+def test_pm_selection_subset_fills_only_selected() -> None:
+    """经理名下3条、用户只勾1条 → 经理节只填勾中的那条(多余空表裁掉)。"""
+    from services.similar_project_fill_service import fill_similar_project_sections
+
+    doc = Document()
+    doc.add_paragraph("项目经理近年完成的类似项目信息表（资格审查）")
+    _add_detail_table(doc)
+    records = [_record(1), _record(2), _record(3)]
+    profile = {
+        "similar_projects_pm": records,
+        "selected_pm_performance": [{"name": "测试业绩2号工程"}],
+    }
+    fill_similar_project_sections(doc, profile)
+    details = _detail_tables(doc)
+    assert len(details) == 1
+    assert _cell_of(details[0], "项目名称") == "测试业绩2号工程"
+    assert _cell_of(details[0], "发包人名称") == "发包人2"
+
+
+def test_pm_selection_order_follows_user() -> None:
+    """经理业绩勾选顺序=出表顺序(勾3再勾1,表就先3后1)。"""
+    from services.similar_project_fill_service import fill_similar_project_sections
+
+    doc = Document()
+    doc.add_paragraph("项目经理近年完成的类似项目信息表（资格审查）")
+    _add_detail_table(doc)
+    records = [_record(1), _record(2), _record(3)]
+    profile = {
+        "similar_projects_pm": records,
+        "selected_pm_performance": [
+            {"name": "测试业绩3号工程"},
+            {"name": "测试业绩1号工程"},
+        ],
+    }
+    fill_similar_project_sections(doc, profile)
+    details = _detail_tables(doc)
+    assert [_cell_of(t, "项目名称") for t in details] == [
+        "测试业绩3号工程",
+        "测试业绩1号工程",
+    ]
+
+
+def test_td_selection_cleared_leaves_blank() -> None:
+    """总工业绩人工清空([]) → 总工节留白且受保护,不回填名下全量。"""
+    from services.similar_project_fill_service import fill_similar_project_sections
+
+    doc = Document()
+    doc.add_paragraph("项目总工近年完成的类似项目信息表（资格审查）")
+    _add_detail_table(doc)
+    profile = {
+        "similar_projects_td": [_record(1, tech="许明英")],
+        "selected_td_performance": [],  # 人工清空
+    }
+    result = fill_similar_project_sections(doc, profile)
+    details = _detail_tables(doc)
+    assert len(details) == 1
+    assert _cell_of(details[0], "项目名称") == ""
+    assert details[0]._tbl in result["handled_tables"]
+
+
+def test_pm_no_selection_leaves_blank_all_manual() -> None:
+    """没勾经理业绩(键缺失/None) → 留白(全部人工手选,不默认全填;用户2026-07-11拍板)。"""
+    from services.similar_project_fill_service import fill_similar_project_sections
+
+    doc = Document()
+    doc.add_paragraph("项目经理近年完成的类似项目信息表（资格审查）")
+    _add_detail_table(doc)
+    profile = {
+        "similar_projects_pm": [_record(1), _record(2)],
+        "selected_pm_performance": None,  # 显式 None 等价键缺失=没勾
+    }
+    result = fill_similar_project_sections(doc, profile)
+    details = _detail_tables(doc)
+    assert len(details) == 1
+    assert _cell_of(details[0], "项目名称") == ""  # 留白,不自动灌名下全量
+    assert details[0]._tbl in result["handled_tables"]  # 受保护不被通用填表器乱填
+
+
+def test_pick_by_selection_exact_name_beats_norm_collision() -> None:
+    """两条只差括号内容的业绩(归一化后同名)各勾各的,不许都填成同一条的数据。"""
+    from services.similar_project_fill_service import _pick_by_selection
+
+    a = dict(_record(1), project_name="养护工程（一标段）")
+    b = dict(_record(2), project_name="养护工程（二标段）")
+    picked = _pick_by_selection(
+        [a, b],
+        [{"name": "养护工程（二标段）"}, {"name": "养护工程（一标段）"}],
+    )
+    assert [r["owner_name"] for r in picked] == ["发包人2", "发包人1"]
 
 
 def test_parse_similar_projects_docx_roundtrip(tmp_path) -> None:

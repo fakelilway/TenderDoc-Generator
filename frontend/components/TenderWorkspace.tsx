@@ -30,8 +30,9 @@ import { NavLinkButton } from "@/components/NavLinkButton";
 import { OutlineEditor } from "@/components/OutlineEditor";
 import { ProjectMaterialPanel } from "@/components/ProjectMaterialPanel";
 import { ProjectBOQPanel } from "@/components/ProjectBOQPanel";
-import { PersonnelPanel } from "@/components/PersonnelPanel";
+import { PmRoleSelector, TechRoleSelector } from "@/components/PersonnelPanel";
 import { PerformancePanel } from "@/components/PerformancePanel";
+import { RolePerformancePanel } from "@/components/RolePerformancePanel";
 import { ConformancePanel } from "@/components/ConformancePanel";
 import { ParsedReviewPanel } from "@/components/ParsedReviewPanel";
 import { RagSelectionPanel } from "@/components/RagSelectionPanel";
@@ -262,7 +263,9 @@ export function TenderWorkspace({
 }) {
   const [projectName, setProjectName] = useState("演示技术标项目");
   // 选派项目经理后 bump:业绩跟经理走(后端自动带出),业绩面板要重拉选中项
-  const [performanceRefresh, setPerformanceRefresh] = useState(0);
+  // 选派/换人后 bump → 对应角色的业绩勾选面板重拉"此人名下候选"
+  const [pmPerfRefresh, setPmPerfRefresh] = useState(0);
+  const [tdPerfRefresh, setTdPerfRefresh] = useState(0);
   const [file, setFile] = useState<File | null>(null);
   const [projectId, setProjectId] = useState<number | null>(initialProjectId);
   const [status, setStatus] = useState("idle");
@@ -1524,16 +1527,35 @@ export function TenderWorkspace({
               ) : null}
               {centerTab === "outline" ? (
                 <div className="space-y-4">
+                  {/* 选派与业绩勾选,按标书员操作顺序排:
+                      公司业绩 → 选项目经理 → 勾经理业绩 → 选总工 → 勾总工业绩 */}
                   {projectId != null ? (
-                    <PersonnelPanel
+                    <PerformancePanel projectId={projectId} />
+                  ) : null}
+                  {projectId != null ? (
+                    <PmRoleSelector
                       projectId={projectId}
-                      onPmSelected={() => setPerformanceRefresh((v) => v + 1)}
+                      onSelected={() => setPmPerfRefresh((v) => v + 1)}
                     />
                   ) : null}
                   {projectId != null ? (
-                    <PerformancePanel
+                    <RolePerformancePanel
                       projectId={projectId}
-                      refreshToken={performanceRefresh}
+                      role="pm"
+                      refreshToken={pmPerfRefresh}
+                    />
+                  ) : null}
+                  {projectId != null ? (
+                    <TechRoleSelector
+                      projectId={projectId}
+                      onSelected={() => setTdPerfRefresh((v) => v + 1)}
+                    />
+                  ) : null}
+                  {projectId != null ? (
+                    <RolePerformancePanel
+                      projectId={projectId}
+                      role="td"
+                      refreshToken={tdPerfRefresh}
                     />
                   ) : null}
                   {projectId != null ? (

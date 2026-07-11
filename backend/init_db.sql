@@ -61,6 +61,12 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS boq_text TEXT;
 -- 本项目选派的人员(项目经理等),从公司名册按招标要求选定,填进商务卷人员表
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_personnel JSONB;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_performance JSONB;
+-- 选派的项目经理/总工名下类似业绩的人工勾选(全部人工手选:勾中才填,没勾/NULL/[]=留白)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_pm_performance JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_td_performance JSONB;
+-- 业绩证明扫描件选页(员工意见7:盖章页被上限截掉):{业绩项目名:[document_id,...]};
+-- 无键=默认规则(中标2/合同2/交工4),有键=只插勾中的那几页(空列表=该业绩不附图)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_evidence_pages JSONB;
 
 -- 投标人企业档案：单行表，生成标书时注入【投标人信息】并填写商务卷表格
 CREATE TABLE IF NOT EXISTS company_profile (

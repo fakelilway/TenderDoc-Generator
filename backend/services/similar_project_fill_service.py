@@ -392,6 +392,34 @@ def _fill_summary_table(table: Table, names: list[str]) -> int:
     return filled
 
 
+def _pick_by_selection(
+    pool: list[dict[str, Any]], selected: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """按勾选列表(每条含 name)从记录池里挑出全字段记录,顺序跟勾选走。
+
+    先按原名精确匹配(勾选项的名字本来就从记录原样带出,永远命中),匹配不上才退归一化
+    模糊匹配——_norm 会剃掉括号补充说明,"(一标段)/(二标段)"这类两条不同业绩归一化后
+    同名,直接用它建索引会把两条都填成同一条的数据。池里都找不到的只填项目名、其余留白
+    待人工(不硬凑别的项目的数据)。"""
+    from services.performance_archive_service import _norm
+
+    by_exact: dict[str, dict[str, Any]] = {}
+    by_norm: dict[str, dict[str, Any]] = {}
+    for r in pool:
+        raw = str(r.get("project_name") or "").strip()
+        by_exact.setdefault(raw, r)
+        by_norm.setdefault(_norm(raw), r)
+    out: list[dict[str, Any]] = []
+    for item in selected:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        out.append(
+            by_exact.get(name) or by_norm.get(_norm(name)) or {"project_name": name}
+        )
+    return out
+
+
 def _records_for_role(role: str, profile: dict[str, Any]) -> list[dict[str, Any]]:
     """节归属人 → 该填的记录列表(顺序即出表顺序)。
 
@@ -399,28 +427,20 @@ def _records_for_role(role: str, profile: dict[str, Any]) -> list[dict[str, Any]
     为准,逐条去全部信息表记录里按项目名找到它、原样补全字段(发包人三要素/合同价/监理/
     工期…);选的项目信息表里没有则只填项目名、其余留白待人工。没做业绩选择(键缺失)则
     留白不动模板,交人工填。选项目经理不影响这张表。
-    项目经理节:填选定项目经理名下的项目(跟人走,证明这个人有经验)。
-    项目总工节:填选定总工(技术负责人)名下的项目;匹配不到就留白,绝不拿别人的凑。
+    项目经理/项目总工节:候选=选定人名下的项目;**全部人工手选**(用户2026-07-11拍板,
+    不做默认全选):勾中哪几条填哪几条、顺序跟勾选走;没勾(None/键缺失/[])一律留白,
+    与投标人节同一规矩。匹配不到留白,绝不拿别人的凑。
     """
-    if role == "td":
-        return list(profile.get("similar_projects_td") or [])
-    if role == "pm":
-        return list(profile.get("similar_projects_pm") or [])
+    if role in ("td", "pm"):
+        pool = list(profile.get(f"similar_projects_{role}") or [])
+        selected = profile.get(f"selected_{role}_performance")
+        return _pick_by_selection(pool, selected or [])
     # bidder(投标人/公司):照用户选中的业绩填,从全部信息表记录按名补全字段
     selected = profile.get("selected_performance")
     if selected is None:
         return []  # 没选业绩 → 留白待人工(主循环保留空模板,不乱填)
-    from services.performance_archive_service import _norm
-
     pool = profile.get("similar_projects_all") or profile.get("similar_projects_pm") or []
-    by_norm = {_norm(str(r.get("project_name") or "")): r for r in pool}
-    out: list[dict[str, Any]] = []
-    for item in selected:
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        out.append(by_norm.get(_norm(name)) or {"project_name": name})
-    return out
+    return _pick_by_selection(pool, selected)
 
 
 def fill_similar_project_sections(document: Any, profile: dict[str, Any]) -> dict[str, Any]:

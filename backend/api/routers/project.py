@@ -28,6 +28,7 @@ from schemas.personnel import (
 )
 from schemas.tender_spec import (
     ConformanceReportResponse,
+    EvidencePageSelectionRequest,
     PerformanceSelectionRequest,
 )
 from schemas.project import (
@@ -502,6 +503,66 @@ def save_project_performance_selection(
     try:
         items = [item.model_dump() for item in request.selected]
         return project_service.save_selected_performance(project_id, items)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.get("/api/project/{project_id}/role-performance/{role}/recommendations")
+def get_role_performance_recommendations(
+    project_id: int,
+    role: str,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """选派的项目经理(pm)/总工(td)名下的业绩候选,供人工勾选;含当前勾选。"""
+    if role not in ("pm", "td"):
+        raise HTTPException(status_code=422, detail="role 只能是 pm 或 td")
+    try:
+        return project_service.recommend_role_performance(project_id, role)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.put("/api/project/{project_id}/role-performance/{role}")
+def save_role_performance_selection(
+    project_id: int,
+    role: str,
+    request: PerformanceSelectionRequest,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """保存项目经理(pm)/总工(td)业绩勾选(多选;空=清空→该角色表留白)。"""
+    if role not in ("pm", "td"):
+        raise HTTPException(status_code=422, detail="role 只能是 pm 或 td")
+    try:
+        items = [item.model_dump() for item in request.selected]
+        return project_service.save_selected_role_performance(project_id, role, items)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.get("/api/project/{project_id}/evidence-pages")
+def get_project_evidence_pages(
+    project_id: int,
+    name: str,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """某条业绩的全部证明扫描页+当前选页+默认取哪几页(员工意见7:人工选页放盖章页)。"""
+    try:
+        return project_service.get_evidence_page_options(project_id, name)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.put("/api/project/{project_id}/evidence-pages")
+def save_project_evidence_pages(
+    project_id: int,
+    request: EvidencePageSelectionRequest,
+    _project: int = Depends(authorized_project),
+) -> dict:
+    """保存某条业绩的证明选页;document_ids=null 恢复默认规则。"""
+    try:
+        return project_service.save_evidence_page_selection(
+            project_id, request.name, request.document_ids
+        )
     except Exception as error:
         _raise_http_error(error)
 

@@ -72,15 +72,26 @@ def derive_pm_requirement(requirements: Any) -> PMRequirement:
 
 
 def _score_member(
-    member: PersonnelMember, requirement: PMRequirement
+    member: PersonnelMember,
+    requirement: PMRequirement,
+    perf_count: int = 0,
 ) -> PMRecommendation | None:
-    """给一个候选打分;不满足硬性等级时返回 None(不进推荐)。"""
-    if not member.is_pm_candidate:
+    """给一个候选打分;不满足硬性等级时返回 None(不进推荐)。
+
+    perf_count=此人在《类似项目信息表》里当项目经理的项目数。带过项目的人**保底入选**
+    (公司真让他带过,是最硬的胜任证据):证件/等级不满足招标要求也列出来,但挂
+    "废标风险,慎选"的明白警告,让用户自己权衡——系统不藏人,只把风险说清。
+    """
+    proven = perf_count > 0
+    if not member.is_pm_candidate and not proven:
         return None
 
     matched: list[str] = []
     gaps: list[str] = []
     score = 0.0
+
+    if not member.is_pm_candidate:
+        gaps.append("名册无建造师证记录(凭业绩保底入选)——证件需人工核验")
 
     # 等级:候选最高等级 ≥ 要求等级 即达标(一级可顶二级)。
     req_rank = _level_rank(requirement.builder_level)
@@ -89,8 +100,12 @@ def _score_member(
         if cand_rank >= req_rank:
             score += 2.0
             matched.append(f"等级达标:{'/'.join(member.builder_levels)}")
+        elif proven:
+            gaps.append(
+                f"建造师等级不满足招标要求({requirement.builder_level})——废标风险,慎选"
+            )
         else:
-            return None  # 等级不够,硬性不满足
+            return None  # 等级不够且无业绩背书,硬性不满足
     elif cand_rank:
         score += 1.0  # 不限等级时,有证即可,高等级略加分
         score += 0.1 * cand_rank
@@ -123,20 +138,46 @@ def _score_member(
     elif member.source == "知识库":
         gaps.append("名册来源=知识库,需核验在职/有效期")
 
+    # 业绩背书:信息表里真带过项目,按项目数加分(封顶1.5),真带过的人排前面
+    if proven:
+        score += min(1.5, 0.3 * perf_count)
+        matched.append(f"业绩:当过{perf_count}个项目的项目经理")
+
     return PMRecommendation(member=member, score=round(score, 2), matched=matched, gaps=gaps)
 
 
+def _norm_name(name: str) -> str:
+    import re as _re
+
+    return _re.sub(r"[\s　]+", "", name or "")
+
+
 def recommend_project_managers(
-    roster: list[PersonnelMember], requirement: PMRequirement, limit: int = 20
+    roster: list[PersonnelMember],
+    requirement: PMRequirement,
+    limit: int = 20,
+    performance_counts: dict[str, int] | None = None,
 ) -> list[PMRecommendation]:
-    """按要求从名册推荐项目经理候选,分高在前。"""
+    """按要求从名册推荐项目经理候选,分高在前。
+
+    performance_counts={归一化姓名:当经理的项目数}(来自《类似项目信息表》):
+    带过项目的人保底入选+按项目数加分,且**不受前N名截断**(分不够也追加在尾部,不藏人)。"""
+    counts = performance_counts or {}
     scored = [
         rec
-        for rec in (_score_member(member, requirement) for member in roster)
+        for rec in (
+            _score_member(member, requirement, counts.get(_norm_name(member.name), 0))
+            for member in roster
+        )
         if rec is not None
     ]
     scored.sort(key=lambda rec: (-rec.score, rec.member.name))
-    return scored[:limit]
+    top = scored[:limit]
+    top += [
+        rec for rec in scored[limit:]
+        if counts.get(_norm_name(rec.member.name), 0) > 0
+    ]
+    return top
 
 
 # ── 项目技术负责人(总工)选派 ──────────────────────────────────────────────
@@ -196,12 +237,20 @@ def derive_tech_director_requirement(requirements: Any) -> TechDirectorRequireme
 
 
 def _score_tech(
-    member: PersonnelMember, requirement: TechDirectorRequirement
+    member: PersonnelMember,
+    requirement: TechDirectorRequirement,
+    perf_count: int = 0,
 ) -> PMRecommendation | None:
-    """给一个总工候选打分;有职称即入选(职称是总工核心),硬等级不够则淘汰。"""
+    """给一个总工候选打分;有职称即入选(职称是总工核心),硬等级不够则淘汰。
+
+    perf_count=此人在《类似项目信息表》里当技术负责人的项目数。带过的人保底入选:
+    职称不满足招标要求也列出来,挂"废标风险,慎选"警告(例:许明英职称工程师却当过
+    15个项目的总工,招标要高级职称时她不该被藏起来,该由用户权衡)。
+    """
+    proven = perf_count > 0
     cand_rank = _title_rank(member.title)
-    if cand_rank == 0 and not member.builder_certs:
-        return None  # 无职称也无建造师 → 不像总工候选
+    if cand_rank == 0 and not member.builder_certs and not proven:
+        return None  # 无职称也无建造师也无业绩背书 → 不像总工候选
 
     matched: list[str] = []
     gaps: list[str] = []
@@ -212,8 +261,13 @@ def _score_tech(
         if cand_rank >= req_rank:
             score += 2.0
             matched.append(f"职称达标:{member.title or '—'}")
+        elif proven:
+            gaps.append(
+                f"职称不满足招标要求({requirement.title_level},"
+                f"本人{member.title or '无职称'})——废标风险,慎选"
+            )
         else:
-            return None  # 职称不够,硬性不满足
+            return None  # 职称不够且无业绩背书,硬性不满足
     elif cand_rank:
         score += 1.0 + 0.1 * cand_rank
 
@@ -245,17 +299,37 @@ def _score_tech(
     elif member.source == "知识库":
         gaps.append("名册来源=知识库,需核验在职/有效期")
 
+    # 业绩背书:信息表里真当过技术负责人,按项目数加分(封顶1.5)
+    if proven:
+        score += min(1.5, 0.3 * perf_count)
+        matched.append(f"业绩:当过{perf_count}个项目的技术负责人")
+
     return PMRecommendation(member=member, score=round(score, 2), matched=matched, gaps=gaps)
 
 
 def recommend_tech_directors(
-    roster: list[PersonnelMember], requirement: TechDirectorRequirement, limit: int = 20
+    roster: list[PersonnelMember],
+    requirement: TechDirectorRequirement,
+    limit: int = 20,
+    performance_counts: dict[str, int] | None = None,
 ) -> list[PMRecommendation]:
-    """按要求从名册推荐总工候选,分高在前。"""
+    """按要求从名册推荐总工候选,分高在前。
+
+    performance_counts={归一化姓名:当总工的项目数}:带过的人保底入选+按项目数加分,
+    且不受前N名截断(分不够也追加在尾部,不藏人)。"""
+    counts = performance_counts or {}
     scored = [
         rec
-        for rec in (_score_tech(member, requirement) for member in roster)
+        for rec in (
+            _score_tech(member, requirement, counts.get(_norm_name(member.name), 0))
+            for member in roster
+        )
         if rec is not None
     ]
     scored.sort(key=lambda rec: (-rec.score, rec.member.name))
-    return scored[:limit]
+    top = scored[:limit]
+    top += [
+        rec for rec in scored[limit:]
+        if counts.get(_norm_name(rec.member.name), 0) > 0
+    ]
+    return top

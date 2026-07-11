@@ -1033,10 +1033,13 @@ def _apply_selected_project_manager(company_profile, project):
             profile["similar_projects_pm"] = (
                 similar_project_info_service.records_for_manager(selected["name"])
             )
+            # 经理业绩人工勾选(全手选):勾中才填;没勾(None/[])=留白
+            profile["selected_pm_performance"] = project.get("selected_pm_performance")
         if tech_ok:
             profile["similar_projects_td"] = (
                 similar_project_info_service.records_for_tech_leader(tech["name"])
             )
+            profile["selected_td_performance"] = project.get("selected_td_performance")
     except Exception:
         logger.warning("读取业绩信息表失败,类似项目信息表将留白待人工", exc_info=True)
     # 总工(项目技术负责人)选派 → 覆盖档案默认,下游商务卷人员表 + 证件插图自动用选定人

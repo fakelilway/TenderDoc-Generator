@@ -51,6 +51,13 @@ class PerformanceSelectionRequest(BaseModel):
     selected: list[PerformanceSelectionItem] = []
 
 
+class EvidencePageSelectionRequest(BaseModel):
+    """某条业绩的证明扫描件选页(员工意见7:手动把盖章页勾进来)。"""
+
+    name: str  # 业绩项目名
+    document_ids: list[int] | None = None  # None=恢复默认规则;列表=只插这些页
+
+
 class TenderSpec(BaseModel):
     """读懂招标的结构化成果(阶段一,LLM 抽 + 人工核)。
 

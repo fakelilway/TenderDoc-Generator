@@ -123,15 +123,24 @@ def parse_roster_xlsx(xlsx_path: str | Path) -> list[PersonnelMember]:
         )
 
     # 三类人员安全考核证:类别 A/B/C。项目经理须 B 证。
+    # ⚠️台账此表按 A/B/C 分块,"类别"是合并单元格——只有每块第一行有值,其余行读出来
+    # 是空。必须"沿用上一行的类别"(forward-fill),否则 64 行只认得 3 行(每块首行),
+    # 名册几乎人人"缺安全B证"(2026-07-12 用户实测揪出)。
+    current_class = ""
     for getter in _iter_records(rows_of("三类人员证书")):
-        category = getter("类别").upper()
-        if category not in _SAFETY_CLASSES:
+        raw = getter("类别").upper()
+        if raw in _SAFETY_CLASSES:
+            current_class = raw  # 块首行:更新当前类别
+        elif raw:
+            # 非A/B/C的杂值(如段标题"交安"串进类别列):不更新也不沿用,防污染
+            continue
+        if not current_class:
             continue
         member = resolve(getter("姓名"), getter("身份证号"))
         if member is None:
             continue
-        if category not in member.safety_cert_classes:
-            member.safety_cert_classes.append(category)
+        if current_class not in member.safety_cert_classes:
+            member.safety_cert_classes.append(current_class)
         member.safety_cert_no = member.safety_cert_no or getter("证书编号")
 
     # 八大员(新/旧):证书类别 = 标准员/材料员/…

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from core.config import settings, validate_security_settings
-from core.db import close_pool
+from core.db import close_pool, ensure_schema
 
 # Re-exported for backward compatibility (tests monkeypatch ``api.main.<module>``
 # attributes and import these names directly from ``api.main``).
@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     validate_security_settings(settings)
+    ensure_schema()  # 老库更新代码后自动补新列(幂等),防显式SELECT因漏列整体报错
     yield
     close_pool()
 

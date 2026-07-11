@@ -7,6 +7,7 @@ import {
   getPerformanceRecommendations,
   savePerformanceSelection
 } from "@/lib/api";
+import { EvidencePagePicker } from "@/components/EvidencePagePicker";
 import type {
   PerformanceItem,
   PerformanceRecommendation,
@@ -103,7 +104,7 @@ export function PerformancePanel({
             <Award className="h-4 w-4" />
           </span>
           <div>
-            <h2 className="text-sm font-semibold text-[#1d1d1f]">类似业绩选择（多选）</h2>
+            <h2 className="text-sm font-semibold text-[#1d1d1f]">投标人（公司）业绩选择（多选）</h2>
             <p className="text-[11px] text-[#8e8e93]">
               {reqText(requirement)}
             </p>
@@ -125,7 +126,7 @@ export function PerformancePanel({
       {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
 
       <p className="mt-2 rounded-[10px] bg-[#34c759]/[0.06] px-2.5 py-1.5 text-[11px] text-[#1f9d4d]">
-        选中的业绩会原样填进「投标人近年完成的类似项目信息表」，证明图片一并带上。
+        选中的业绩会原样填进「投标人近年完成的类似项目信息表」，证明图片一并带上；一条不选，这张表就留白。
       </p>
 
       <div className="mt-3 max-h-[420px] space-y-1.5 overflow-auto">
@@ -137,8 +138,8 @@ export function PerformancePanel({
         {recommendations.map((rec) => {
           const isSel = selectedItems.has(rec.name);
           return (
+            <div key={rec.name}>
             <button
-              key={rec.name}
               type="button"
               disabled={busy}
               onClick={() => void toggle(rec)}
@@ -187,6 +188,10 @@ export function PerformancePanel({
                 ) : null}
               </span>
             </button>
+            {isSel ? (
+              <EvidencePagePicker projectId={projectId} name={rec.name} />
+            ) : null}
+            </div>
           );
         })}
       </div>

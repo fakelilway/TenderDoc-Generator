@@ -465,3 +465,47 @@ def test_plan_chunk_reaches_writer_prompt_with_label() -> None:
     assert "【公司同类施工方案" in user_prompt
     assert "路面基层水泥稳定碎石" in user_prompt
     assert "未匹配到相关知识片段" not in user_prompt
+
+
+def test_qualification_evidence_keeps_cert_pages_and_types(monkeypatch) -> None:
+    """员工反馈第5条:同一本证的分页(主页/附页/正反面)整套保留,不算重复;
+    不同证件类型(资质证书 vs 施工劳务资质证书)同专业也不互相挤掉;
+    同类型同专业同页的重复扫描仍去重。"""
+    import re
+
+    from services import knowledge_service, v2_generation_service
+
+    refs = [
+        # 公路养护资质证书:主页+附页(同specialty同类型,靠分页标记区分)
+        {"document_id": 11, "document_category": "公司证件", "certificate_type": "资质证书",
+         "specialty": "公路养护", "valid_to": "2028-01-01",
+         "file_name": "资质证书_公路养护_附页.jpg"},
+        {"document_id": 10, "document_category": "公司证件", "certificate_type": "资质证书",
+         "specialty": "公路养护", "valid_to": "2028-01-01",
+         "file_name": "资质证书_公路养护_主页.jpg"},
+        # 主页的重复扫描件:仍要被去重掉
+        {"document_id": 12, "document_category": "公司证件", "certificate_type": "资质证书",
+         "specialty": "公路养护", "valid_to": "2028-01-01",
+         "file_name": "资质证书_公路养护_主页_扫描2.jpg"},
+        # 施工劳务资质证书:与公路工程资质同专业(通用),类型不同必须保留
+        {"document_id": 20, "document_category": "公司证件", "certificate_type": "资质证书",
+         "specialty": "通用", "file_name": "资质证书_公路工程.jpg"},
+        {"document_id": 21, "document_category": "公司证件",
+         "certificate_type": "施工劳务资质证书", "specialty": "通用",
+         "file_name": "施工劳务资质证书.jpg"},
+    ]
+    monkeypatch.setattr(
+        knowledge_service, "list_knowledge_image_references", lambda *a, **k: list(refs)
+    )
+    md = v2_generation_service._qualification_evidence_markdown()
+    ids = re.findall(r"document_id=(\d+)", md)
+
+    assert "10" in ids and "11" in ids          # 主页+附页整套保留
+    assert "12" not in ids                       # 同页重复扫描仍去重
+    assert "20" in ids and "21" in ids          # 不同证件类型不互相挤
+    assert ids.index("10") < ids.index("11")    # 主页排在附页前
+    assert "企业资质证书（公路养护·主页）" in md
+    assert "企业资质证书（公路养护·附页）" in md
+    assert "企业资质证书（施工劳务）" in md
+    # 专业"通用"不进图注
+    assert "（通用）" not in md

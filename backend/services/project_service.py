@@ -94,9 +94,14 @@ from services.project.personnel import (
     save_selected_tech_director,
 )
 from services.project.performance import (
+    get_evidence_page_options,
     get_selected_performance,
+    get_selected_role_performance,
     recommend_project_performance,
+    recommend_role_performance,
+    save_evidence_page_selection,
     save_selected_performance,
+    save_selected_role_performance,
 )
 from services.project.delivery import (
     _DELIVERY_FORMATS,

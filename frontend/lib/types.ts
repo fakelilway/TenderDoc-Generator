@@ -624,6 +624,33 @@ export type PerformanceRecommendationResponse = {
   selected: PerformanceItem[];
 };
 
+// 业绩证明选页(员工意见7:默认每类取前几张会截掉盖章页,人工勾选以勾选为准)
+export type EvidencePageOption = {
+  document_id: number;
+  file_name: string;
+  evidence_type: string; // 中标通知书 / 合同 / 交工验收 / 其他
+  evidence_seq: number;
+};
+
+export type EvidencePagesResponse = {
+  project_id: number;
+  name: string;
+  pages: EvidencePageOption[];
+  selected: number[] | null; // null=没选过(生成走默认规则);列表=以勾选为准
+  default_ids: number[]; // 默认规则会取的页(供界面预勾)
+};
+
+// 角色业绩勾选(项目经理/总工名下业绩,人工多选)
+export type RolePerformanceResponse = {
+  project_id: number;
+  role: "pm" | "td";
+  person: string | null; // 选派的人名;null=该角色尚未选派
+  recommendations: PerformanceRecommendation[];
+  selected: PerformanceItem[] | null; // null/[]=没勾(留白);全部人工手选
+  // 信息表里当过该角色的人及条数(面板空时提示"谁有业绩可选")
+  role_holders?: { name: string; count: number }[];
+};
+
 export type PMSelectionResponse = {
   project_id: number;
   selected: {

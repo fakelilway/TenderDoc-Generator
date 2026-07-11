@@ -1205,13 +1205,34 @@ def heal_evidence_caption_binding(document: Any, profile: dict[str, Any] | None 
     return fixed
 
 
+def heal_table_row_integrity(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """给所有表格行加"禁止跨页拆分"(w:cantSplit):一行的内容不再被劈到两页
+    (员工反馈第3条"一页内容被分段成多页"最扎眼的形态)。装不下的整行挪到下页;
+    比整页还高的行 Word 会照常拆,不会溢出丢内容。返回加固的行数。"""
+    fixed = 0
+    for table in document.tables:
+        for row in table.rows:
+            tr = row._tr
+            trPr = tr.find(qn("w:trPr"))
+            if trPr is None:
+                trPr = OxmlElement("w:trPr")
+                tr.insert(0, trPr)
+            if trPr.find(qn("w:cantSplit")) is None:
+                trPr.append(OxmlElement("w:cantSplit"))
+                fixed += 1
+    if fixed:
+        logger.info("格式体检:表格行禁止跨页拆分(cantSplit) %d 行", fixed)
+    return fixed
+
+
 def run_format_doctor_assembled(document: Any) -> dict[str, int]:
-    """成品级体检:只跑拼卷后成品才需要的 healer(核对表列宽、业绩图注绑定)。
-    逐个容错,单个崩不阻断出标。"""
+    """成品级体检:只跑拼卷后成品才需要的 healer(核对表列宽、业绩图注绑定、
+    表格行防拆页)。逐个容错,单个崩不阻断出标。"""
     report: dict[str, int] = {}
     for name, healer in (
         ("checklist_table_widths", heal_checklist_table_widths),
         ("evidence_caption_binding", heal_evidence_caption_binding),
+        ("table_row_integrity", heal_table_row_integrity),
     ):
         try:
             report[name] = healer(document, None)

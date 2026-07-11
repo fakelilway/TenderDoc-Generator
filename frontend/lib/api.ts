@@ -18,8 +18,10 @@ import type {
   PersonnelMember,
   PMRecommendationResponse,
   PMSelectionResponse,
+  EvidencePagesResponse,
   PerformanceItem,
   PerformanceRecommendationResponse,
+  RolePerformanceResponse,
   TechDirectorRecommendationResponse,
   LoginResponse,
   LogoutResponse,
@@ -394,6 +396,45 @@ export function savePerformanceSelection(
 ) {
   return requestJson<{ project_id: number; selected: PerformanceItem[] }>(
     `/api/project/${projectId}/performance`,
+    { method: "PUT", body: JSON.stringify({ selected }) }
+  );
+}
+
+// 业绩证明选页:某条业绩的全部扫描页 + 人工勾选保存(null=恢复默认规则)
+export function getEvidencePages(projectId: number, name: string) {
+  return requestJson<EvidencePagesResponse>(
+    `/api/project/${projectId}/evidence-pages?name=${encodeURIComponent(name)}`
+  );
+}
+
+export function saveEvidencePages(
+  projectId: number,
+  name: string,
+  documentIds: number[] | null
+) {
+  return requestJson<{ project_id: number; name: string; selected: number[] | null }>(
+    `/api/project/${projectId}/evidence-pages`,
+    { method: "PUT", body: JSON.stringify({ name, document_ids: documentIds }) }
+  );
+}
+
+// 角色业绩勾选:选派的项目经理(pm)/总工(td)名下业绩候选 + 人工多选保存
+export function getRolePerformanceRecommendations(
+  projectId: number,
+  role: "pm" | "td"
+) {
+  return requestJson<RolePerformanceResponse>(
+    `/api/project/${projectId}/role-performance/${role}/recommendations`
+  );
+}
+
+export function saveRolePerformanceSelection(
+  projectId: number,
+  role: "pm" | "td",
+  selected: PerformanceItem[]
+) {
+  return requestJson<{ project_id: number; role: string; selected: PerformanceItem[] }>(
+    `/api/project/${projectId}/role-performance/${role}`,
     { method: "PUT", body: JSON.stringify({ selected }) }
   );
 }

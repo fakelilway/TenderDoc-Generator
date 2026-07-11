@@ -27,7 +27,13 @@ def _build_xlsx() -> BytesIO:
     sc.append(["交安"])
     sc.append([])
     sc.append(["类别", "序号", "姓名", "身份证号", "证书编号", "", "发证日期", "有效期"])
-    sc.append(["B", "1", "李刚", "3425231988", "皖交安B17", "", "2017", "2027"])  # 李刚 有B证
+    sc.append(["A", "1", "江舟", "3401041970", "皖交安A14", "", "2014", "2029"])
+    # 真实台账版式:类别是合并单元格,只有块首行有值,块内其余行读出来是空——必须沿用
+    sc.append(["B", "1", "李刚", "3425231988", "皖交安B17", "", "2017", "2027"])
+    sc.append(["", "2", "王露", "3401119920", "皖交安B20", "", "2020", "2026"])
+    sc.append(["", "3", "许明英", "3401119760", "皖交安B18", "", "2018", "2028"])
+    sc.append(["C", "1", "钱七", "3401019860", "皖交安C20", "", "2020", "2030"])
+    sc.append(["", "2", "孙八", "3401019870", "皖交安C21", "", "2021", "2031"])
 
     gc = wb.create_sheet("正奇工程师证书")
     # 左右两栏、无身份证号,按姓名挂职称
@@ -62,6 +68,22 @@ def test_parse_roster_joins_certs_by_id_and_name() -> None:
     pm_names = [m.name for m in members if m.is_pm_candidate]
     assert set(pm_names) == {"江舟", "李刚"}
     assert "王五" not in by_name  # 造价-only,未被任一证书表收录
+
+
+def test_safety_class_forward_fill_for_merged_blocks() -> None:
+    """安全证类别是合并单元格:块内空类别沿用块首行(2026-07-12修——之前64行只认3行,
+    名册满屏'缺安全B证')。段标题(交安)串进类别列不得污染沿用。"""
+    members = parse_roster_xlsx(_build_xlsx())
+    by_name = {m.name: m for m in members}
+
+    assert "A" in by_name["江舟"].safety_cert_classes
+    assert "B" in by_name["李刚"].safety_cert_classes  # 块首行(原本就认得)
+    assert "B" in by_name["王露"].safety_cert_classes  # 类别空,沿用B ← 修的就是这
+    assert "B" in by_name["许明英"].safety_cert_classes
+    assert by_name["王露"].safety_cert_no == "皖交安B20"
+    # C块的人只有C,不许被上面的B污染
+    assert by_name["钱七"].safety_cert_classes == ["C"]
+    assert by_name["孙八"].safety_cert_classes == ["C"]
 
 
 def test_merge_kb_builders_supplements_and_adds() -> None:

@@ -294,3 +294,58 @@ def test_textbox_placeholder_replaced() -> None:
     texts = [t.text for t in doc.element.body.iter(qn("w:t"))]
     assert any("巢湖市栏杆集镇人民政府" in (t or "") for t in texts)
     assert not any("（招标人名称）" in (t or "") for t in texts)
+
+def _mk_resume_table(doc, heading: str):
+    """建一张带标题的简历表(锚='拟在本标段'),返回表对象。"""
+    doc.add_paragraph(heading)
+    t = doc.add_table(rows=2, cols=4)
+    t.cell(0, 0).text = "姓名"
+    t.cell(0, 2).text = "职称"
+    t.cell(1, 0).text = "拟在本标段工程担任职务"
+    return t
+
+
+def test_resume_tables_third_person_table_left_blank() -> None:
+    """员工反馈第11条:认不出角色的第三张简历表必须留空,绝不默认灌项目经理信息。"""
+    from services.original_docx_format_service import _fill_resume_tables
+    doc = Document()
+    t_pm = _mk_resume_table(doc, "项目经理简历表")
+    t_tech = _mk_resume_table(doc, "项目技术负责人简历表")
+    t_other = _mk_resume_table(doc, "安全员简历表")  # 系统不认识的角色
+    pm = {"姓名": "江舟", "职称": "高级工程师", "拟任职务": "项目经理"}
+    tech = {"姓名": "王俊明", "职称": "高级工程师", "拟任职务": "项目技术负责人"}
+    _fill_resume_tables(doc, pm, tech)
+    assert t_pm.cell(0, 1).text == "江舟"
+    assert t_tech.cell(0, 1).text == "王俊明"
+    assert t_other.cell(0, 1).text.strip() == ""   # 第三张表留空给人工
+    assert t_other.cell(1, 1).text.strip() == ""
+
+
+def test_resume_tables_unlabeled_pair_still_inferred() -> None:
+    """原有推断保留:项目经理表带字样+末张无名表归总工;全无字样时首张归PM末张归总工。"""
+    from services.original_docx_format_service import _fill_resume_tables
+    pm = {"姓名": "江舟", "拟任职务": "项目经理"}
+    tech = {"姓名": "王俊明", "拟任职务": "项目技术负责人"}
+
+    # 场景A:PM表带字样,第二张无字样 → 归总工(老兜底)
+    doc = Document()
+    t1 = _mk_resume_table(doc, "项目经理简历表")
+    t2 = _mk_resume_table(doc, "主要人员简历表")
+    _fill_resume_tables(doc, pm, tech)
+    assert t1.cell(0, 1).text == "江舟" and t2.cell(0, 1).text == "王俊明"
+
+    # 场景B:三张全无字样 → 首张PM,末张总工,中间留空
+    doc = Document()
+    ta = _mk_resume_table(doc, "简历表一")
+    tb = _mk_resume_table(doc, "简历表二")
+    tc = _mk_resume_table(doc, "简历表三")
+    _fill_resume_tables(doc, pm, tech)
+    assert ta.cell(0, 1).text == "江舟"
+    assert tb.cell(0, 1).text.strip() == ""       # 中间那张不再被灌PM
+    assert tc.cell(0, 1).text == "王俊明"
+
+    # 场景C:只选了项目经理,单张无字样表 → 照旧填PM(不回归)
+    doc = Document()
+    td = _mk_resume_table(doc, "简历表")
+    _fill_resume_tables(doc, pm, None)
+    assert td.cell(0, 1).text == "江舟"

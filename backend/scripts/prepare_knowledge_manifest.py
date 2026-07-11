@@ -594,6 +594,14 @@ def _extract_year(text: str) -> str:
 
 
 def _certificate_type_from_person_text(text: str) -> str:
+    # 网查截图最先判(2026-07-12用户定资历表附件含网查截图):文件名带"网查/查询截图"
+    # 即归网查类,再按建造师/安全细分——否则会被下面的建造师/交安等规则吞成证书本体。
+    if _contains(text, "网查", "查询截图", "查询页", "网核"):
+        if _contains(text, "建造师", "一建", "二建", "注册证"):
+            return "建造师证网查截图"
+        if _contains(text, "交安", "建安", "安全", "B证"):
+            return "安全B证网查截图"
+        return "网查截图"
     if _contains(text, "身份证"):
         return "身份证"
     if _contains(text, "社保"):

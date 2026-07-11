@@ -302,7 +302,8 @@ def generate_v2_bid_package(
         "标段编号": _sec.group(1) if _sec else "",
         "项目名称": str(requirements.project_name or ""),
         "工期": str(requirements.planned_duration or ""),
-        "质量": str(requirements.quality_standard or "符合国家现行工程质量验收标准规范合格标准"),
+        # 质量:招标优先,留空让 apply_fixed_fields 的 TENDER_FIRST_FALLBACK 兜底填"合格"
+        "质量": str(requirements.quality_standard or ""),
         "安全": str(requirements.safety_target or "无安全责任事故发生"),
         "投标有效期": str(requirements.bid_deadline or ""),
         "投标截止时间": str(requirements.bid_deadline or ""),
@@ -1123,9 +1124,20 @@ def _enrich_commercial_markdown(
         parts.append(kb_tables_md)
 
     # A3:类似业绩证明链——每个业绩附 中标通知书+合同+交工验收 扫描(import_performance_evidence)
-    perf_evidence_md = _performance_evidence_markdown(selected_names=selected_perf_names)
+    perf_evidence_md = _performance_evidence_markdown(
+        selected_names=selected_perf_names,
+        page_selection=_evidence_page_selection(project_id),
+    )
     if perf_evidence_md:
         parts.append(perf_evidence_md)
+
+    # A3c:经理/总工个人业绩证明链(员工意见第10条)——各自"近年完成的类似项目信息表"后
+    # 附进了表的那几条业绩的证明扫描,锚点落位到个人节
+    if project_id is not None:
+        for role in ("pm", "td"):
+            role_md = _role_performance_evidence_markdown(project_id, role)
+            if role_md:
+                parts.append(role_md)
 
     return "\n".join(parts)
 
@@ -1273,7 +1285,9 @@ def _inject_project_images(technical_md: str, project_id: int | None) -> str:
 # 资质/荣誉/专利是多张不同的证,保留较大上限。
 # (组标题, 证件类型, 组上限, 落位锚点, 去重模式)。去重模式:
 #   one=同一份证只插1张(营业执照/安许/开户,正本+最新有效期优先);
-#   specialty=按专业各留1张(资质证书:公路工程/市政各1,同专业多次扫描算1);
+#   specialty=按 专业×分页 各留1张(资质证书:公路工程/市政各1,同专业多次扫描算1;
+#     但文件名带 主页/附页/正面/反面/第N页 分页标记的是同一本证的不同页,整套保留——
+#     如公路养护资质证书=主页+附页两张,员工反馈"养护证书只放一页"即此病);
 #   none=多张不同的证全保留(荣誉/专利/体系)。
 # 用户定:基本情况表后只插 营业执照/资质证书(含公路养护,specialty含养护)/安许/开户。
 # 体系认证、专利、工法 整本商务卷都不插(已删)。荣誉/信用 落信誉情况表后。
@@ -1286,8 +1300,31 @@ _EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int, str, str], ...] = (
 )
 
 
+def _cert_page_marker(file_name: str) -> str:
+    """同一本证的分页标记(主页/附页/正面/反面/背面/第N页);空串=无分页标记。
+
+    带不同分页标记的图属于同一本证的不同页,插入时整套保留、不算重复。
+    """
+    import re as _re
+
+    m = _re.search(r"(主页|附页|正面|反面|背面|第\d+页)", str(file_name or ""))
+    return m.group(1) if m else ""
+
+
+def _cert_page_order(marker: str) -> int:
+    """分页排序:主页/正面在前,附页/反面/背面在后,第N页按N。"""
+    import re as _re
+
+    if marker in ("", "主页", "正面"):
+        return 0
+    m = _re.match(r"第(\d+)页", marker)
+    if m:
+        return int(m.group(1)) - 1
+    return 1  # 附页/反面/背面
+
+
 def _cert_sort_key(ref: dict) -> tuple:
-    """证件排序:正本优先,有效期晚的优先(去重时取这张作代表)。"""
+    """证件排序:正本优先,有效期晚的优先(去重时取这张作代表),同证分页按页序。"""
     import re as _re
 
     fn = str(ref.get("file_name", ""))
@@ -1295,7 +1332,7 @@ def _cert_sort_key(ref: dict) -> tuple:
     vt = str(ref.get("valid_to", "") or "")
     m = _re.search(r"(20\d{2})", vt)
     year = -int(m.group(1)) if m else 0  # 有效期晚的(年大)排前
-    return (zheng, year)
+    return (zheng, year, _cert_page_order(_cert_page_marker(fn)))
 
 
 def _qualification_evidence_markdown(limit: int = 80) -> str:
@@ -1336,19 +1373,35 @@ def _qualification_evidence_markdown(limit: int = 80) -> str:
             if doc_id <= 0 or doc_id in seen:
                 continue
             specialty = str(ref.get("specialty") or "").strip().replace('"', "")
-            # 去重:同一份证只取代表张(正本/最新),不同的证才各留
+            page = _cert_page_marker(str(ref.get("file_name", "")))
+            # 去重:同一份证只取代表张(正本/最新),不同的证才各留;
+            # 带分页标记(主页/附页/正反面/第N页)的是同一本证的不同页,整套保留
             if dedup == "one":
                 if seen_keys:
                     continue
                 seen_keys.add("_")
             elif dedup == "specialty":
-                spec_key = specialty or "_"
+                # 键=证件类型×专业×分页:不同类型的证(资质证书 vs 施工劳务资质证书)
+                # 或同证不同页都保留;同类型同专业同页的多次扫描才算重复
+                cert_type_key = str(ref.get("certificate_type") or "")
+                spec_key = f"{cert_type_key}|{specialty or '_'}|{page}"
                 if spec_key in seen_keys:
                     continue
                 seen_keys.add(spec_key)
             seen.add(doc_id)
-            if specialty and specialty not in title:
-                caption = f"{title}（{specialty}）"
+            # 图注:证件类型细分(施工劳务,仅specialty组) + 专业(通用不标) + 分页,
+            # 如"企业资质证书（公路养护·主页）";none组(荣誉等)保持(1)(2)编号
+            type_label = (
+                str(ref.get("certificate_type") or "").replace("资质证书", "").strip()
+                if dedup == "specialty" else ""
+            )
+            label_parts = [
+                p for p in (type_label, specialty if specialty != "通用" else "", page)
+                if p and p not in title
+            ]
+            spec_label = "·".join(label_parts)
+            if spec_label:
+                caption = f"{title}（{spec_label}）"
             elif group_cap > 1 and dedup == "none":
                 caption = f"{title}（{len(emitted) + 1}）"
             else:
@@ -1462,12 +1515,19 @@ def _legal_rep_id_evidence_markdown(legal_rep_name: str) -> str:
 # 项目经理/总工证件:身份证(正反)+ 建造师/职称/安全/毕业证/社保,**每类只取1张代表**
 # (同一证扫几十遍是常态,只附一张正本/最新)。cert_types 按优先级排(一级建造师 > 二级),
 # 取第一个有的类型的代表张。笼统"人员证件"(大头照)不在内,不会插进去。
+# 顺序=用户定的资历表附件序(2026-07-12):身份证(上游单独处理,永远最前)→毕业证→
+# 建造师证→建造师证网查截图→安全B证→安全B证网查截图→社保→职称。
+# 网查截图库里暂无(员工资料陆续补),命名带"网查"入库即自动跟上;社保/职称看招标要求,
+# 库里有才插。⚠️"建造师证网查截图"这类 certificate_type 含"建造师证"子串,匹配时
+# 非网查组要跳过带"网查"的类型,防止网查截图被当成证书本体抢先插(见下 _one_person)。
 _PERSONNEL_CERT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("注册建造师证", ("一级建造师证", "二级建造师证", "建造师证")),
-    ("职称证书", ("职称证书",)),
-    ("安全考核证", ("交安证", "建安证", "注册安全工程师证")),
     ("毕业证", ("毕业证",)),
+    ("注册建造师证", ("一级建造师证", "二级建造师证", "建造师证")),
+    ("建造师证网查截图", ("建造师证网查", "建造师网查")),
+    ("安全考核证", ("交安证", "建安证", "注册安全工程师证")),
+    ("安全B证网查截图", ("安全B证网查", "交安网查", "建安网查", "安全网查")),
     ("社保证明", ("社保",)),
+    ("职称证书", ("职称证书",)),
 )
 
 
@@ -1519,7 +1579,12 @@ def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
         # 按 cert_types 优先级(一级>二级…)找第一个有的类型,取其正本/最新有效期那张
         chosen = None
         for ct in cert_types:
-            cands = [r for r in by_owner if ct in str(r.get("certificate_type") or "")]
+            cands = [
+                r for r in by_owner
+                if ct in str(r.get("certificate_type") or "")
+                # 非网查组跳过网查截图类型(子串会误命中,如"建造师证网查截图"含"建造师证")
+                and ("网查" in ct or "网查" not in str(r.get("certificate_type") or ""))
+            ]
             cands.sort(key=_cert_sort_key)
             for r in cands:
                 if int(r.get("document_id", 0) or 0) not in seen:
@@ -1602,7 +1667,7 @@ def build_pm_resume_fields(pm_name: str, role: str = "项目经理") -> dict[str
         except Exception:
             pass
 
-    # 毕业证 OCR → 学历/毕业学校/专业(best-effort)
+    # 毕业证 OCR → 学历/毕业学校/专业(best-effort)。一人可能多张(正/内页),全都读、按页合并。
     try:
         from services.knowledge_service import (
             get_knowledge_document_file_bytes,
@@ -1611,30 +1676,42 @@ def build_pm_resume_fields(pm_name: str, role: str = "项目经理") -> dict[str
         from utils.file_parser import extract_text_from_image
 
         refs = list_knowledge_image_references("", limit=5000)
-        dipl = next(
-            (
-                r
-                for r in refs
-                if str(r.get("owner_name") or "").strip() == name
-                and "毕业证" in str(r.get("certificate_type") or "")
-                and str(r.get("file_type", "")).lower() in ("jpg", "jpeg", "png")
-            ),
-            None,
-        )
-        if dipl:
-            txt = (extract_text_from_image(get_knowledge_document_file_bytes(int(dipl["document_id"]))) or "").replace(" ", "")
-            for deg in ("博士研究生", "硕士研究生", "博士", "硕士", "本科", "专科", "大专"):
+        diplomas = [
+            r
+            for r in refs
+            if str(r.get("owner_name") or "").strip() == name
+            and "毕业证" in str(r.get("certificate_type") or "")
+            and str(r.get("file_type", "")).lower() in ("jpg", "jpeg", "png")
+        ]
+        for dipl in diplomas[:3]:
+            raw = extract_text_from_image(
+                get_knowledge_document_file_bytes(int(dipl["document_id"]))
+            ) or ""
+            # 去掉全部空白(含换行):真证上"专/科"常被换行切开,只去空格会漏认(王露证实测)
+            txt = _re.sub(r"[\s　]+", "", raw)
+            for deg in ("博士研究生", "硕士研究生", "博士", "硕士", "本科", "专科", "大专", "中专"):
                 if deg in txt:
                     fields.setdefault("学历", deg)
                     break
-            # 学校必须是真校名(xx大学/xx学院),排除"普通高等学校"等模板套话
-            m = _re.search(r"([一-龥]{3,12}(?:大学|学院))", txt)
-            if m and not m.group(1).startswith(("普通", "高等", "全日制")):
-                fields.setdefault("毕业学校", m.group(1))
+            else:
+                # "专（高职）科"这类中间插注的写法(李刚证实测)也算专科
+                if _re.search(r"专[（(][^）)]{0,6}[）)]科", txt):
+                    fields.setdefault("学历", "专科")
+            # 学校必须是真校名(xx大学/xx学院):遍历所有候选,跳过"普通高等学校"等模板套话;
+            # 前缀最少2字,"安徽大学"这类短校名才不漏。OCR去空白后正文会粘连("准予毕业
+            # 校长某某某安徽大学"),校名里混进这类词=脏值,宁可留白待人工也不填(不瞎编)
+            _SCHOOL_NOISE = ("普通", "高等", "全日制", "本校", "毕业", "校长", "准予", "证书", "批准", "教学")
+            for m in _re.finditer(r"([一-龥]{2,12}(?:大学|学院))", txt):
+                school = m.group(1)
+                if not any(w in school for w in _SCHOOL_NOISE):
+                    fields.setdefault("毕业学校", school)
+                    break
             # 专业 OCR 噪声大,只在"专业："后紧跟明确专业名(以工程/管理/技术等收尾)才填
             m = _re.search(r"专业[:：]\s*([一-龥]{2,10}(?:工程|管理|技术|科学|设计|建筑))", txt)
             if m:
                 fields.setdefault("专业", m.group(1))
+            if "学历" in fields and "毕业学校" in fields:
+                break  # 两样都齐了,后面的页不用再OCR
     except Exception:
         pass
 
@@ -1666,12 +1743,20 @@ _PERF_PER_TYPE_CAP = {"中标通知书": 2, "合同": 2, "交工验收": 4}
 
 
 def _build_performance_evidence_md(
-    rows: list[tuple], limit_projects: int = 6
+    rows: list[tuple],
+    limit_projects: int = 6,
+    anchor: str = "类似项目情况表",
+    label: str = "类似业绩",
+    heading: str | None = None,
+    page_selection: dict[str, list[int]] | None = None,
 ) -> str:
     """纯函数:业绩证明行 [(doc_id, 项目, 类型, 年, 序号)] → 按项目成组的插图 markdown。
 
     选片规则:有完整链(中标+交工)优先,再按年份新→旧取前 limit_projects 个项目;每个项目
-    每类按序号取前几张(中标2/合同2/交工4)。
+    每类按序号取前几张(中标2/合同2/交工4)。anchor 决定这组图落到格式章哪张表后
+    (见 generation_service._ANCHOR_SPECS);label/heading 供角色业绩链定制标题。
+    page_selection={归一化项目名:[doc_id,...]}:该项目人工选过页 → 只插勾中的那几页、
+    **绕开每类张数上限**(员工意见7:盖章页排在第5张也能进);空列表=该项目不附图。
     """
     projects: dict[str, dict] = {}
     for doc_id, proj, etype, year, seq in rows:
@@ -1700,18 +1785,27 @@ def _build_performance_evidence_md(
         key=lambda kv: (has_chain(kv[1]), kv[1]["year"]),
         reverse=True,
     )
+    from services.performance_archive_service import _norm
+
+    page_selection = page_selection or {}
     blocks: list[str] = []
     for i, (proj, bucket) in enumerate(ordered[:limit_projects], 1):
         title = str(proj).replace('"', "")[:48]
-        seg = [f"\n### 类似业绩 {i}：{title}\n"]
+        seg = [f"\n### {label} {i}：{title}\n"]
         any_img = False
+        chosen_ids = page_selection.get(_norm(str(proj)))
         for etype in _PERF_EVIDENCE_ORDER:
-            imgs = sorted(bucket["by_type"].get(etype, []))[: _PERF_PER_TYPE_CAP[etype]]
+            all_imgs = sorted(bucket["by_type"].get(etype, []))
+            if chosen_ids is not None:
+                # 人工选页:只留勾中的,不设上限(盖章页排多后都能进)
+                imgs = [(s, d) for s, d in all_imgs if d in chosen_ids]
+            else:
+                imgs = all_imgs[: _PERF_PER_TYPE_CAP[etype]]
             for j, (_seq, doc_id) in enumerate(imgs, 1):
                 cap = f"{title}-{etype}" + (f"（{j}）" if len(imgs) > 1 else "")
                 seg.append(
                     f'\n{{{{knowledge_image:document_id={doc_id} '
-                    f'anchor="类似项目情况表" caption="{cap}" width_cm=14}}}}\n'
+                    f'anchor="{anchor}" caption="{cap}" width_cm=14}}}}\n'
                 )
                 any_img = True
         if any_img:
@@ -1719,21 +1813,16 @@ def _build_performance_evidence_md(
 
     if not blocks:
         return ""
-    return (
-        "\n<!-- tdg:pagebreak -->\n"
-        "\n## 附录：类似业绩证明材料（中标通知书·合同·交工验收，系统自动插入，请人工核验筛选）\n"
-        + "".join(blocks)
-    )
+    if heading is None:
+        heading = (
+            "\n## 附录：类似业绩证明材料"
+            "（中标通知书·合同·交工验收，系统自动插入，请人工核验筛选）\n"
+        )
+    return "\n<!-- tdg:pagebreak -->\n" + heading + "".join(blocks)
 
 
-def _performance_evidence_markdown(
-    limit_projects: int = 6, selected_names: list[str] | None = None
-) -> str:
-    """A3b:从知识库取业绩证明扫描,按项目成组插中标通知书/合同/交工验收。无数据返回空。
-
-    selected_names 非空时:只插**选中的**业绩(按项目名匹配),招标要几个就插几个,不再一股脑全堆。
-    为空时:回退原行为(取前 limit_projects 个,兼容未做业绩选择的项目)。
-    """
+def _query_performance_evidence_rows() -> list[tuple]:
+    """取全部可插的业绩证明行 (doc_id, 项目, 类型, 年, 序号);查询异常返回空。"""
     try:
         from rag.vector_store import get_db_connection
 
@@ -1746,8 +1835,42 @@ def _performance_evidence_markdown(
                 "AND metadata_json->>'document_category' = '业绩证明' "
                 "AND coalesce(metadata_json->>'image_insertable', '') <> 'false'"
             )
-            rows = list(cursor.fetchall())
+            return list(cursor.fetchall())
     except Exception:
+        return []
+
+
+def _evidence_page_selection(project_id: int | None) -> dict[str, list[int]]:
+    """读本项目的业绩证明选页(员工意见7),键归一化项目名。取不到返回空(走默认规则)。"""
+    if project_id is None:
+        return {}
+    try:
+        from services import project_service
+        from services.performance_archive_service import _norm
+
+        project = project_service._fetch_project(project_id)
+        stored = project.get("selected_evidence_pages") or {}
+        return {
+            _norm(str(k)): [int(d) for d in (v or [])]
+            for k, v in stored.items()
+        }
+    except Exception:
+        return {}
+
+
+def _performance_evidence_markdown(
+    limit_projects: int = 6,
+    selected_names: list[str] | None = None,
+    page_selection: dict[str, list[int]] | None = None,
+) -> str:
+    """A3b:从知识库取业绩证明扫描,按项目成组插中标通知书/合同/交工验收。无数据返回空。
+
+    selected_names 非空时:只插**选中的**业绩(按项目名匹配),招标要几个就插几个,不再一股脑全堆。
+    为空时:回退原行为(取前 limit_projects 个,兼容未做业绩选择的项目)。
+    page_selection:人工选过页的业绩只插勾中的那几页(见 _build_performance_evidence_md)。
+    """
+    rows = _query_performance_evidence_rows()
+    if not rows:
         return ""
 
     if selected_names:
@@ -1756,7 +1879,65 @@ def _performance_evidence_markdown(
         wanted = {_norm(n) for n in selected_names if n}
         rows = [r for r in rows if _norm(str(r[1] or "")) in wanted]
         limit_projects = max(limit_projects, len(wanted))  # 选了几个就放几个进去
-    return _build_performance_evidence_md(rows, limit_projects)
+    return _build_performance_evidence_md(
+        rows, limit_projects, page_selection=page_selection
+    )
+
+
+# 角色业绩证明链(员工意见第10条):经理/总工个人的"近年完成的类似项目信息表"后
+# 也要附该表所列业绩的证明扫描。role → (人员键, 中文, 落位锚点)。
+_ROLE_EVIDENCE = {
+    "pm": ("project_manager", "项目经理", "项目经理类似项目表"),
+    "td": ("tech_director", "项目总工", "项目总工类似项目表"),
+}
+
+
+def _role_performance_evidence_markdown(project_id: int, role: str) -> str:
+    """经理/总工业绩证明链:插"进了此人业绩表的那几条业绩"的证明扫描,锚定其个人节后。
+
+    进表口径与 similar_project_fill_service._records_for_role 一致(全部人工手选):
+    勾中哪几条附哪几条;没勾(None/[])/没选派人=表留白,图也不附。
+    取不到数据一律返回空串,绝不拦生成。
+    """
+    person_key, role_label, anchor = _ROLE_EVIDENCE[role]
+    try:
+        from services import project_service
+
+        person = (
+            project_service.get_selected_personnel(project_id).get("selected") or {}
+        ).get(person_key) or {}
+        person_name = str(person.get("name") or "").strip()
+        if not person_name:
+            return ""
+        chosen = project_service.get_selected_role_performance(project_id, role)[
+            "selected"
+        ]
+        names = [str(it.get("name") or "") for it in (chosen or []) if it.get("name")]
+        names = [n for n in names if n]
+        if not names:
+            return ""
+
+        from services.performance_archive_service import _norm
+
+        wanted = {_norm(n) for n in names}
+        rows = [
+            r for r in _query_performance_evidence_rows()
+            if _norm(str(r[1] or "")) in wanted
+        ]
+        return _build_performance_evidence_md(
+            rows,
+            limit_projects=len(names),
+            anchor=anchor,
+            label=f"{role_label}类似业绩",
+            heading=(
+                f"\n## 附录：{role_label}（{person_name}）类似业绩证明材料"
+                "（中标通知书·合同·交工验收，插于其类似项目信息表后）\n"
+            ),
+            page_selection=_evidence_page_selection(project_id),
+        )
+    except Exception:
+        logger.warning("%s业绩证明链生成失败,跳过(不拦生成)", role_label, exc_info=True)
+        return ""
 
 
 def _match_profile_field(title: str, profile: dict[str, str]) -> str:
