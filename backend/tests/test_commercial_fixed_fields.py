@@ -48,3 +48,37 @@ def test_truly_fixed_fields_still_override():
     assert profile["安全"] == "无安全事故"
     # 同时确认质量不受牵连
     assert profile["质量"] == "创优"
+
+
+def test_qualification_grade_is_full_list():
+    """企业资质等级=全量10项清单(2026-07-12用户定稿),不许退回只写总承包一项。"""
+    v = COMMERCIAL_FIXED_FIELDS["qualification_grade"]
+    for must in (
+        "公路工程施工总承包贰级", "市政公用工程施工总承包贰级",
+        "公路交通工程（公路安全设施）专业承包贰级", "公路路面工程专业承包贰级",
+        "公路路基工程专业承包贰级", "环保工程专业承包贰级",
+        "城市及道路照明工程专业承包贰级", "施工劳务序列不分等级",
+        "路基路面养护甲级资质", "交通安全设施养护资质",
+    ):
+        assert must in v, f"资质清单缺:{must}"
+
+
+def test_affiliated_companies_fills_basic_info_table():
+    """投标人基本情况表:企业资质等级填全量清单、关联企业情况填股东股权三条(多行)。"""
+    from docx import Document
+
+    from services.original_docx_format_service import _fill_known_table_cells
+
+    doc = Document()
+    t = doc.add_table(rows=2, cols=2)
+    t.cell(0, 0).text = "企业资质等级"
+    t.cell(1, 0).text = "投标人关联企业情况"
+    profile = apply_fixed_fields({})
+    _fill_known_table_cells(doc, profile)
+
+    grade = t.cell(0, 1).text
+    assert "路基路面养护甲级资质" in grade and "施工劳务序列不分等级" in grade
+    rel = t.cell(1, 1).text
+    assert "江舟:94.83%" in rel and "许明英:5.16%" in rel
+    assert "（2）" in rel and "（3）" in rel
+    assert "\n" in rel  # (1)(2)(3) 分行,不挤成一坨

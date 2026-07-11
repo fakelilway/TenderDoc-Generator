@@ -282,6 +282,10 @@ _TABLE_FILL_LABELS: tuple[tuple[str, str], ...] = (
     ("资质等级", "qualification_grade"),
     ("投标人响应资质", "qualification_grade"),
     ("响应资质", "qualification_grade"),
+    # 投标人基本情况表:关联企业情况(股东及股权/下属企业/同法人单位,固定字段直填)
+    ("投标人关联企业情况", "affiliated_companies"),
+    ("关联企业情况", "affiliated_companies"),
+    ("关联企业", "affiliated_companies"),
     ("法定代表人", "legal_representative"),
     ("项目经理", "project_manager_name"),
     ("注册建造师", "project_manager_name"),
@@ -493,13 +497,18 @@ def _set_cell_value(cell: Any, value: str) -> None:
 
     paragraph = cell.paragraphs[0]
     runs = paragraph.runs
+    lines = str(value).split("\n")
     if runs:
         run = runs[0]
-        run.text = value
+        run.text = lines[0]
         for extra in runs[1:]:
             extra.text = ""
     else:
-        run = paragraph.add_run(value)
+        run = paragraph.add_run(lines[0])
+    # 多行值(如关联企业情况的(1)(2)(3)):同 run 内用换行符接续,保持同一套字体设置
+    for extra_line in lines[1:]:
+        run.add_break()
+        run.add_text(extra_line)
     run.font.name = "Times New Roman"
     run.font.size = Pt(10.5)
     rpr = run._element.get_or_add_rPr()
