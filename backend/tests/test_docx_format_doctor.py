@@ -625,3 +625,49 @@ def test_evidence_caption_binding_ignores_non_caption() -> None:
     assert fixed == 0
     ppr = p_img._p.find(_qn("w:pPr"))
     assert ppr is None or ppr.find(_qn("w:keepNext")) is None
+
+
+def test_template_header_lines_removed_conservatively() -> None:
+    """招标模板页眉行(整卷反复)删掉;正文引用/低频行/别的示范文本一律不动。"""
+    from docx import Document
+
+    from services.docx_format_doctor import heal_template_header_lines
+
+    doc = Document()
+    for _ in range(4):
+        doc.add_paragraph("公路养护施工招标示范文本（2023 年版）")  # 页眉行(福昕带空格)
+        doc.add_paragraph("这一页的正文内容保留。")
+    doc.add_paragraph("本招标文件依据公路养护施工招标示范文本（2023年版）编制。")  # 正文引用
+    doc.add_paragraph("公路工程施工招标示范文本（2018年版）")  # 只出现1次,不够3次
+    doc.add_paragraph("投标保函示范文本（独立保函）")  # 无年版,不匹配
+
+    healed = heal_template_header_lines(doc)
+    texts = [p.text for p in doc.paragraphs]
+    assert healed == 4
+    assert not any(t.replace(" ", "") == "公路养护施工招标示范文本（2023年版）" for t in texts)
+    assert sum("正文内容保留" in t for t in texts) == 4
+    assert any("依据公路养护施工招标示范文本" in t for t in texts)  # 引用句保留
+    assert any("2018年版" in t for t in texts)  # 低频不删
+    assert any("独立保函" in t for t in texts)
+
+
+def test_template_header_line_with_sectpr_only_cleared() -> None:
+    """带分节符的页眉行:只清文字,段和分节符保留(防乱版)。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_template_header_lines
+
+    doc = Document()
+    paras = [doc.add_paragraph("公路养护施工招标示范文本（2023年版）") for _ in range(3)]
+    # 给第2条塞进分节符
+    pPr = paras[1]._p.get_or_add_pPr()
+    pPr.append(paras[1]._p.makeelement(qn("w:sectPr"), {}))
+    before = len(doc.paragraphs)
+
+    healed = heal_template_header_lines(doc)
+    assert healed == 3
+    assert len(doc.paragraphs) == before - 2  # 删2条,分节符那条保留
+    kept = [p for p in doc.paragraphs if p._p.find(qn("w:pPr")) is not None
+            and p._p.find(qn("w:pPr")).find(qn("w:sectPr")) is not None]
+    assert kept and kept[0].text.strip() == ""  # 文字清了,分节符还在

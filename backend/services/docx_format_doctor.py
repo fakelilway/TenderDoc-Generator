@@ -143,6 +143,46 @@ def _heal_whitelist_values(paragraph: Any, values: list[str]) -> int:
     return healed
 
 
+# 招标模板页眉行:整行恰好是"××招标示范文本（XXXX年版）"(前缀≤20字)
+_TEMPLATE_HEADER_RE = re.compile(r"^.{0,20}招标示范文本[（(]\d{4}年版[）)]$")
+
+
+def heal_template_header_lines(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """删掉从招标 PDF 抄进来的**模板页眉行**(如"公路养护施工招标示范文本（2023年版）")。
+
+    交通部示范文本每页顶上印着这行页眉,福昕转 Word 时把它当正文文字一页一条搬进来
+    (巢湖商务卷实测40条)——投标文件不该带招标书自己的页眉。这是"绝不改文字"红线的
+    **唯一例外**(2026-07-12 用户拍板"修"):删的是招标模板自己的页眉装饰,非本卷内容。
+    规则从严,三道闸:① 去空白后整段**恰好**是"××招标示范文本（XXXX年版）"(正文里
+    引用它的句子带上下文,不会整段匹配);② 同一文本全卷出现≥3次才动手(页眉特征=反复
+    出现,防误删偶发单处引用);③ 段里带分节符的只清文字保留段(分节符动了会乱版)。
+    返回清掉的行数。
+    """
+    body_paras = list(document.paragraphs)
+    norm_of: dict[int, str] = {}
+    counts: dict[str, int] = {}
+    for para in body_paras:
+        norm = re.sub(r"[\s　]+", "", para.text)
+        if norm and _TEMPLATE_HEADER_RE.match(norm):
+            norm_of[id(para)] = norm
+            counts[norm] = counts.get(norm, 0) + 1
+
+    healed = 0
+    for para in body_paras:
+        norm = norm_of.get(id(para))
+        if not norm or counts[norm] < 3:
+            continue
+        p_el = para._p
+        pPr = p_el.find(qn("w:pPr"))
+        if pPr is not None and pPr.find(qn("w:sectPr")) is not None:
+            for run in para.runs:  # 分节符段:只清字,段和分节符留着
+                run.text = ""
+        else:
+            p_el.getparent().remove(p_el)
+        healed += 1
+    return healed
+
+
 def heal_underline_slots(document: Any, profile: dict[str, Any] | None = None) -> int:
     """治"下划线画了一半"。先白名单,后夹心兜底;每段守"文字逐字不变"。"""
     values = fill_values_from_profile(profile)
@@ -1230,6 +1270,7 @@ def run_format_doctor_assembled(document: Any) -> dict[str, int]:
     表格行防拆页)。逐个容错,单个崩不阻断出标。"""
     report: dict[str, int] = {}
     for name, healer in (
+        ("template_header_lines", heal_template_header_lines),
         ("checklist_table_widths", heal_checklist_table_widths),
         ("evidence_caption_binding", heal_evidence_caption_binding),
         ("table_row_integrity", heal_table_row_integrity),
@@ -1247,6 +1288,7 @@ def run_format_doctor_assembled(document: Any) -> dict[str, int]:
 
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
+    ("template_header_lines", heal_template_header_lines),
     ("underline_slots", heal_underline_slots),
     ("filler_blank_runs", heal_filler_blank_runs),
     ("phantom_images", heal_phantom_images),
