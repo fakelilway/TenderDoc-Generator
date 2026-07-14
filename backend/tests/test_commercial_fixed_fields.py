@@ -82,3 +82,39 @@ def test_affiliated_companies_fills_basic_info_table():
     assert "江舟:94.83%" in rel and "许明英:5.16%" in rel
     assert "（2）" in rel and "（3）" in rel
     assert "\n" in rel  # (1)(2)(3) 分行,不挤成一坨
+
+
+def test_affiliated_cell_rewritten_even_with_preprinted_prompt():
+    """关联企业格:招标预印提示文字占着(泗沙路实测叠行乱码+没填) → 整格重写成定稿全文。"""
+    from docx import Document
+
+    from services.original_docx_format_service import _fill_basic_info_subfields
+
+    doc = Document()
+    t = doc.add_table(rows=3, cols=2)
+    t.cell(0, 0).text = "投标人名称"
+    t.cell(1, 0).text = "员工总人数：26"
+    t.cell(2, 0).text = "投标人关联企业情况"
+    vc = t.cell(2, 1)
+    vc.text = "投标人应提供关联企业情况，包括："
+    vc.add_paragraph("（1） 投标人的所有股东名称及相应股权（出资额）比例；如投标人为上市%以上的")
+    vc.add_paragraph("（2） 投标人投资（控股）或管理的下属企业名称、持有股权（出资额）比例；")
+
+    profile = apply_fixed_fields({})
+    filled = _fill_basic_info_subfields(doc, profile)
+    assert filled >= 1
+    txt = t.cell(2, 1).text
+    assert "江舟:94.83%" in txt and "许明英:5.16%" in txt
+    assert "上市%以上" not in txt  # 福昕转坏的残句被定稿替掉
+    assert len(t.cell(2, 1).paragraphs) == 1  # 预印多段清干净
+    # 幂等:再跑一遍不重复追加
+    assert _fill_basic_info_subfields(doc, profile) >= 0
+    assert t.cell(2, 1).text == txt
+
+
+def test_bank_permit_group_keeps_both_pages():
+    """开户许可证=正页+注意事项两页一本,组上限必须≥2且不按one去重(泗沙路实测丢页)。"""
+    from services.v2_generation_service import _EVIDENCE_GROUPS
+
+    entry = next(g for g in _EVIDENCE_GROUPS if g[0] == "基本账户开户许可证")
+    assert entry[2] >= 2 and entry[4] != "one"

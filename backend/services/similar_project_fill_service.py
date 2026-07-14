@@ -443,6 +443,48 @@ def _records_for_role(role: str, profile: dict[str, Any]) -> list[dict[str, Any]
     return _pick_by_selection(pool, selected)
 
 
+def _insert_evidence_after_units(
+    document: Any,
+    tbl_els: list[Any],
+    records: list[dict[str, Any]],
+    profile: dict[str, Any],
+) -> int:
+    """每张信息表(单元=表+注)后面就地插入该项目自己的证明扫描件,返回插图张数。
+
+    图清单与选片规则复用 v2_generation.evidence_images_for_project(人工选页优先,
+    默认中标2/合同2/交工4);逐图容错,失败只记日志绝不阻断填表。"""
+    inserted = 0
+    try:
+        from services.generation_service import _insert_image_after
+        from services.v2_generation_service import (
+            _query_performance_evidence_rows,
+            evidence_images_for_project,
+        )
+
+        rows = _query_performance_evidence_rows()
+        if not rows:
+            return 0
+        page_sel = profile.get("evidence_page_selection") or {}
+        for tbl_el, record in zip(tbl_els, records):
+            name = str(record.get("project_name") or "").strip()
+            if not name:
+                continue
+            images = evidence_images_for_project(name, rows=rows, page_selection=page_sel)
+            if not images:
+                continue
+            note = _adjacent_note_p(tbl_el)
+            anchor = note if note is not None else tbl_el
+            for doc_id, caption in images:
+                try:
+                    anchor = _insert_image_after(anchor, document, doc_id, caption, 14.0)
+                    inserted += 1
+                except Exception:
+                    logger.warning("信息表后插证明图失败(doc %s),跳过该图", doc_id, exc_info=True)
+    except Exception:
+        logger.warning("信息表后就地插证明图整体失败,退回不插(卷尾链兜底)", exc_info=True)
+    return inserted
+
+
 def fill_similar_project_sections(document: Any, profile: dict[str, Any]) -> dict[str, Any]:
     """主入口:按节归属人填 情况表(汇总)+信息表(一业绩一张,克隆/裁剪)。
 
@@ -450,7 +492,13 @@ def fill_similar_project_sections(document: Any, profile: dict[str, Any]) -> dic
     没有任何记录(库未导入/未选派)时不动文档、返回空 handled——保持通用
     _fill_performance_table 的老行为。
     """
-    result: dict[str, Any] = {"handled_tables": set(), "detail_filled": 0, "summary_filled": 0}
+    result: dict[str, Any] = {
+        "handled_tables": set(),
+        "detail_filled": 0,
+        "summary_filled": 0,
+        "evidence_inserted": 0,
+        "evidence_inserted_roles": set(),
+    }
     pm_records = list(profile.get("similar_projects_pm") or [])
     td_records = list(profile.get("similar_projects_td") or [])
     selected = list(profile.get("selected_performance") or [])
@@ -566,6 +614,20 @@ def fill_similar_project_sections(document: Any, profile: dict[str, Any]) -> dic
         note = _adjacent_note_p(tbl_els[-1])
         tail = note if note is not None else tbl_els[-1]
         _absorb_page_padding(tail)
+        # 每张信息表后**立刻**跟这个项目自己的证明扫描件(表→图→表→图交替;
+        # 2026-07-12 用户定,泗沙路实测节尾一把堆不行)
+        inserted_here = _insert_evidence_after_units(document, tbl_els, records, profile)
+        result["evidence_inserted"] += inserted_here
+        if inserted_here:
+            result["evidence_inserted_roles"].add(group["key"][0])
+
+    if result["evidence_inserted_roles"]:
+        # **按角色**让位:哪个角色的表就地插成了图,才掐那个角色的 markdown 证明链;
+        # 其它角色(本卷没它的表/插入失败)保留锚点链兜底——绝不因一个角色插成就
+        # 整体掐掉别人的证据(对抗审查修正,防证据静默丢失)。
+        profile["_similar_evidence_inline_roles"] = sorted(
+            result["evidence_inserted_roles"]
+        )
 
     logger.info(
         "类似项目自动填表:明细格 %d 个,汇总行 %d 行,经手表格 %d 张 (经理记录 %d 条,总工记录 %d 条)",

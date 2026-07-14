@@ -169,6 +169,7 @@ def convert_format_pages_via_cloud(
         _drop_spurious_stream_tables,
         _fill_authorization_letter,
         _fill_basic_info_subfields,
+        _fill_credit_status_table,
         _fill_bid_date_today,
         _fill_establish_segmented,
         _fill_inline_labeled_blanks,
@@ -212,6 +213,10 @@ def convert_format_pages_via_cloud(
     from services.docx_format_doctor import run_format_doctor_prefill
 
     run_format_doctor_prefill(doc)
+    # 招标原件的招标人/代理红章必须在**就地插图之前**清:红占比判定的前提是"文档里
+    # 还没有我们插的证件/业绩扫描件"(2026-07-12 七连修把插图挪进了填表阶段,此调用
+    # 相应从卷尾前移到这,守住绝不误删证据图的红线)。
+    _strip_seal_images(doc)
     # "近年完成的类似项目"六种节(投标人/项目经理/项目总工 × 资格审查/详细评审):
     # 按选派经理名下的业绩信息表记录原样填 汇总情况表+一业绩一张的详细信息表(克隆/裁剪)。
     # 必须在通用填表之前:真值先落格,总工节留白的表进 handled 名单、通用逻辑绕行。
@@ -226,6 +231,7 @@ def convert_format_pages_via_cloud(
     _replace_known_fields(doc, profile or {})
     _fill_textbox_placeholders(doc, profile or {})  # 浮动文本框里的占位符(致：（招标人名称）等),正文替换够不着
     _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
+    _fill_credit_status_table(doc, profile or {})  # 信誉情况表:按招标1.4.4逐条填响应(2026-07-12)
     _fill_known_table_cells(doc, profile or {})
     _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
     _fill_authorization_letter(doc, profile or {})  # 授权委托书"本人___（姓名）系"→法人名
@@ -239,6 +245,7 @@ def convert_format_pages_via_cloud(
         doc,
         (profile or {}).get("pm_resume") or {},
         (profile or {}).get("tech_resume") or {},
+        profile=profile,  # 单表双人克隆+证件就地插图要回写让位标志
     )
     # 格式体检:所有值都填完后,对整份文档做"只修格式、不改文字"的合理化
     # (第一版治填空槽下划线断裂:值 run 未继承槽的下划线 → 线画一半)。
@@ -246,8 +253,7 @@ def convert_format_pages_via_cloud(
     from services.docx_format_doctor import run_format_doctor
 
     run_format_doctor(doc, profile or {})
-    # 福昕把招标原件每页的招标人/代理红章也照搬进来了 → 清掉。投标人章须人工手盖。
-    _strip_seal_images(doc)
+    # (红章清理已前移到填表/插图之前,见上)
     _strip_tender_page_numbers(doc)  # 清招标原件页码,标书用自己的页码
     _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
     # 商务标固定字段收尾:纠正公司名错别字(安徽正气→安徽正奇)+ 核对固定字段一致性。

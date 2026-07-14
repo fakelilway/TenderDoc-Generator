@@ -575,6 +575,43 @@ def _append_to_cell(cell: Any, value: str) -> None:
         paras[0].add_run(value)
 
 
+def _fill_credit_status_table(document: Any, profile: dict[str, Any]) -> int:
+    """"(五)投标人的信誉情况表"按招标1.4.4逐条填(泗沙路实测整表空白,用户定)。
+
+    左列=招标信誉要求原文,右列=响应"无此类情形"。只对**数据行全空**的表动手
+    (有预印内容=招标自带示例,不碰);行不够就克隆末行扩,多余空行留白无妨。
+    返回填的行数。"""
+    items = [str(x).strip() for x in (profile.get("credit_requirement_items") or []) if str(x).strip()]
+    if not items:
+        return 0
+    from copy import deepcopy as _dc
+
+    filled = 0
+    for table in document.tables:
+        if len(table.rows) < 2 or len(table.rows[0].cells) < 2:
+            continue
+        header = re.sub(r"[\s　]+", "", " ".join(c.text for c in table.rows[0].cells))
+        if "项目" not in header or "投标人情况说明" not in header:
+            continue
+        data_rows = list(table.rows[1:])
+        if any(any(c.text.strip() for c in r.cells) for r in data_rows):
+            continue  # 有预印内容,别覆盖
+        while len(table.rows) - 1 < len(items):
+            table._tbl.append(_dc(table.rows[-1]._tr))
+        for i, item in enumerate(items):
+            row = table.rows[1 + i]
+            c0, cl = row.cells[0], row.cells[-1]
+            if c0._tc is cl._tc:
+                # 整行合并成一格(个别模板):要求和响应写同一格,防止自己盖自己
+                _set_cell_value(c0, f"{item}：无此类情形")
+            else:
+                _set_cell_value(c0, item)
+                _set_cell_value(cl, "无此类情形")
+            filled += 1
+        break  # 只填第一张信誉表
+    return filled
+
+
 def _fill_basic_info_subfields(document: Any, profile: dict[str, Any]) -> int:
     """投标人基本情况表专项:法人/技术负责人行的 技术职称·电话(按行归属),员工总人数(格内)。"""
     filled = 0
@@ -582,6 +619,7 @@ def _fill_basic_info_subfields(document: Any, profile: dict[str, Any]) -> int:
         full = " ".join(c.text for row in table.rows for c in row.cells)
         if "投标人名称" not in full or "员工总人数" not in full:
             continue
+        rel_done = False  # 关联企业整格重写每表只做一次(标签格竖向合并会在多行重现)
         for row in table.rows:
             cells = row.cells
             if not cells:
@@ -613,6 +651,18 @@ def _fill_basic_info_subfields(document: Any, profile: dict[str, Any]) -> int:
                             _append_to_cell(cell, emp)
                             filled += 1
                         break
+            # 关联企业情况格(2026-07-12 用户定稿):格里是招标预印的提示文字,且常被福昕
+            # 转得叠行乱码——整格**重写**成定稿全文(含股东股权三条,分行)。预印提示不足惜:
+            # 定稿文本自带完整提示+答案。只认标签行,别的格不碰。
+            rel = str(profile.get("affiliated_companies", "") or "").strip()
+            if rel and not rel_done and "关联企业" in cells[0].text:
+                vcell = cells[-1]
+                if vcell._tc is not cells[0]._tc and vcell.text.strip() != rel:
+                    for extra_p in list(vcell.paragraphs)[1:]:
+                        extra_p._p.getparent().remove(extra_p._p)
+                    _set_cell_value(vcell, rel)
+                    filled += 1
+                    rel_done = True
             # 项目经理(或注册建造师)格:基本情况表此处填"人数",覆盖误填的人选名(语义=数量,非人名)
             pmc = str(profile.get("project_manager_count", "") or "").strip()
             if pmc:
@@ -1174,6 +1224,7 @@ def _fill_resume_tables(
     document: Any,
     pm_resume: dict[str, Any] | None,
     tech_resume: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
 ) -> int:
     """填项目经理 + 总工两张简历表(各含"拟在本标段")。
 
@@ -1182,7 +1233,13 @@ def _fill_resume_tables(
     (总工表惯例排后)。**其余判不出的表一律留空给人工**——绝不默认填项目经理,防止把
     项目经理信息灌进其他人员的简历表(员工反馈第11条的真实事故)。
     只填空格,绝不动已填内容。返回填入格数。
+
+    单表双人(2026-07-12 泗沙路实测):招标只给一张"项目经理和项目总工资历表"而两个角色
+    都已选派 → **克隆一张**(另起一页),表1=项目经理、表2=总工;随后各自的证件扫描件
+    就地插在各自表后(设 profile['_personnel_certs_inline'] 让 markdown 证件链让位)。
     """
+    from copy import deepcopy as _dc
+
     from docx.oxml.ns import qn as _qn
     from docx.table import Table
     from docx.text.paragraph import Paragraph
@@ -1190,8 +1247,9 @@ def _fill_resume_tables(
     pm_resume = pm_resume or {}
     tech_resume = tech_resume or {}
 
-    # 按文档体顺序收集简历表 + 其紧邻上方标题(用于判角色)
+    # 按文档体顺序收集简历表 + 其紧邻上方标题(用于判角色);顺带留全文供"合用表"判定
     targets: list[tuple[Any, str]] = []
+    target_texts: list[str] = []
     last_heading = ""
     for child in document.element.body.iterchildren():
         if child.tag == _qn("w:p"):
@@ -1203,11 +1261,37 @@ def _fill_resume_tables(
             full = " ".join(c.text for row in tb.rows for c in row.cells)
             if "拟在本标段" in full:  # 唯一锚:只认简历表
                 targets.append((tb, _resume_table_role(full, last_heading)))
+                target_texts.append(f"{last_heading} {full}")
     if not targets:
         return 0
 
     has_pm = bool(pm_resume.get("姓名"))
     has_tech = bool(tech_resume.get("姓名"))
+
+    # 单表双人克隆:**只对"合用表"动手**——标题/表文里同时点名 项目经理 和 总工/技术负责人
+    # (泗沙路"(六)拟委任的项目经理和项目总工资历表")。总工/经理**专属**单表绝不克隆,
+    # 否则会把项目经理灌进总工专属表(=员工反馈第11条张冠李戴回归,对抗审查修正)。
+    src_text = target_texts[0] if target_texts else ""
+    combined_title = "项目经理" in src_text and ("总工" in src_text or "技术负责人" in src_text)
+    if len(targets) == 1 and has_pm and has_tech and combined_title:
+        from docx.oxml import OxmlElement
+
+        src_tbl = targets[0][0]
+        note = _resume_adjacent_note_p(src_tbl._tbl)
+        tail = note if note is not None else src_tbl._tbl
+        new_tbl_el = _dc(src_tbl._tbl)
+        pb = OxmlElement("w:p")
+        pPr = OxmlElement("w:pPr")
+        pPr.append(OxmlElement("w:pageBreakBefore"))
+        pb.append(pPr)
+        tail.addnext(pb)
+        pb.addnext(new_tbl_el)
+        if note is not None:
+            note_copy = _dc(note)
+            for sect in note_copy.findall(f".//{qn('w:sectPr')}"):  # 剥分节符,防凭空多节
+                sect.getparent().remove(sect)
+            new_tbl_el.addnext(note_copy)
+        targets = [(src_tbl, "pm"), (Table(new_tbl_el, document), "tech")]
 
     assign: list[tuple[Any, dict[str, Any] | None]] = []
     pm_assigned = False
@@ -1233,10 +1317,63 @@ def _fill_resume_tables(
     # 其余无名表保持留空:宁可人工补,不张冠李戴(员工反馈第11条)
 
     filled = 0
+    inline_roles: set[str] = set()
+    certs_done: set[str] = set()  # 同一人只插一套(资格审查+详细评审双表时防重复)
     for tb, resume in assign:
         if resume and resume.get("姓名"):
             filled += _fill_one_resume_table(tb, resume)
+            # 证件扫描件**立刻**跟在本人资历表后(泗沙路实测两人证件挤一处冲突)
+            name = str(resume.get("姓名"))
+            if name not in certs_done:
+                got = _insert_person_certs_after_table(document, tb, resume)
+                if got:
+                    certs_done.add(name)
+                    inline_roles.add(str(resume.get("拟任职务") or "项目经理"))
+    if inline_roles and profile is not None:
+        # **按角色**让位:谁的证件就地插成了,才掐谁的 markdown 证件链;没占到表的
+        # 角色保留锚点链兜底(否则总工没表时他整套证件会静默消失,对抗审查修正)
+        profile["_personnel_certs_inline_roles"] = sorted(inline_roles)
     return filled
+
+
+def _resume_adjacent_note_p(tbl_el: Any) -> Any | None:
+    """资历表紧随其后的"注：…"段(中间只允许空段);没有返回 None。"""
+    nxt = tbl_el.getnext()
+    while nxt is not None and nxt.tag == qn("w:p"):
+        text = "".join(nxt.itertext()).strip()
+        if text.startswith(("注：", "注:", "注1")):
+            return nxt
+        if text:
+            return None
+        nxt = nxt.getnext()
+    return None
+
+
+def _insert_person_certs_after_table(document: Any, table: Any, resume: dict[str, Any]) -> int:
+    """把这个人的证件扫描件就地插在他的资历表(含注)之后,返回插图张数。逐图容错。"""
+    name = str((resume or {}).get("姓名") or "").strip()
+    role = str((resume or {}).get("拟任职务") or "").strip() or "项目经理"
+    if not name:
+        return 0
+    inserted = 0
+    try:
+        from services.generation_service import _insert_image_after
+        from services.v2_generation_service import person_cert_documents
+
+        items = person_cert_documents(role, name)
+        if not items:
+            return 0
+        note = _resume_adjacent_note_p(table._tbl)
+        anchor = note if note is not None else table._tbl
+        for doc_id, caption in items:
+            try:
+                anchor = _insert_image_after(anchor, document, doc_id, caption, 12.0)
+                inserted += 1
+            except Exception:
+                logger.warning("资历表后插证件图失败(doc %s),跳过该图", doc_id, exc_info=True)
+    except Exception:
+        logger.warning("资历表后就地插证件整体失败,退回锚点链兜底", exc_info=True)
+    return inserted
 
 
 def _fill_pm_resume_table(document: Any, resume: dict[str, Any]) -> int:

@@ -318,6 +318,12 @@ def generate_v2_bid_package(
 
     apply_fixed_fields(combined_profile)
 
+    # 招标"1.4.4 信誉要求"逐条抽出 → 填"(五)投标人的信誉情况表"(泗沙路实测整表空白,
+    # 用户定:按招标1.4.4逐项填响应)。抽不到=空,表保持留白待人工。
+    combined_profile["credit_requirement_items"] = _extract_credit_requirement_items(
+        tender_text
+    )
+
     # 项目经理/总工简历表字段(选派的人 → 台账结构化信息 + 身份证/毕业证 OCR 兜底)
     pm_for_resume = str(
         combined_profile.get("project_manager_name") or combined_profile.get("project_manager") or ""
@@ -1103,7 +1109,11 @@ def _enrich_commercial_markdown(
         profile.get("project_manager_name") or profile.get("project_manager") or ""
     ).strip()
     tech_name = str(profile.get("tech_director_name") or "").strip()
-    personnel_cert_md = _personnel_cert_evidence_markdown(pm_name, tech_name)
+    # 按角色让位:证件已随本人资历表就地插入的角色不再走锚点链;没占到表的角色保留兜底
+    cert_inline_roles = set(profile.get("_personnel_certs_inline_roles") or [])
+    pm_for_chain = "" if "项目经理" in cert_inline_roles else pm_name
+    tech_for_chain = "" if "项目技术负责人" in cert_inline_roles else tech_name
+    personnel_cert_md = _personnel_cert_evidence_markdown(pm_for_chain, tech_for_chain)
     if personnel_cert_md:
         parts.append(personnel_cert_md)
 
@@ -1123,18 +1133,25 @@ def _enrich_commercial_markdown(
     if kb_tables_md:
         parts.append(kb_tables_md)
 
-    # A3:类似业绩证明链——每个业绩附 中标通知书+合同+交工验收 扫描(import_performance_evidence)
-    perf_evidence_md = _performance_evidence_markdown(
-        selected_names=selected_perf_names,
-        page_selection=_evidence_page_selection(project_id),
-    )
-    if perf_evidence_md:
-        parts.append(perf_evidence_md)
+    # A3:类似业绩证明链。填表阶段已在信息表后**就地插过图**(表→图交替)的角色让位,
+    # 防重复;没插成的角色(本卷无它的表/库无证明)保留锚点链兜底,绝不丢证据。
+    inline_roles = set(profile.get("_similar_evidence_inline_roles") or [])
+    if "bidder" in inline_roles:
+        logger.info("投标人业绩证明已随信息表就地插入,跳过其锚点链")
+    else:
+        perf_evidence_md = _performance_evidence_markdown(
+            selected_names=selected_perf_names,
+            page_selection=_evidence_page_selection(project_id),
+        )
+        if perf_evidence_md:
+            parts.append(perf_evidence_md)
 
-    # A3c:经理/总工个人业绩证明链(员工意见第10条)——各自"近年完成的类似项目信息表"后
-    # 附进了表的那几条业绩的证明扫描,锚点落位到个人节
+    # A3c:经理/总工个人业绩证明链——各自"近年完成的类似项目信息表"后附进了表的业绩证明
     if project_id is not None:
         for role in ("pm", "td"):
+            if role in inline_roles:
+                logger.info("%s业绩证明已就地插入,跳过其锚点链", role)
+                continue
             role_md = _role_performance_evidence_markdown(project_id, role)
             if role_md:
                 parts.append(role_md)
@@ -1295,9 +1312,43 @@ _EVIDENCE_GROUPS: tuple[tuple[str, tuple[str, ...], int, str, str], ...] = (
     ("营业执照", ("营业执照",), 1, "基本情况表", "one"),
     ("企业资质证书", ("资质证书", "施工劳务资质证书"), 16, "基本情况表", "specialty"),
     ("安全生产许可证", ("安全生产许可证",), 1, "基本情况表", "one"),
-    ("基本账户开户许可证", ("开户许可证",), 1, "基本情况表", "one"),
-    ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20, "信誉情况表", "none"),
+    # 开户许可证是"正页+注意事项页"两页一本(泗沙路实测只插1页被用户点名),整套插
+    ("基本账户开户许可证", ("开户许可证",), 2, "基本情况表", "none"),
+    # 荣誉/信用证书**不锚信誉情况表**(2026-07-12 泗沙路用户点名"信誉表后不跟奖项"),
+    # 空锚=落卷尾附录区,要用人工取
+    ("企业荣誉与信誉证明", ("荣誉证书", "信用证书"), 20, "", "none"),
 )
+
+
+def _extract_credit_requirement_items(tender_text: str | None) -> list[str]:
+    """从招标"1.4.4 信誉要求"抽逐条要求文字,供信誉情况表左列。抽不到返回空(表留白)。
+
+    先锚"1.4.4"小节(至 1.4.5/1.5 止),退而求其次锚"信誉要求"字样;逐条按（1）（2）
+    编号切分,去空白、掐头尾标点,过滤太短/太长的噪声。"""
+    text = re.sub(r"[\t\r]", "", tender_text or "")
+    if not text:
+        return []
+
+    def _parse(block: str) -> list[str]:
+        parts = re.split(r"[（(]\s*(\d{1,2})\s*[)）]", block[:3000])
+        items: list[str] = []
+        for i in range(2, len(parts), 2):
+            item = re.sub(r"[\s　]+", "", parts[i]).strip("；;。，,")
+            if 4 <= len(item) <= 200:
+                items.append(item)
+        return items[:12]
+
+    # 逐个候选位置试:目次里也会出现"1.4.4 信誉要求……页码"(那段抽不出条目),
+    # 取**第一个能解析出条目**的匹配(对抗审查修正,防目次先出现导致整体抽空)
+    for pattern in (
+        r"1\.4\.4\s*信誉要求(.*?)(?=1\.4\.5|1\.5[^0-9]|$)",
+        r"信誉要求[:：]?(.*?)(?=(?:资格|财务|业绩|人员)要求|1\.4\.5|1\.5[^0-9]|$)",
+    ):
+        for m in re.finditer(pattern, text, re.S):
+            items = _parse(m.group(1))
+            if items:
+                return items
+    return []
 
 
 def _cert_page_marker(file_name: str) -> str:
@@ -1531,13 +1582,16 @@ _PERSONNEL_CERT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
-    """单个人(项目经理/总工)的证件插图标记:身份证正反 + 建造师/职称/安全/社保。"""
+def person_cert_documents(role: str, name: str) -> list[tuple[int, str]]:
+    """单个人(项目经理/总工)该附的证件图清单 [(document_id, 图注), ...]。
+
+    身份证(正反,OCR判面)永远最前,其后按 _PERSONNEL_CERT_GROUPS 的附件序各取
+    1张代表。供 markdown 锚点链与简历表后就地插图共用(同一套挑选规则)。"""
     name = (name or "").strip()
     if not name:
-        return ""
+        return []
 
-    blocks: list[str] = []
+    out: list[tuple[int, str]] = []
     seen: set[int] = set()
 
     # 身份证:最小覆盖(完整版1张 / 否则正反各1),OCR判面,不重复堆插
@@ -1551,10 +1605,7 @@ def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
                 continue
             seen.add(doc_id)
             label = _ID_LABEL.get(str(card.get("side")), "")
-            blocks.append(
-                f'\n{{{{knowledge_image:document_id={doc_id} '
-                f'anchor="{anchor}" caption="{role}（{name}）身份证{label}" width_cm=12}}}}\n'
-            )
+            out.append((doc_id, f"{role}（{name}）身份证{label}"))
     except Exception:
         pass
 
@@ -1596,11 +1647,17 @@ def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
             continue
         doc_id = int(chosen["document_id"])
         seen.add(doc_id)
-        blocks.append(
-            f'\n{{{{knowledge_image:document_id={doc_id} '
-            f'anchor="{anchor}" caption="{role}（{name}）{title}" width_cm=12}}}}\n'
-        )
-    return "".join(blocks)
+        out.append((doc_id, f"{role}（{name}）{title}"))
+    return out
+
+
+def _one_person_cert_markdown(role: str, name: str, anchor: str) -> str:
+    """单个人(项目经理/总工)的证件插图标记(锚点链兜底用,清单同 person_cert_documents)。"""
+    return "".join(
+        f'\n{{{{knowledge_image:document_id={doc_id} '
+        f'anchor="{anchor}" caption="{caption}" width_cm=12}}}}\n'
+        for doc_id, caption in person_cert_documents(role, name)
+    )
 
 
 def build_pm_resume_fields(pm_name: str, role: str = "项目经理") -> dict[str, str]:
@@ -1740,6 +1797,52 @@ def _personnel_cert_evidence_markdown(pm_name: str, tech_name: str) -> str:
 # 已入库,document_category=业绩证明、metadata 带 performance_project/evidence_type/evidence_seq)。
 _PERF_EVIDENCE_ORDER = ("中标通知书", "合同", "交工验收")
 _PERF_PER_TYPE_CAP = {"中标通知书": 2, "合同": 2, "交工验收": 4}
+
+
+def evidence_images_for_project(
+    project_name: str,
+    rows: list[tuple] | None = None,
+    page_selection: dict[str, list[int]] | None = None,
+) -> list[tuple[int, str]]:
+    """某个业绩项目该插的证明图清单 [(document_id, 图注), ...],中标→合同→交工按序。
+
+    与 _build_performance_evidence_md 同一套选片规则(人工选页优先且不设上限,
+    否则默认每类取前几张);供 similar_project_fill_service 在每张信息表后就地插图。
+    rows 不传则现查库;查不到/没有返回空列表。
+    """
+    from services.performance_archive_service import _norm
+
+    if rows is None:
+        rows = _query_performance_evidence_rows()
+    wanted = _norm(str(project_name or ""))
+    if not wanted:
+        return []
+    by_type: dict[str, list[tuple[int, int]]] = {}
+    for doc_id, proj, etype, _year, seq in rows:
+        if _norm(str(proj or "")) != wanted or not etype:
+            continue
+        try:
+            seq_i = int(seq) if seq is not None else 0
+        except (TypeError, ValueError):
+            seq_i = 0
+        try:
+            by_type.setdefault(str(etype), []).append((seq_i, int(doc_id)))
+        except (TypeError, ValueError):
+            continue
+
+    chosen_ids = (page_selection or {}).get(wanted)
+    title = str(project_name).replace('"', "")[:48]
+    out: list[tuple[int, str]] = []
+    for etype in _PERF_EVIDENCE_ORDER:
+        all_imgs = sorted(by_type.get(etype, []))
+        if chosen_ids is not None:
+            imgs = [(s, d) for s, d in all_imgs if d in chosen_ids]
+        else:
+            imgs = all_imgs[: _PERF_PER_TYPE_CAP[etype]]
+        for j, (_seq, doc_id) in enumerate(imgs, 1):
+            cap = f"{title}-{etype}" + (f"（{j}）" if len(imgs) > 1 else "")
+            out.append((doc_id, cap))
+    return out
 
 
 def _build_performance_evidence_md(

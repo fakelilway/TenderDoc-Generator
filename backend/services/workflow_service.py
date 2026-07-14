@@ -1029,6 +1029,17 @@ def _apply_selected_project_manager(company_profile, project):
         profile["similar_projects_all"] = (
             similar_project_info_service.list_similar_project_records()
         )
+        # 业绩证明选页(员工意见7):归一化项目名→勾中的页,填表时每张信息表后就地插图用
+        try:
+            from services.performance_archive_service import _norm
+
+            stored_pages = project.get("selected_evidence_pages") or {}
+            profile["evidence_page_selection"] = {
+                _norm(str(k)): [int(d) for d in (v or [])]
+                for k, v in stored_pages.items()
+            }
+        except Exception:
+            profile["evidence_page_selection"] = {}
         if pm_ok:
             profile["similar_projects_pm"] = (
                 similar_project_info_service.records_for_manager(selected["name"])

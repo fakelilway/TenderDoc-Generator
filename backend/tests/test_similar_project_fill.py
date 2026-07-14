@@ -539,3 +539,67 @@ def test_parse_similar_projects_docx_roundtrip(tmp_path) -> None:
     assert r.project_year == 2022  # 以交工日期为准
     assert r.amount_wan == 1212.72
     assert r.owner_phone == "0551-65117872"
+
+
+def test_evidence_inserted_right_after_each_detail_table(monkeypatch) -> None:
+    """表→图→表→图交替(2026-07-12泗沙路实测拍板):每张信息表(含注)后立刻跟
+    该项目自己的证明图,不再节尾一把堆;就地插过则设让位标志防markdown链重复。"""
+    from services import generation_service as g
+    from services import v2_generation_service as v2
+    from services import similar_project_fill_service as m
+
+    def fake_insert(anchor, doc, doc_id, caption, width):
+        p = doc.add_paragraph()._p  # 造个新段
+        p.getparent().remove(p)
+        from docx.text.paragraph import Paragraph
+        anchor.addnext(p)
+        Paragraph(p, doc).add_run(f"[图{doc_id}:{caption}]")
+        return p
+
+    monkeypatch.setattr(g, "_insert_image_after", fake_insert)
+    monkeypatch.setattr(
+        v2, "_query_performance_evidence_rows",
+        lambda: [
+            (11, "测试业绩1号工程", "中标通知书", "2023", 1),
+            (21, "测试业绩2号工程", "中标通知书", "2022", 1),
+        ],
+    )
+
+    doc = Document()
+    doc.add_paragraph("项目经理近年完成的类似项目信息表（资格审查）")
+    _add_detail_table(doc)
+    doc.add_paragraph("注：附证明。")
+    records = [_record(1), _record(2)]
+    profile = {
+        "similar_projects_pm": records,
+        "selected_pm_performance": [{"name": r["project_name"]} for r in records],
+    }
+    result = m.fill_similar_project_sections(doc, profile)
+
+    texts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    # 顺序:标题,注,[图11] … 克隆标题,注,[图21] —— 每表的图紧跟本表的注、在下一表标题前
+    i_note1 = texts.index("注：附证明。")
+    assert texts[i_note1 + 1].startswith("[图11:测试业绩1号工程-中标通知书")
+    i_title2 = [i for i, t in enumerate(texts) if t.startswith("投标人") or "信息表" in t][-1]
+    i_img2 = next(i for i, t in enumerate(texts) if t.startswith("[图21:"))
+    assert i_img2 > i_title2  # 第二个项目的图在第二张表之后
+    assert result["evidence_inserted"] == 2
+    assert profile.get("_similar_evidence_inline_roles") == ["pm"]
+
+
+def test_no_evidence_found_keeps_fallback_chain(monkeypatch) -> None:
+    """库里没证明图 → 不设让位标志,markdown锚点链照旧兜底(绝不丢证据)。"""
+    from services import v2_generation_service as v2
+    from services import similar_project_fill_service as m
+
+    monkeypatch.setattr(v2, "_query_performance_evidence_rows", lambda: [])
+    doc = Document()
+    doc.add_paragraph("项目经理近年完成的类似项目信息表（资格审查）")
+    _add_detail_table(doc)
+    profile = {
+        "similar_projects_pm": [_record(1)],
+        "selected_pm_performance": [{"name": _record(1)["project_name"]}],
+    }
+    result = m.fill_similar_project_sections(doc, profile)
+    assert result["evidence_inserted"] == 0
+    assert "_similar_evidence_inline_roles" not in profile

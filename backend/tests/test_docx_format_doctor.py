@@ -671,3 +671,72 @@ def test_template_header_line_with_sectpr_only_cleared() -> None:
     kept = [p for p in doc.paragraphs if p._p.find(qn("w:pPr")) is not None
             and p._p.find(qn("w:pPr")).find(qn("w:sectPr")) is not None]
     assert kept and kept[0].text.strip() == ""  # 文字清了,分节符还在
+
+
+def test_section_titles_get_page_breaks_but_toc_untouched() -> None:
+    """正文章节标题(一、/（一）)补段前分页;目录区同级连排标题绝不加(泗沙路实测结构)。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_section_title_page_breaks
+
+    doc = Document()
+    # 目录区:同级标题连排
+    doc.add_paragraph("一、投标函及投标函附录")
+    doc.add_paragraph("二、授权委托书或法定代表人身份证明")
+    doc.add_paragraph("三、联合体协议书（不适用）")
+    # 正文:大节+子节+表格分隔的子节
+    doc.add_paragraph("正文过渡内容,说明目录结束了。")
+    doc.add_paragraph("一、投标函及投标函附录")
+    doc.add_paragraph("（一）投 标 函")
+    doc.add_paragraph("致:某某招标人,我方愿意参加投标。")
+    doc.add_paragraph("（一）投标人基本情况表")
+    doc.add_table(rows=1, cols=2).cell(0, 0).text = "投标人名称"
+    doc.add_paragraph("（二）投标人企业组织机构框图")
+    doc.add_table(rows=1, cols=1).cell(0, 0).text = "以框图方式表示。"
+
+    healed = heal_section_title_page_breaks(doc)
+
+    def has_pb(p):
+        pPr = p._p.find(qn("w:pPr"))
+        return pPr is not None and pPr.find(qn("w:pageBreakBefore")) is not None
+
+    paras = {p.text.strip(): p for p in doc.paragraphs if p.text.strip()}
+    assert not has_pb(paras["二、授权委托书或法定代表人身份证明"])  # 目录行不动
+    assert not has_pb(paras["三、联合体协议书（不适用）"])
+    assert has_pb(paras["一、投标函及投标函附录"]) or True  # 同文重名取后者,单独查下面
+    # 正文大节(前面是正文内容,后面是不同级"（一）") → 加
+    body_titles = [p for p in doc.paragraphs if p.text.strip() == "一、投标函及投标函附录"]
+    assert not has_pb(body_titles[0]) and has_pb(body_titles[1])
+    # （一）投标人基本情况表 与（二）框图 之间隔着表格 → 不算目录连排,都加
+    assert has_pb(paras["（一）投标人基本情况表"])
+    assert has_pb(paras["（二）投标人企业组织机构框图"])
+    assert healed >= 4
+
+
+def test_two_level_toc_not_split() -> None:
+    """两级目录(一、下面挂（一）（二）)是连排≥3的标题串,一整串都不许加分页(对抗审查修正)。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_section_title_page_breaks
+
+    doc = Document()
+    doc.add_paragraph("一、投标函及投标函附录")
+    doc.add_paragraph("（一）投标函")
+    doc.add_paragraph("（二）投标函附录")
+    doc.add_paragraph("二、授权委托书")
+    doc.add_paragraph("正文开始了,上面是目录。")
+    doc.add_paragraph("一、投标函及投标函附录")
+    doc.add_paragraph("致:招标人,以下是正文。")
+
+    heal_section_title_page_breaks(doc)
+
+    def has_pb(p):
+        pPr = p._p.find(qn("w:pPr"))
+        return pPr is not None and pPr.find(qn("w:pageBreakBefore")) is not None
+
+    paras = list(doc.paragraphs)
+    assert not any(has_pb(p) for p in paras[:4])  # 两级目录整串不动
+    body_title = [p for p in paras if p.text.strip() == "一、投标函及投标函附录"][-1]
+    assert has_pb(body_title)  # 正文标题照加

@@ -143,6 +143,82 @@ def _heal_whitelist_values(paragraph: Any, values: list[str]) -> int:
     return healed
 
 
+# 章节标题两级:大节"一、投标函…"/子表"（一）投标人基本情况表"。短行、无句读才算标题。
+_SECTION_TITLE_L1_RE = re.compile(r"^[一二三四五六七八九十]+、")
+_SECTION_TITLE_L2_RE = re.compile(r"^（[一二三四五六七八九十]+）")
+
+
+def _title_level(text: str) -> int:
+    """0=非标题;1=大节(一、);2=子表(（一）)。标题=短行(≤30字)且无句号逗号。"""
+    t = text.strip()
+    if not t or len(t) > 30 or any(c in t for c in "。，；"):
+        return 0
+    if _SECTION_TITLE_L1_RE.match(t):
+        return 1
+    if _SECTION_TITLE_L2_RE.match(t):
+        return 2
+    return 0
+
+
+def heal_section_title_page_breaks(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """给正文章节标题(一、二、…/（一）（二）…)补"段前分页",每个新章节另起一页。
+
+    泗沙路实测:法人身份证图后"三、联合体协议书"直接接排在同一页——原版靠福昕分节符
+    分页,插图/填值撑版后标题就飘到半页腰上。补 pageBreakBefore 一劳永逸(本就在页首的
+    标题加了也无副作用)。**目录区绝不能加**:目录的特征是标题行**连排**(中间没有正文/
+    表格),连排 ≥3 行的一整串按目录跳过——两级目录(一、下挂（一）（二）)也逮得住;
+    正文里"一、大节"紧跟"（一）子节"只连排2行,照加。返回补分页的标题数。
+    """
+    from docx.text.paragraph import Paragraph
+
+    # 按文档体顺序记 (元素, 级别, 是否有内容):表格算"有内容的非标题",天然隔断连排
+    items: list[tuple[Any, int, bool]] = []
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            text = Paragraph(child, document).text.strip()
+            items.append((child, _title_level(text), bool(text)))
+        elif child.tag == qn("w:tbl"):
+            items.append((child, 0, True))
+
+    # 连排分组:相邻标题(允许中间夹空段)归同一串;正文/表格隔断。串长≥3=目录,整串跳过。
+    in_toc: set[int] = set()
+    run: list[int] = []
+    for i, (_el, lvl, has_content) in enumerate(items):
+        if lvl:
+            run.append(i)
+        elif has_content:
+            if len(run) >= 3:
+                in_toc.update(run)
+            run = []
+        # 空段:透明,不断串
+    if len(run) >= 3:
+        in_toc.update(run)
+
+    healed = 0
+    for i, (el, lvl, _has) in enumerate(items):
+        if not lvl or i in in_toc or el.tag != qn("w:p"):
+            continue
+        pPr_el = el.find(qn("w:pPr"))
+        if pPr_el is None:
+            pPr_el = OxmlElement("w:pPr")
+            el.insert(0, pPr_el)
+        if pPr_el.find(qn("w:pageBreakBefore")) is not None:
+            continue
+        pb = OxmlElement("w:pageBreakBefore")
+        # CT_PPr 子元素顺序:pageBreakBefore 必须排在 pStyle/keepNext/keepLines 之后
+        anchor_el = None
+        for tag in ("w:pStyle", "w:keepNext", "w:keepLines"):
+            found = pPr_el.find(qn(tag))
+            if found is not None:
+                anchor_el = found
+        if anchor_el is not None:
+            anchor_el.addnext(pb)
+        else:
+            pPr_el.insert(0, pb)
+        healed += 1
+    return healed
+
+
 # 招标模板页眉行:整行恰好是"××招标示范文本（XXXX年版）"(前缀≤20字)
 _TEMPLATE_HEADER_RE = re.compile(r"^.{0,20}招标示范文本[（(]\d{4}年版[）)]$")
 
@@ -1289,6 +1365,7 @@ def run_format_doctor_assembled(document: Any) -> dict[str, int]:
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
     ("template_header_lines", heal_template_header_lines),
+    ("section_title_page_breaks", heal_section_title_page_breaks),
     ("underline_slots", heal_underline_slots),
     ("filler_blank_runs", heal_filler_blank_runs),
     ("phantom_images", heal_phantom_images),
