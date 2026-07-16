@@ -1330,6 +1330,9 @@ def _extract_credit_requirement_items(tender_text: str | None) -> list[str]:
         return []
 
     def _parse(block: str) -> list[str]:
+        # "注：情形（1）（2）由投标人自行承诺…"是说明,不是要求条目——在注处收刀,
+        # 防止注里引用的（1）（2）编号被误切成条目(泗沙路附录4实测)
+        block = re.split(r"注\s*[：:]", block, 1)[0]
         parts = re.split(r"[（(]\s*(\d{1,2})\s*[)）]", block[:3000])
         items: list[str] = []
         for i in range(2, len(parts), 2):
@@ -1338,14 +1341,21 @@ def _extract_credit_requirement_items(tender_text: str | None) -> list[str]:
                 items.append(item)
         return items[:12]
 
-    # 逐个候选位置试:目次里也会出现"1.4.4 信誉要求……页码"(那段抽不出条目),
-    # 取**第一个能解析出条目**的匹配(对抗审查修正,防目次先出现导致整体抽空)
+    # 逐个候选位置试,取**第一个能解析出条目**的匹配:
+    # ①公路养护示范文本把信誉要求放在"附录4 资格审查条件(信誉最低要求)"(泗沙路实测),
+    #   前附表only写"信誉要求:见附录4"——附录优先;
+    # ②目次里也会出现"1.4.4 信誉要求……页码"(抽不出条目,自动跳过);
+    # ③兜底"信誉要求:"必须排除"见附录/见前附表"指路句(否则一路吞到保证金条款)。
     for pattern in (
+        r"附录\s*4[^\n]{0,30}信誉[^\n]{0,20}(.*?)(?=附录\s*5|$)",
         r"1\.4\.4\s*信誉要求(.*?)(?=1\.4\.5|1\.5[^0-9]|$)",
-        r"信誉要求[:：]?(.*?)(?=(?:资格|财务|业绩|人员)要求|1\.4\.5|1\.5[^0-9]|$)",
+        r"信誉要求[:：]?(?!见|详见)(.*?)(?=(?:资格|财务|业绩|人员)要求|1\.4\.5|1\.5[^0-9]|$)",
     ):
         for m in re.finditer(pattern, text, re.S):
-            items = _parse(m.group(1))
+            block = m.group(1)
+            if re.match(r"\s*[:：]?\s*(见|详见)", block):
+                continue  # "信誉要求:见附录4"这类指路句,不是正文
+            items = _parse(block)
             if items:
                 return items
     return []
