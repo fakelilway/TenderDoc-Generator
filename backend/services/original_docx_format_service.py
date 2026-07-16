@@ -1247,9 +1247,13 @@ def _fill_resume_tables(
     pm_resume = pm_resume or {}
     tech_resume = tech_resume or {}
 
-    # 按文档体顺序收集简历表 + 其紧邻上方标题(用于判角色);顺带留全文供"合用表"判定
+    # 按文档体顺序收集简历表 + 其紧邻上方标题(用于判角色);顺带留全文供"合用表"判定。
+    # **"汇总表"绝不算简历表**(巢湖实测:"(八)其他管理和技术人员汇总表"表头含"拟在本
+    # 标段工程任职",被当成简历表后江舟简历+证件全灌错位);"其他…人员资历表"是
+    # 其他人员的地盘,经理/总工永远不许占(张冠李戴红线)。
     targets: list[tuple[Any, str]] = []
     target_texts: list[str] = []
+    target_is_others: list[bool] = []
     last_heading = ""
     for child in document.element.body.iterchildren():
         if child.tag == _qn("w:p"):
@@ -1259,24 +1263,31 @@ def _fill_resume_tables(
         elif child.tag == _qn("w:tbl"):
             tb = Table(child, document)
             full = " ".join(c.text for row in tb.rows for c in row.cells)
-            if "拟在本标段" in full:  # 唯一锚:只认简历表
-                targets.append((tb, _resume_table_role(full, last_heading)))
-                target_texts.append(f"{last_heading} {full}")
+            if "拟在本标段" not in full:  # 唯一锚:只认简历表
+                continue
+            if "汇总" in last_heading or "汇总表" in full[:80]:
+                continue  # 汇总表不是简历表
+            targets.append((tb, _resume_table_role(full, last_heading)))
+            target_texts.append(f"{last_heading} {full}")
+            target_is_others.append("其他" in last_heading)
     if not targets:
         return 0
 
     has_pm = bool(pm_resume.get("姓名"))
     has_tech = bool(tech_resume.get("姓名"))
 
-    # 单表双人克隆:**只对"合用表"动手**——标题/表文里同时点名 项目经理 和 总工/技术负责人
-    # (泗沙路"(六)拟委任的项目经理和项目总工资历表")。总工/经理**专属**单表绝不克隆,
-    # 否则会把项目经理灌进总工专属表(=员工反馈第11条张冠李戴回归,对抗审查修正)。
-    src_text = target_texts[0] if target_texts else ""
+    # 经理/总工的候选表=非"其他人员"的简历表。**唯一候选是"合用表"**(标题/表文同时
+    # 点名项目经理和总工,如"(五)项目经理（项目总工）简历表"/"(六)拟委任的项目经理和
+    # 项目总工资历表")且两个角色都选派了 → 克隆一张:原表=项目经理,克隆=总工。
+    # 专属单表(只提一个角色)绝不克隆,防第11条张冠李戴回归。
+    pmtech_idx = [i for i, other in enumerate(target_is_others) if not other]
+    src_text = target_texts[pmtech_idx[0]] if len(pmtech_idx) == 1 else ""
     combined_title = "项目经理" in src_text and ("总工" in src_text or "技术负责人" in src_text)
-    if len(targets) == 1 and has_pm and has_tech and combined_title:
+    if len(pmtech_idx) == 1 and has_pm and has_tech and combined_title:
         from docx.oxml import OxmlElement
 
-        src_tbl = targets[0][0]
+        src_i = pmtech_idx[0]
+        src_tbl = targets[src_i][0]
         note = _resume_adjacent_note_p(src_tbl._tbl)
         tail = note if note is not None else src_tbl._tbl
         new_tbl_el = _dc(src_tbl._tbl)
@@ -1291,7 +1302,13 @@ def _fill_resume_tables(
             for sect in note_copy.findall(f".//{qn('w:sectPr')}"):  # 剥分节符,防凭空多节
                 sect.getparent().remove(sect)
             new_tbl_el.addnext(note_copy)
-        targets = [(src_tbl, "pm"), (Table(new_tbl_el, document), "tech")]
+        keep = [
+            (targets[i], target_is_others[i])
+            for i in range(len(targets))
+            if i != src_i
+        ]
+        targets = [(src_tbl, "pm"), (Table(new_tbl_el, document), "tech")] + [t for t, _ in keep]
+        target_is_others = [False, False] + [o for _, o in keep]
 
     assign: list[tuple[Any, dict[str, Any] | None]] = []
     pm_assigned = False
@@ -1305,7 +1322,10 @@ def _fill_resume_tables(
             pm_assigned = pm_assigned or has_pm
         else:  # 判不出的表先留空,下面只做两种有把握的推断
             assign.append((tb, None))
-    unassigned = [i for i, (_, role) in enumerate(targets) if role == ""]
+    unassigned = [
+        i for i, (_, role) in enumerate(targets)
+        if role == "" and not target_is_others[i]  # 其他人员的表绝不进推断池
+    ]
     # 推断①:项目经理没占到表 → 首张无名表归他(单表/表头无角色字样的模板)
     if has_pm and not pm_assigned and unassigned:
         idx = unassigned.pop(0)

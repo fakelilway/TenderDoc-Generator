@@ -272,3 +272,60 @@ def test_credit_items_extracted_even_when_toc_lists_144_first():
     )
     items = _extract_credit_requirement_items(tender)
     assert len(items) == 2 and "失信被执行人" in items[1]
+
+
+def test_chaohu_layout_clone_skips_summary_and_others(monkeypatch):
+    """巢湖真卷版式:合用简历表(五)+其他人员汇总表(八)+其他人员资历表(九)。
+    汇总表不算简历表、其他人员表绝不给经理/总工;合用表照样触发克隆各填各人。"""
+    from docx import Document
+    from docx.text.paragraph import Paragraph
+
+    from services import generation_service as g
+    from services import v2_generation_service as v2
+    from services.original_docx_format_service import _fill_resume_tables
+
+    def fake_insert(anchor, doc, doc_id, caption, width):
+        p = doc.add_paragraph()._p
+        p.getparent().remove(p)
+        anchor.addnext(p)
+        Paragraph(p, doc).add_run(f"[证{doc_id}:{caption}]")
+        return p
+
+    monkeypatch.setattr(g, "_insert_image_after", fake_insert)
+    monkeypatch.setattr(
+        v2, "person_cert_documents",
+        lambda role, name: [(101 if name == "江舟" else 201, f"{role}（{name}）身份证")],
+    )
+
+    doc = Document()
+    doc.add_paragraph("（五）项目经理（项目总工）简历表")
+    t1 = doc.add_table(rows=2, cols=2)
+    t1.cell(0, 0).text = "姓名"
+    t1.cell(1, 0).text = "拟在本标段工程任职"
+    doc.add_paragraph("（八）其他管理和技术人员汇总表")
+    t2 = doc.add_table(rows=2, cols=3)
+    t2.cell(0, 0).text = "姓名"
+    t2.cell(0, 1).text = "年龄"
+    t2.cell(0, 2).text = "拟在本标段工程任职"
+    doc.add_paragraph("（九）拟委任的其他管理和技术人员资历表")
+    t3 = doc.add_table(rows=2, cols=2)
+    t3.cell(0, 0).text = "姓名"
+    t3.cell(1, 0).text = "拟在本标段工程任职"
+
+    profile = {}
+    _fill_resume_tables(
+        doc,
+        {"姓名": "江舟", "拟任职务": "项目经理"},
+        {"姓名": "许明英", "拟任职务": "项目技术负责人"},
+        profile=profile,
+    )
+    tables = list(doc.tables)
+    assert len(tables) == 4  # 合用表克隆出1张,共4张
+    assert tables[0].cell(0, 1).text.strip() == "江舟"  # 原表=项目经理
+    assert tables[1].cell(0, 1).text.strip() == "许明英"  # 克隆=总工
+    # 汇总表(现t2)与其他人员资历表(t3)一格都不许被填
+    assert all(not c.text.strip() or c.text.strip() in ("姓名", "年龄", "拟在本标段工程任职")
+               for r in tables[2].rows for c in r.cells)
+    assert tables[3].cell(0, 1).text.strip() == ""
+    texts = [p.text for p in doc.paragraphs if p.text.strip().startswith("[证")]
+    assert texts == ["[证101:项目经理（江舟）身份证]", "[证201:项目技术负责人（许明英）身份证]"]
