@@ -50,6 +50,10 @@ class Settings(BaseSettings):
         "https://ark.cn-beijing.volces.com/api/coding/v3", alias="VOLCANO_BASE_URL"
     )
     volcano_model: str = Field("glm-5.2", alias="VOLCANO_MODEL")
+    # Kimi(月之暗面 Moonshot,OpenAI兼容)。2026-07-16 用户拍板:主力从 DeepSeek 换 Kimi K3
+    kimi_api_key: str = Field("", alias="KIMI_API_KEY")
+    kimi_base_url: str = Field("https://api.moonshot.cn/v1", alias="KIMI_BASE_URL")
+    kimi_model: str = Field("kimi-k3", alias="KIMI_MODEL")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(

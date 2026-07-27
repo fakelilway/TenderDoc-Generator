@@ -183,10 +183,11 @@ def _review_with_llm(
     generated_markdown: str,
 ) -> list[ReviewFinding]:
     settings = get_settings()
-    if _has_real_key(settings.deepseek_api_key):
-        api_key = settings.deepseek_api_key
-        base_url = settings.deepseek_base_url
-        model = settings.deepseek_model
+    # 2026-07-16 用户拍板:不再用 DeepSeek,主力换 Kimi K3(审查链同步:kimi→volcano→openrouter)
+    if _has_real_key(getattr(settings, "kimi_api_key", "")):
+        api_key = settings.kimi_api_key
+        base_url = settings.kimi_base_url
+        model = settings.kimi_model
     elif _has_real_key(settings.volcano_api_key):
         api_key = settings.volcano_api_key
         base_url = settings.volcano_base_url

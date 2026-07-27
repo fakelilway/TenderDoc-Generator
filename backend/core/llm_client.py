@@ -128,6 +128,14 @@ def resolve_llm_config(
     if settings is None:
         settings = get_settings()
     provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
+    if provider == "kimi":
+        if has_real_key(settings.kimi_api_key):
+            return (
+                settings.kimi_api_key,
+                settings.kimi_base_url,
+                settings.kimi_model,
+            )
+        raise error_cls("KIMI_API_KEY is required when BID_LLM_PROVIDER=kimi")
     if provider == "volcano":
         if has_real_key(settings.volcano_api_key):
             return (
