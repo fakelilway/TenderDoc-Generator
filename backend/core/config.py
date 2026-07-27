@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     kimi_api_key: str = Field("", alias="KIMI_API_KEY")
     kimi_base_url: str = Field("https://api.moonshot.cn/v1", alias="KIMI_BASE_URL")
     kimi_model: str = Field("kimi-k3", alias="KIMI_MODEL")
+    # 技术卷(施工组织设计正文)专用供应商覆盖:空=跟随 BID_LLM_PROVIDER。
+    # 2026-07-16 用户拍板:商务标用 kimi,技术文件仍用 deepseek → 这里填 deepseek
+    tech_llm_provider: str = Field("", alias="TECH_LLM_PROVIDER")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(

@@ -358,4 +358,6 @@ def _generate_messages_with_llm(
 
 
 def _get_llm_client_config() -> tuple[str, str, str]:
-    return resolve_llm_config(get_settings())
+    # 本 agent 只写技术卷(施组正文/合规重写)→ 走技术卷专用供应商
+    # (2026-07-16 用户拍板:商务标 kimi、技术文件 deepseek,见 TECH_LLM_PROVIDER)
+    return resolve_llm_config(get_settings(), purpose="technical")

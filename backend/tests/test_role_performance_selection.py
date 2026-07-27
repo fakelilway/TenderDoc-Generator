@@ -176,3 +176,26 @@ def test_changing_person_resets_role_performance(monkeypatch) -> None:
     monkeypatch.setattr(project_service, "_connect", lambda: _Conn(cur3))
     pers_mod.save_selected_tech_director(7, None)
     assert "selected_td_performance = NULL" in cur3.executed[1][0]
+
+
+def test_llm_purpose_routing_tech_vs_default():
+    """商务/解析走全局供应商(kimi),技术卷走 TECH_LLM_PROVIDER(deepseek)——2026-07-16拍板。"""
+    from types import SimpleNamespace
+
+    from core.llm_client import resolve_llm_config
+
+    s = SimpleNamespace(
+        bid_llm_provider="kimi",
+        tech_llm_provider="deepseek",
+        kimi_api_key="sk-kimi-real-key-123456",
+        kimi_base_url="https://api.moonshot.cn/v1",
+        kimi_model="kimi-k3",
+        deepseek_api_key="sk-ds-real-key-123456",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-v4-pro",
+    )
+    assert resolve_llm_config(s)[2] == "kimi-k3"
+    assert resolve_llm_config(s, purpose="technical")[2] == "deepseek-v4-pro"
+    # 没配技术覆盖 → 技术卷跟随全局
+    s.tech_llm_provider = ""
+    assert resolve_llm_config(s, purpose="technical")[2] == "kimi-k3"

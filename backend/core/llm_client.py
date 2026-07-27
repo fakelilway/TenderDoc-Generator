@@ -114,6 +114,7 @@ def resolve_llm_config(
     settings: object | None = None,
     *,
     error_cls: type[Exception] = RuntimeError,
+    purpose: str = "default",
 ) -> tuple[str, str, str]:
     """Resolve ``(api_key, base_url, model)`` for the configured LLM provider.
 
@@ -128,6 +129,12 @@ def resolve_llm_config(
     if settings is None:
         settings = get_settings()
     provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
+    # 按用途分流(2026-07-16 用户拍板:商务标 kimi、技术文件 deepseek):
+    # purpose="technical" 且配置了 TECH_LLM_PROVIDER 时,技术卷写作用它;其余全走全局
+    if purpose == "technical":
+        tech = str(getattr(settings, "tech_llm_provider", "") or "").strip().lower()
+        if tech:
+            provider = tech
     if provider == "kimi":
         if has_real_key(settings.kimi_api_key):
             return (
