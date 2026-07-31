@@ -603,3 +603,65 @@ def test_no_evidence_found_keeps_fallback_chain(monkeypatch) -> None:
     result = m.fill_similar_project_sections(doc, profile)
     assert result["evidence_inserted"] == 0
     assert "_similar_evidence_inline_roles" not in profile
+
+
+def test_absorb_padding_never_page_breaks_signature_or_note_lines() -> None:
+    """垫页空段吸收后,段前分页只配给下一节标题——签字行/注释行绝不设分页。
+
+    2026-07-30 用户实测:承诺书签字栏(项目经理：__（签字）)被设了段前分页,
+    单独甩到下一页,正文页留半页空白("有必要分页吗?")。
+    """
+    from services.similar_project_fill_service import _looks_like_section_start
+
+    # 该设分页的:节标题/表区标题
+    assert _looks_like_section_start("（七）项目经理、项目总工承诺书")
+    assert _looks_like_section_start("三、联合体协议书")
+    assert _looks_like_section_start("投标人近年完成的类似项目信息表（资格审查）")
+    # 绝不设分页的:签字行/注/日期/空
+    assert not _looks_like_section_start("项目经理：                （签字）")
+    assert not _looks_like_section_start("注：对照评标办法要求，由投标人自行提供相关证明。")
+    assert not _looks_like_section_start("日期：2026年7月30日")
+    assert not _looks_like_section_start("")
+
+
+def test_full_evidence_mode_returns_everything_uncapped() -> None:
+    """full=True:不设上限、不看选页、"其他"类也全给(2026-07-30 全量拍板)。"""
+    from services.v2_generation_service import evidence_images_for_project
+
+    rows = (
+        [(i, "萧县三标段工程", "交工验收", 2025, i) for i in range(15)]
+        + [(100 + i, "萧县三标段工程", "中标通知书", 2025, i) for i in range(2)]
+        + [(200 + i, "萧县三标段工程", "合同", 2025, i) for i in range(3)]
+        + [(300 + i, "萧县三标段工程", "其他", 2025, i) for i in range(5)]
+    )
+    # 默认模式:有上限(中标2/合同2/交工4),"其他"不给 → 8张
+    capped = evidence_images_for_project("萧县三标段工程", rows=rows)
+    assert len(capped) == 8
+    # 全量模式:25张一张不落;选页传了也无视
+    full = evidence_images_for_project(
+        "萧县三标段工程", rows=rows, page_selection={"萧县三标段工程": [0]}, full=True
+    )
+    assert len(full) == 25
+    # 顺序:中标→合同→交工→其他
+    caps = [c for _d, c in full]
+    assert "中标通知书" in caps[0] and "业绩证明" in caps[-1]
+
+
+def test_summary_full_evidence_skips_missing_project(monkeypatch) -> None:
+    """库里没图的业绩跳过并告警,绝不拿别的项目图凑数。"""
+    from docx import Document
+    from services import similar_project_fill_service as spf
+
+    doc = Document()
+    t = doc.add_table(rows=2, cols=2)
+    import services.v2_generation_service as v2
+    monkeypatch.setattr(v2, "_query_performance_evidence_rows", lambda: [(1, "有图工程", "合同", 2024, 0)])
+    calls = []
+    import services.generation_service as gs
+    monkeypatch.setattr(gs, "_insert_image_after", lambda a, d, i, c, w: (calls.append(i), a)[1])
+
+    n = spf._insert_full_evidence_after_summary(
+        doc, t._tbl,
+        [{"project_name": "有图工程"}, {"project_name": "没图工程"}],
+    )
+    assert n == 1 and calls == [1]

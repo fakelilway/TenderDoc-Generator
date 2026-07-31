@@ -509,3 +509,51 @@ def test_qualification_evidence_keeps_cert_pages_and_types(monkeypatch) -> None:
     assert "企业资质证书（施工劳务）" in md
     # 专业"通用"不进图注
     assert "（通用）" not in md
+
+
+def test_compliance_rewrite_runs_concurrently() -> None:
+    """合规定向补写必须并发跑(各节互不相干)。
+
+    2026-07-29 巢湖真卷实测:这段串行时一次只发一个 LLM 请求、CPU 全程空转等回话,
+    十几节就是十几分钟。用"同时在跑的补写数 > 1"锁住并发,退回串行会立刻失败。
+    """
+    import threading
+
+    live = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def rewrite_one(sect, _miss):
+        nonlocal live, peak
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        try:
+            threading.Event().wait(0.15)
+            return sect, f"{sect}补写后正文"
+        finally:
+            with lock:
+                live -= 1
+
+    targets = [(f"第{i}节", [{"kind": "废标", "title": "x", "description": "y"}]) for i in range(4)]
+    out = v2_generation_service._rewrite_sections_concurrently(rewrite_one, targets, 5)
+
+    assert peak > 1, f"合规补写退回串行了(最高并发={peak})"
+    assert out == [(f"第{i}节", f"第{i}节补写后正文") for i in range(4)]
+
+
+def test_compliance_rewrite_one_failure_does_not_kill_the_rest() -> None:
+    """单节补写抛异常只丢那一节(返回空正文由调用方保留原文),不连累其它节。"""
+    def rewrite_one(sect, _miss):
+        if sect == "坏节":
+            raise RuntimeError("llm down")
+        return sect, f"{sect}新正文"
+
+    out = v2_generation_service._rewrite_sections_concurrently(
+        rewrite_one, [("好节", []), ("坏节", []), ("另一好节", [])], 5
+    )
+    assert out == [("好节", "好节新正文"), ("坏节", ""), ("另一好节", "另一好节新正文")]
+
+
+def test_compliance_rewrite_empty_targets_skips_pool() -> None:
+    assert v2_generation_service._rewrite_sections_concurrently(None, [], 5) == []

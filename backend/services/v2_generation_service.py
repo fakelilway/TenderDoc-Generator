@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,35 @@ def _cjk_bigrams(text: str) -> set[str]:
         for i in range(len(run) - 1):
             grams.add(run[i : i + 2])
     return grams
+
+
+def _rewrite_sections_concurrently(
+    rewrite_one: Callable[[str, list[dict[str, str]]], tuple[str, str]],
+    targets: list[tuple[str, list[dict[str, str]]]],
+    workers: int,
+) -> list[tuple[str, str]]:
+    """并发跑各节的合规补写,返回 [(节标题, 新正文)]。
+
+    各节补写互不相干,却曾是逐节排队的:2026-07-29 巢湖真卷实测这段串行跑了十几分钟
+    (一次只发一个 LLM 请求、CPU 全程空转等回话)。与技术卷正文写作用同一个并发上限
+    ``BID_WRITER_CONCURRENCY``,墙上时间约降到 1/并发数。
+
+    单节补写抛异常时只丢这一节(新正文留空,调用方跳过、保留原正文),不连累其它节——
+    补写整体本就是 best-effort,出标前的覆盖闸仍会把关。
+    """
+    if not targets:
+        return []
+
+    def _safe(target: tuple[str, list[dict[str, str]]]) -> tuple[str, str]:
+        sect, miss = target
+        try:
+            return rewrite_one(sect, miss)
+        except Exception:  # noqa: BLE001 - 单节失败不该拖垮整轮补写
+            logger.warning("合规补写单节失败,保留原正文:%s", sect, exc_info=True)
+            return sect, ""
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
+        return list(pool.map(_safe, targets))
 
 
 def _distribute_requirement_items(
@@ -346,25 +376,47 @@ def generate_v2_bid_package(
         tmp_path = tmp.name
         tmp.close()
 
-        # 唯一路径:福昕云转换(定位"投标文件格式"商务区页 → 福昕转可编辑 Word + 自动填公司
-        # 档案)。已删 pdf2docx 可编辑 / 整页图+域烧录 / 纯整页截图 三档备胎——福昕失败即硬报错,
-        # 绝不降级出不可编辑/近似稿(避免再迷糊"到底走哪条")。
-        if str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower() != "foxit":
-            raise ValueError(
-                "PDF 招标格式转换仅支持福昕云:请在 .env 配置 CLOUD_PDF_CONVERT=foxit 及 "
-                "FOXIT_CLOUD_CLIENT_ID / FOXIT_CLOUD_SECRET 后重试。"
-            )
-        try:
-            from services.cloud_pdf_convert import convert_format_pages_via_cloud
+        # 按招标原件类型分两条路(靠字节头判定,不依赖上游传扩展名):
+        #   Word 招标(PK 开头的 zip) → 原样复制格式章,**全程不碰福昕**、零转换损耗;
+        #   PDF 招标            → 福昕云转可编辑 Word。
+        # 两条路拿到 docx 之后走的是同一套填充(fill_format_docx)。
+        if tender_bytes[:2] == b"PK":
+            try:
+                from services.original_docx_format_service import (
+                    build_original_format_docx,
+                )
 
-            built_format_docx = convert_format_pages_via_cloud(
-                tender_bytes, tmp_path, profile=combined_profile
-            )
-        except Exception as exc:
-            logger.error("福昕云转换失败(无降级路径)", exc_info=True)
-            raise ValueError(
-                f"PDF 招标文件原格式复制失败:福昕云转换出错,系统不回退近似格式。({exc})"
-            ) from exc
+                built_format_docx = build_original_format_docx(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
+            except Exception as exc:
+                logger.error("Word 招标原格式复制失败", exc_info=True)
+                raise ValueError(
+                    f"Word 招标文件原格式复制失败,系统不回退近似格式。({exc})"
+                ) from exc
+        else:
+            # 已删 pdf2docx 可编辑 / 整页图+域烧录 / 纯整页截图 三档备胎——福昕失败即硬报错,
+            # 绝不降级出不可编辑/近似稿(避免再迷糊"到底走哪条")。
+            if (
+                str(getattr(settings, "cloud_pdf_convert", "off") or "off").lower()
+                != "foxit"
+            ):
+                raise ValueError(
+                    "PDF 招标格式转换仅支持福昕云:请在 .env 配置 CLOUD_PDF_CONVERT=foxit 及 "
+                    "FOXIT_CLOUD_CLIENT_ID / FOXIT_CLOUD_SECRET 后重试。"
+                    "(若想彻底不用福昕,请向招标代理索取 Word 版招标文件后重新上传)"
+                )
+            try:
+                from services.cloud_pdf_convert import convert_format_pages_via_cloud
+
+                built_format_docx = convert_format_pages_via_cloud(
+                    tender_bytes, tmp_path, profile=combined_profile
+                )
+            except Exception as exc:
+                logger.error("福昕云转换失败(无降级路径)", exc_info=True)
+                raise ValueError(
+                    f"PDF 招标文件原格式复制失败:福昕云转换出错,系统不回退近似格式。({exc})"
+                ) from exc
 
     # Content-level audit of the copied format chapter. The PDF path bypasses
     # the page-based format audit (filled_pages stays empty in original mode), so
@@ -389,12 +441,16 @@ def generate_v2_bid_package(
 
             from services.appendix_service import build_appendix_docx
 
+            # 只在招标是 PDF 时把原件交给附表装配——它用 fitz 按页找附表,喂 Word 会直接
+            # 报错。Word 招标暂只装配公司定稿附表,招标自带附表出占位页(待补:按 DOCX 抠附表)。
             _tender_pdf = None
-            if tender_bytes:
+            if tender_bytes and tender_bytes[:4] == b"%PDF":
                 _tp = _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
                 _tp.write(tender_bytes)
                 _tp.close()
                 _tender_pdf = _tp.name
+            elif tender_bytes:
+                logger.info("Word 招标:附表暂不从招标原件抽取,仅装配公司定稿附表+占位页")
             _ap = _tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
             _ap.close()
             built_appendix_docx = build_appendix_docx(
@@ -555,10 +611,9 @@ def generate_v2_bid_package(
                         )
                 node_by_title = {n.title: n for n in result.nodes}
                 repaired = 0
-                for sect, miss in missing_by_title.items():
-                    node = node_by_title.get(sect)
-                    if node is None:
-                        continue
+
+                def _rewrite_one(sect: str, miss: list[dict[str, str]]) -> tuple[str, str]:
+                    """重写单节并返回 (节标题, 新正文);失败返回空正文由调用方跳过。"""
                     base_messages = build_node_fill_prompt(
                         node_title=sect,
                         project_name=requirements.project_name or "投标项目",
@@ -572,9 +627,22 @@ def generate_v2_bid_package(
                         target_chars=min_chars_by_title.get(sect, 0),
                         boq_brief=boq_by_title.get(sect, ""),
                     )
-                    new_content = rewrite_node_for_compliance(
+                    node = node_by_title[sect]
+                    return sect, rewrite_node_for_compliance(
                         base_messages, node.content, sect, miss
                     )
+
+                targets = [
+                    (sect, miss)
+                    for sect, miss in missing_by_title.items()
+                    if sect in node_by_title
+                ]
+                for sect, new_content in _rewrite_sections_concurrently(
+                    _rewrite_one,
+                    targets,
+                    max(1, int(getattr(settings, "bid_writer_concurrency", 5) or 1)),
+                ):
+                    node = node_by_title[sect]
                     if new_content and new_content != node.content:
                         node.content = new_content
                         repaired += 1
@@ -1096,13 +1164,17 @@ def _enrich_commercial_markdown(
     if evidence_md:
         parts.append(evidence_md)
 
-    # 法人身份证复印件(正反)→ 法定代表人身份证明 后(招标P120;法人亲签,不附代理人)
-    legal_rep = str(
-        profile.get("legal_representative") or profile.get("法定代表人") or ""
-    ).strip()
-    legal_id_md = _legal_rep_id_evidence_markdown(legal_rep)
-    if legal_id_md:
-        parts.append(legal_id_md)
+    # 法人身份证复印件(正反)→ 法定代表人身份证明 后(招标P120;法人亲签,不附代理人)。
+    # 照单附件引擎(2026-07-30)已按表单声明把法人身份证就地插在身份证明表落款后 →
+    # 本锚点链让位,否则一卷插两份,且锚点会误命中授权委托书里"附：法定代表人身份证明"
+    # 那行、把图楔进委托书(用户实测拍板:授权委托书后不附法人身份证)。
+    if not profile.get("_legal_id_inline"):
+        legal_rep = str(
+            profile.get("legal_representative") or profile.get("法定代表人") or ""
+        ).strip()
+        legal_id_md = _legal_rep_id_evidence_markdown(legal_rep)
+        if legal_id_md:
+            parts.append(legal_id_md)
 
     # 项目经理/总工证件(建造师证/身份证正反/职称/安全/社保)→ 各自资历表后
     pm_name = str(
@@ -1685,6 +1757,19 @@ def build_pm_resume_fields(pm_name: str, role: str = "项目经理") -> dict[str
         return {}
     fields: dict[str, str] = {"姓名": name, "拟任职务": role}
 
+    # 资历表定稿(2026-07-31 用户提供,员工整理的一人一张定稿)= 最高优先级:
+    # "按照我选的人选,从这里面找那个人,按照这个填"。学历/工作年限/毕业学校等
+    # 台账没有的字段全靠它;拟任职务仍按选派角色,不照抄文档。
+    try:
+        from services.curated_resume_service import get_curated_resume
+
+        curated = get_curated_resume(name)
+        for k, v in curated.items():
+            if k != "拟任职务":
+                fields[k] = v
+    except Exception:
+        pass
+
     # 台账结构化信息:职称 + 身份证号(→年龄/性别) + 注册建造师证号/专业。比拍照OCR可靠。
     try:
         from services import personnel_roster_service
@@ -1695,12 +1780,13 @@ def build_pm_resume_fields(pm_name: str, role: str = "项目经理") -> dict[str
                 member = m
                 break
         if member:
+            # setdefault:资历表定稿在前面已落的字段绝不被台账覆盖(定稿是员工手校的)
             if member.get("title"):
-                fields["职称"] = str(member["title"])
+                fields.setdefault("职称", str(member["title"]))
             idn = str(member.get("id_number") or "")
             if len(idn) >= 17 and idn[:17].isdigit():
-                fields["年龄"] = str(datetime.date.today().year - int(idn[6:10]))
-                fields["性别"] = "男" if int(idn[16]) % 2 == 1 else "女"
+                fields.setdefault("年龄", str(datetime.date.today().year - int(idn[6:10])))
+                fields.setdefault("性别", "男" if int(idn[16]) % 2 == 1 else "女")
             # 注册建造师证号 + 专业:优先取有证号的一级建造师,否则任一有证号的
             certs = member.get("builder_certs") or []
             best = None
@@ -1813,12 +1899,17 @@ def evidence_images_for_project(
     project_name: str,
     rows: list[tuple] | None = None,
     page_selection: dict[str, list[int]] | None = None,
+    full: bool = False,
 ) -> list[tuple[int, str]]:
     """某个业绩项目该插的证明图清单 [(document_id, 图注), ...],中标→合同→交工按序。
 
     与 _build_performance_evidence_md 同一套选片规则(人工选页优先且不设上限,
     否则默认每类取前几张);供 similar_project_fill_service 在每张信息表后就地插图。
     rows 不传则现查库;查不到/没有返回空列表。
+
+    ``full=True`` = 全量模式(2026-07-30 用户拍板"文件夹里所有图片都要附"):
+    该业绩库里有的图**一张不落**全给——不设每类上限、不看人工选页、"其他"类
+    (无关键词文件/PDF转图页)也排在三大类之后一并给。供资格审查三表用。
     """
     from services.performance_archive_service import _norm
 
@@ -1840,17 +1931,24 @@ def evidence_images_for_project(
         except (TypeError, ValueError):
             continue
 
-    chosen_ids = (page_selection or {}).get(wanted)
+    chosen_ids = None if full else (page_selection or {}).get(wanted)
     title = str(project_name).replace('"', "")[:48]
+    # 全量模式把库里出现的其它类型(其他/PDF页等)接在三大类后面,顺序稳定
+    type_order = list(_PERF_EVIDENCE_ORDER)
+    if full:
+        type_order += sorted(t for t in by_type if t not in _PERF_EVIDENCE_ORDER)
     out: list[tuple[int, str]] = []
-    for etype in _PERF_EVIDENCE_ORDER:
+    for etype in type_order:
         all_imgs = sorted(by_type.get(etype, []))
-        if chosen_ids is not None:
+        if full:
+            imgs = all_imgs
+        elif chosen_ids is not None:
             imgs = [(s, d) for s, d in all_imgs if d in chosen_ids]
         else:
             imgs = all_imgs[: _PERF_PER_TYPE_CAP[etype]]
         for j, (_seq, doc_id) in enumerate(imgs, 1):
-            cap = f"{title}-{etype}" + (f"（{j}）" if len(imgs) > 1 else "")
+            label = "业绩证明" if etype == "其他" else etype
+            cap = f"{title}-{label}" + (f"（{j}）" if len(imgs) > 1 else "")
             out.append((doc_id, cap))
     return out
 

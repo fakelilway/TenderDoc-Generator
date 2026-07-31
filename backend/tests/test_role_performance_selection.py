@@ -179,7 +179,8 @@ def test_changing_person_resets_role_performance(monkeypatch) -> None:
 
 
 def test_llm_purpose_routing_tech_vs_default():
-    """商务/解析走全局供应商(kimi),技术卷走 TECH_LLM_PROVIDER(deepseek)——2026-07-16拍板。"""
+    """三路分流:商务卷走全局(kimi),技术卷走 TECH_LLM_PROVIDER(deepseek),
+    解析走 PARSER_LLM_PROVIDER(deepseek)——2026-07-16/07-29 两次拍板。"""
     from types import SimpleNamespace
 
     from core.llm_client import resolve_llm_config
@@ -187,6 +188,7 @@ def test_llm_purpose_routing_tech_vs_default():
     s = SimpleNamespace(
         bid_llm_provider="kimi",
         tech_llm_provider="deepseek",
+        parser_llm_provider="deepseek",
         kimi_api_key="sk-kimi-real-key-123456",
         kimi_base_url="https://api.moonshot.cn/v1",
         kimi_model="kimi-k3",
@@ -196,6 +198,86 @@ def test_llm_purpose_routing_tech_vs_default():
     )
     assert resolve_llm_config(s)[2] == "kimi-k3"
     assert resolve_llm_config(s, purpose="technical")[2] == "deepseek-v4-pro"
-    # 没配技术覆盖 → 技术卷跟随全局
+    assert resolve_llm_config(s, purpose="parser")[2] == "deepseek-v4-pro"
+    # 没配覆盖 → 各用途都跟随全局
     s.tech_llm_provider = ""
+    s.parser_llm_provider = ""
     assert resolve_llm_config(s, purpose="technical")[2] == "kimi-k3"
+    assert resolve_llm_config(s, purpose="parser")[2] == "kimi-k3"
+
+
+def test_chat_completion_strips_temperature_for_kimi():
+    """kimi-k3 只接受 temperature=1:kimi 系剥掉非1温度,别家原样透传(实测400修复)。"""
+    from types import SimpleNamespace
+
+    from core.llm_client import chat_completion
+
+    captured = {}
+
+    class _FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    return SimpleNamespace(choices=[])
+
+    chat_completion(_FakeClient, model="kimi-k3", messages=[], temperature=0)
+    assert "temperature" not in captured
+    captured.clear()
+    chat_completion(_FakeClient, model="deepseek-v4-pro", messages=[], temperature=0)
+    assert captured.get("temperature") == 0
+
+
+def test_curated_resume_takes_priority_over_roster(monkeypatch) -> None:
+    """资历表定稿(用户2026-07-31提供)优先于台账/OCR;拟任职务仍按选派角色。"""
+    from services import v2_generation_service as v2
+
+    import services.curated_resume_service as crs
+    monkeypatch.setattr(
+        crs, "get_curated_resume",
+        lambda name: {
+            "年龄": "50", "职称": "高级工程师", "学历": "专科",
+            "工作年限": "22年", "毕业学校": "2018年1月毕业于国家开放大学",
+            "拟任职务": "项目总工",  # 文档里写的职务,必须被忽略
+        } if name == "许明英" else {},
+    )
+    import services.personnel_roster_service as prs
+    monkeypatch.setattr(
+        prs, "get_personnel_roster",
+        lambda: {"roster": [{"name": "许明英", "title": "工程师",
+                             "id_number": "34010119760101002X"}]},
+    )
+    f = v2.build_pm_resume_fields("许明英", role="项目经理")
+    assert f["职称"] == "高级工程师"  # 定稿赢台账("工程师")
+    assert f["年龄"] == "50"          # 定稿赢身份证推算
+    assert f["学历"] == "专科" and f["工作年限"] == "22年"
+    assert f["拟任职务"] == "项目经理"  # 按选派角色,不照抄文档
+    assert f["性别"] == "女"           # 定稿没有的,台账补
+
+
+def test_resume_parser_extracts_fields_from_doc_table() -> None:
+    """导入脚本的表格解析:标签右邻取值、合并格去重、年龄取数字。"""
+    from docx import Document
+    sys_path_hack = None
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "import_candidate_resumes",
+        pathlib.Path(__file__).resolve().parents[1] / "scripts/import_candidate_resumes.py",
+    )
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    doc = Document()
+    t = doc.add_table(rows=3, cols=6)
+    for i, v in enumerate(("姓 名", "李刚", "年 龄", "37岁", "专业", "公路工程")):
+        t.cell(0, i).text = v
+    for i, v in enumerate(("技术职称", "工程师", "学历", "专科", "拟在本标段工程任职", "项目经理")):
+        t.cell(1, i).text = v
+    for i, v in enumerate(("工作年限", "15年", "类似施工经验年限", "15年", "获奖情况", "无")):
+        t.cell(2, i).text = v
+
+    f = mod.parse_resume_table(t)
+    assert f["姓名"] == "李刚" and f["年龄"] == "37"
+    assert f["职称"] == "工程师" and f["工作年限"] == "15年"
+    assert f["类似施工经验年限"] == "15年"
+    assert "拟任职务" not in f  # 职务不入库,按选派定

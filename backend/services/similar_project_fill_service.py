@@ -207,6 +207,24 @@ def _is_padding_paragraph(el: Any) -> bool:
     return True
 
 
+_SECTION_START_RE = re.compile(
+    r"^([一二三四五六七八九十]+、|（[一二三四五六七八九十]+）|附表|第.{1,4}(章|部分))"
+)
+
+
+def _looks_like_section_start(text: str) -> bool:
+    """是否"下一节的开头":章节编号标题,或"××类似项目/业绩…表"这类表区标题。
+
+    签字行(项目经理：…（签字）)、"注：…"说明、日期行都不算——它们是上一节的尾巴,
+    绝不能被设段前分页甩去下一页。"""
+    t = re.sub(r"[\s　]+", "", text or "")
+    if not t:
+        return False
+    if _SECTION_START_RE.match(t):
+        return True
+    return ("类似项目" in t or "业绩" in t) and t.endswith(("表", "表）", "）")) and "签字" not in t
+
+
 def _absorb_page_padding(last_el: Any, min_run: int = 3, max_scan: int = 18) -> int:
     """吸收表格区之后的"整页填充空段",改设下一段"段前分页"。
 
@@ -245,7 +263,12 @@ def _absorb_page_padding(last_el: Any, min_run: int = 3, max_scan: int = 18) -> 
                 if len(run) >= min_run and probe is not None and probe.tag == qn("w:p"):
                     for empty in run:
                         empty.getparent().remove(empty)
-                    if not crossed_col_break:
+                    # 段前分页只配给"下一节的标题段"。垫页空段之后跟的可能是签字行
+                    # (项目经理：__（签字）)或"注：…"说明段——那是**本节自己的尾巴**,
+                    # 给它设分页会把签字/注硬生生顶到下一页,正文页留半页空白
+                    # (2026-07-30 用户实测承诺书签字栏被单独甩到下页)。
+                    probe_text = "".join(probe.itertext()).strip()
+                    if not crossed_col_break and _looks_like_section_start(probe_text):
                         _ensure_page_break_before(probe)
                     return len(run)
                 scanned += len(run)
@@ -443,6 +466,48 @@ def _records_for_role(role: str, profile: dict[str, Any]) -> list[dict[str, Any]
     return _pick_by_selection(pool, selected)
 
 
+def _insert_full_evidence_after_summary(
+    document: Any,
+    summary_tbl_el: Any,
+    records: list[dict[str, Any]],
+    ) -> int:
+    """资格审查汇总表后,按勾选顺序把每个业绩的证明扫描件**全量**插入,返回张数。
+
+    全量=业绩库里该项目的所有图(中标→合同→交工→其他,含PDF转图页),不看选页不设上限
+    (2026-07-30 用户拍板,例:萧县三标段文件夹25张 → 25张全放)。某业绩库里没图 →
+    跳过并告警,绝不拿别的项目图凑数。逐图容错,失败只记日志不阻断填表。
+    """
+    inserted = 0
+    try:
+        from services.generation_service import _insert_image_after
+        from services.v2_generation_service import (
+            _query_performance_evidence_rows,
+            evidence_images_for_project,
+        )
+
+        rows = _query_performance_evidence_rows()
+        note = _adjacent_note_p(summary_tbl_el)
+        anchor = note if note is not None else summary_tbl_el
+        for record in records:
+            name = str(record.get("project_name") or "").strip()
+            if not name:
+                continue
+            images = evidence_images_for_project(name, rows=rows, full=True)
+            if not images:
+                logger.warning("资格审查全量附图:业绩「%s」在库里没有任何扫描件,跳过(缺图)", name)
+                continue
+            for doc_id, caption in images:
+                try:
+                    anchor = _insert_image_after(anchor, document, doc_id, caption, 14.0)
+                    inserted += 1
+                except Exception:
+                    logger.warning("资格审查全量附图失败(doc %s),跳过该图", doc_id, exc_info=True)
+            logger.info("资格审查全量附图:「%s」附 %d 张", name, len(images))
+    except Exception:
+        logger.warning("资格审查汇总表全量附图整体失败,退回不插", exc_info=True)
+    return inserted
+
+
 def _insert_evidence_after_units(
     document: Any,
     tbl_els: list[Any],
@@ -551,6 +616,14 @@ def fill_similar_project_sections(document: Any, profile: dict[str, Any]) -> dic
                 note = _adjacent_note_p(entry["tbl_el"])
                 tail = note if note is not None else entry["tbl_el"]
                 _absorb_page_padding(tail)
+        # 资格审查汇总表后:每个勾选业绩的证明扫描件**全量**跟上(2026-07-30 用户拍板:
+        # "文件夹里有多少张就附多少张,一张不落",含PDF转图页;不看选页、不设上限;
+        # 一个业绩的图放完再放下一个)。详细评审节维持原表图交替(选页规则),不在此列。
+        if "资格审查" in (entry["key"][1] or "") and records:
+            got = _insert_full_evidence_after_summary(document, entry["tbl_el"], records)
+            result["evidence_inserted"] += got
+            if got:
+                result["evidence_inserted_roles"].add(entry["key"][0])
 
     # ── 详细信息表:同节键(归属人+限定词)连续成组,组内 填→克隆补齐→裁剪多余 ──
     groups: list[dict[str, Any]] = []
