@@ -230,10 +230,13 @@ def run_bid_workflow(
     generation_mode = "unknown"
     audit_summary = ""
     tender_bytes: bytes | None = None
-    if _original_tender_extension(project) == ".pdf":
+    # PDF 和 DOCX 都要下载:DOCX 招标走"原样复制"(不碰福昕),同样需要原件字节。
+    # 2026-07-29 修:这里曾只下 PDF,Word 招标的 tender_bytes 恒为 None → 生成端
+    # "有格式章可用"的分支进不去 → 整卷退化成纯 markdown 附录(用户实测"完全废了")。
+    if _original_tender_extension(project) in (".pdf", ".docx"):
         from utils.minio_client import minio_client
         tender_path = str(project.get("tender_file_path", ""))
-        logger.debug("Downloading PDF from MinIO: %s", tender_path)
+        logger.debug("Downloading tender original from MinIO: %s", tender_path)
         tender_bytes = minio_client.download_bytes(settings.minio_bucket, tender_path)
 
     v2_pkg = generate_v2_bid_package(

@@ -45,7 +45,7 @@ def build_original_format_docx(
     *,
     profile: dict[str, Any] | None = None,
 ) -> str:
-    """Copy the tender DOCX format chapter as OOXML, then fill known fields.
+    """招标本身是 Word 时的格式章路径:原样复制 + 走同一套填充。**全程不碰福昕**。
 
     This is intentionally not a markdown reconstruction path. Uses copy-then-prune
     (copy the source file, remove body children outside the format chapter) so the
@@ -53,6 +53,10 @@ def build_original_format_docx(
     headers/footers, embedded images, numbering — which a deepcopy into a fresh
     Document would drop. Merged cells, borders, underlines, alignment, spacing all
     survive.
+
+    复制完调用与福昕路径**完全相同**的 :func:`fill_format_docx`(填字段/填表/就地插证件
+    与业绩扫描件/格式体检)。2026-07-29 之前这里只做 _replace_known_fields+清红章,
+    导致 Word 招标即使被识别也产不出可用商务卷。
     """
     source = Document(BytesIO(tender_docx_bytes))
     elements = list(source.element.body)
@@ -73,11 +77,98 @@ def build_original_format_docx(
             continue  # keep the body section properties (and its header/footer refs)
         if index not in keep:
             body.remove(child)
-
-    _replace_known_fields(target, profile or {})
-    _strip_seal_images(target)  # 清招标原件带进来的招标人/代理红章(投标人章须人工手盖)
     target.save(str(path))
-    return str(path)
+
+    return fill_format_docx(str(path), profile or {}, from_foxit=False)
+
+
+def fill_format_docx(
+    output_path: str, profile: dict[str, Any], *, from_foxit: bool = True
+) -> str:
+    """把公司真值填进格式章 docx(原地改写),返回该路径。
+
+    这是商务卷的**唯一**填充流程,福昕路径(PDF招标)与原样复制路径(Word招标)共用它——
+    两条路只在"怎么拿到格式章 docx"上不同,拿到之后填的东西一模一样。
+
+    ``from_foxit=False``(招标本身是 Word)时**跳过所有福昕伪影矫正**:切标签归位、
+    劈句合并、假两栏、幽灵图那些 healer 是专治转换伪影的,原生 Word 没这些毛病,
+    跑了会帮倒忙——实测 split_paragraphs 会把"第八章 投标文件格式"和下一行
+    "投标文件（商务文件）"错误并成一段。格式体检改跑只含通用项的原生版。
+    """
+    from docx import Document
+
+    from services.docx_format_doctor import (
+        run_format_doctor,
+        run_format_doctor_native_docx,
+        run_format_doctor_prefill,
+    )
+
+    doc = Document(str(output_path))
+    if from_foxit:
+        _drop_spurious_stream_tables(doc)
+        _normalize_split_labels(doc)  # 理顺福昕切开的两字标签(性 别→性别),须在填值前:标签干净才填得上
+        # 填前体检:孤字归位(福昕把两列区右列标签劈成"性…"+"别："两半 → 拼回"性别："),
+        # 同样须在填值前:标签完整,性别/职务这类空才填得上。
+        run_format_doctor_prefill(doc)
+    # 招标原件的招标人/代理红章必须在**就地插图之前**清:红占比判定的前提是"文档里
+    # 还没有我们插的证件/业绩扫描件"(2026-07-12 七连修把插图挪进了填表阶段,此调用
+    # 相应从卷尾前移到这,守住绝不误删证据图的红线)。
+    _strip_seal_images(doc)
+    # "近年完成的类似项目"六种节(投标人/项目经理/项目总工 × 资格审查/详细评审):
+    # 按选派经理名下的业绩信息表记录原样填 汇总情况表+一业绩一张的详细信息表(克隆/裁剪)。
+    # 必须在通用填表之前:真值先落格,总工节留白的表进 handled 名单、通用逻辑绕行。
+    from services.similar_project_fill_service import fill_similar_project_sections
+
+    similar_result = fill_similar_project_sections(doc, profile)
+    # 公司组件照搬:员工做好的成品(组织结构框图/项目管理机构图)按首格锚整表替换空框,
+    # 一模一样(字体实化)。须在通用填表前:成品表绝不允许再被填值。
+    from services.company_component_service import fill_company_components
+
+    fill_company_components(doc)
+    _replace_known_fields(doc, profile)
+    _fill_textbox_placeholders(doc, profile)  # 浮动文本框里的占位符(致：（招标人名称）等),正文替换够不着
+    _fill_basic_info_subfields(doc, profile)  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
+    _fill_credit_status_table(doc, profile)  # 信誉情况表:按招标1.4.4逐条填响应(2026-07-12)
+    _fill_subcontract_table(doc, profile)  # 拟分包情况表:无分包计划→填"无"并收空行(2026-07-29)
+    _fill_known_table_cells(doc, profile)
+    _fill_inline_labeled_blanks(doc, profile)  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
+    _fill_authorization_letter(doc, profile)  # 授权委托书"本人___（姓名）系"→法人名
+    _fill_establish_segmented(doc, profile)  # 法人证明"成立时间：__年__月__日"分段填
+    _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
+    _fill_personnel_table(doc, profile)
+    _fill_performance_table(  # 投标人业绩情况表 → 填选中的类似业绩项目名(按节处理过的表绕行)
+        doc, profile, skip_tables=similar_result.get("handled_tables")
+    )
+    _fill_resume_tables(  # 项目经理 + 总工简历表(各填选派那个人的台账信息)
+        doc,
+        profile.get("pm_resume") or {},
+        profile.get("tech_resume") or {},
+        profile=profile,  # 单表双人克隆+证件就地插图要回写让位标志
+    )
+    _attach_declared_id_scans(doc, profile)  # 表单自己写的"附:身份证扫描件"照单附上(2026-07-30)
+    # 格式体检:所有值都填完后,对整份文档做"只修格式、不改文字"的合理化
+    # (第一版治填空槽下划线断裂:值 run 未继承槽的下划线 → 线画一半)。
+    # 传 profile 当白名单:只认我们自己填的值,防止给"年/月/日"等招标原文标签误加线。
+    if from_foxit:
+        run_format_doctor(doc, profile)
+    else:
+        run_format_doctor_native_docx(doc, profile)
+    # (红章清理已前移到填表/插图之前,见上)
+    _strip_tender_page_numbers(doc)  # 清招标原件页码,标书用自己的页码
+    _log_unfilled_fields(doc, profile)  # 缺字段显式告警(别静默留空)
+    # 商务标固定字段收尾:纠正公司名错别字(安徽正气→安徽正奇)+ 核对固定字段一致性。
+    from services.commercial_fixed_fields import (
+        audit_commercial_fixed_fields,
+        enforce_company_name_consistency,
+    )
+
+    corrected = enforce_company_name_consistency(doc)
+    if corrected:
+        logger.warning("商务标公司名错别字已纠正 %d 处(安徽正气→安徽正奇)", corrected)
+    for issue in audit_commercial_fixed_fields(doc):
+        logger.warning("商务标固定字段核对:%s", issue)
+    doc.save(str(output_path))
+    return str(output_path)
 
 
 def _clear_document_body(document: Document) -> None:
@@ -142,11 +233,38 @@ def _replace_known_fields(document: Document, profile: dict[str, Any]) -> None:
         return  # No non-empty replacement targets — skip iteration entirely
     for paragraph in document.paragraphs:
         _replace_in_paragraph(paragraph, replacements)
+        _shrink_slot_before_grown_value(paragraph, replacements)
     for table in document.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     _replace_in_paragraph(paragraph, replacements)
+
+
+def _shrink_slot_before_grown_value(paragraph: Any, replacements: dict[str, str]) -> int:
+    """token 替换让行变长时,把它前面的空白槽等量瘦身,总行宽回到模板原样。
+
+    "系＿＿＿＿（投标人名称）的法定代表人":（投标人名称）6字被公司全名10字顶掉后
+    整行多出4字宽,Word 里折行、"法定代表人。"孤零零掉到下一行(用户截图实测)。
+    值写槽家族的第三处——前两处是落款日期/成立时间。规则:值比 token 长出 N 字且
+    紧前面是 ≥N+2 字的纯空白 run,就从槽里砍掉 N 个空白,行宽不变;槽不够宽不砍。
+    """
+    shrunk = 0
+    for token, value in replacements.items():
+        if not value or len(value) <= len(token):
+            continue
+        grow = len(value) - len(token)
+        runs = paragraph.runs
+        for i, run in enumerate(runs):
+            if value not in run.text or i == 0:
+                continue
+            prev = runs[i - 1]
+            blank = prev.text
+            if blank.strip() == "" and len(blank) >= grow + 2:
+                prev.text = blank[grow:]
+                shrunk += 1
+            break
+    return shrunk
 
 
 def _fill_textbox_placeholders(document: Document, profile: dict[str, Any]) -> int:
@@ -575,6 +693,60 @@ def _append_to_cell(cell: Any, value: str) -> None:
         paras[0].add_run(value)
 
 
+def _fill_subcontract_table(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """"六、拟分包项目情况表"没分包计划时按招标要求填"无",并收掉多余空行。
+
+    招标这张表自带 19 行空数据行 + 备注列写着"若无分包计划，则投标人应在本表填写'无'"。
+    正奇不分包,交出去却是整张空表、白花花占两页(2026-07-29 用户实测:"这个表你也是
+    空的啊 空白巨大 然后占了两页")。规则:数据行**全空**才动手(有内容=真有分包计划,
+    绝不碰),首行各列填"无"、合计行数值填"无",其余全空数据行删掉。返回处理的表数。
+    """
+    from docx.table import Table
+    from docx.oxml.ns import qn as _qn
+
+    handled = 0
+    for table in document.tables:
+        if not table.rows:
+            continue
+        header = [re.sub(r"[\s　]+", "", c.text) for c in table.rows[0].cells]
+        if not any("拟分包的工程项目" in h for h in header):
+            continue
+        # 备注列(整列纵向合并写着那条注)不算数据列,不填也不判空
+        note_cols = {i for i, h in enumerate(header) if h.startswith("备注")}
+        data_rows = list(table.rows[1:])
+        if not data_rows:
+            continue
+        # 合计行:首格含"合计"——它是表尾结构行,不算空数据行、不删
+        def _is_total(row: Any) -> bool:
+            return "合计" in re.sub(r"[\s　]+", "", row.cells[0].text)
+
+        body_rows = [r for r in data_rows if not _is_total(r)]
+        total_rows = [r for r in data_rows if _is_total(r)]
+
+        def _row_empty(row: Any) -> bool:
+            return all(
+                not row.cells[i].text.strip()
+                for i in range(len(row.cells))
+                if i not in note_cols
+            )
+
+        if not all(_row_empty(r) for r in body_rows):
+            continue  # 已填了真实分包内容 → 一个字都不动
+        if not body_rows:
+            continue
+        first = body_rows[0]
+        for i in range(len(first.cells)):
+            if i not in note_cols:
+                _set_cell_value(first.cells[i], "无")
+        for row in total_rows:  # 合计行的数值格也填"无"(前两格是合并的标签)
+            for i in range(len(row.cells)):
+                if i not in note_cols and not row.cells[i].text.strip():
+                    _set_cell_value(row.cells[i], "无")
+        handled += 1
+        logger.info("拟分包项目情况表:无分包计划,已按招标要求填“无”")
+    return handled
+
+
 def _fill_credit_status_table(document: Any, profile: dict[str, Any]) -> int:
     """"(五)投标人的信誉情况表"按招标1.4.4逐条填(泗沙路实测整表空白,用户定)。
 
@@ -698,7 +870,12 @@ def _fill_establish_segmented(document: Any, profile: dict[str, Any]) -> int:
             continue
         runs = para.runs
         started = False
+        # 与 _fill_bid_date_today 同一个坑同一个方子(2026-07-30 用户实测身份证明页
+        # 成立时间"点线和数字叠一起"):槽与"年"之间常夹一个不带下划线的纯空格 run,
+        # 只记"最近的空 run"会把值写进夹缝空格 → 带线空槽原样留着、值叠在点线上。
+        # 优先写**带下划线**的空槽,没有带线槽才退回普通空 run。
         last_slot = None
+        last_underlined_slot = None
         for i, r in enumerate(runs):
             t = r.text
             if not started:
@@ -708,13 +885,16 @@ def _fill_establish_segmented(document: Any, profile: dict[str, Any]) -> int:
             stripped = t.strip()
             if stripped == "":  # 空格/制表符槽
                 last_slot = i
+                if r.font.underline:
+                    last_underlined_slot = i
             elif stripped[0] in parts:  # 命中 年/月/日
-                if last_slot is not None and runs[last_slot].text.strip() == "":
-                    runs[last_slot].text = parts[stripped[0]]
+                slot = last_underlined_slot if last_underlined_slot is not None else last_slot
+                if slot is not None and runs[slot].text.strip() == "":
+                    runs[slot].text = parts[stripped[0]]
                     filled += 1
-                last_slot = None
+                last_slot = last_underlined_slot = None
             else:
-                last_slot = None  # 遇到其它实质文本,断开,避免跨太远误填
+                last_slot = last_underlined_slot = None  # 遇到其它实质文本,断开,避免跨太远误填
     return filled
 
 
@@ -770,22 +950,31 @@ def _fill_bid_date_today(document: Any, today: Any = None) -> int:
                         return nxt[0] == "期"
             return False
 
-        # ① 拆 run 结构(福昕转换件常见):"__"是空 run、"年"是另一 run → 填前面的空槽
-        last_slot = None
+        # ① 拆 run 结构(福昕转换件常见):"__"是空 run、"年"是另一 run → 填前面的空槽。
+        # 槽与单位之间常夹一个**不带下划线**的纯空格 run(招标原件实测:
+        # [U]'      ' + [-]' ' + '年'),只记"最近的空 run"会把值写进那个夹缝空格里 →
+        # 带线空槽原样留着、整行凭空变长,右对齐落款行的字就挤成一坨(2026-07-29 用户截图)。
+        # 故优先写**带下划线**的空槽,没有带线槽时才退回普通空 run。
+        last_slot = None  # 最近的空 run(兜底)
+        last_underlined_slot = None  # 最近的带下划线空 run(真正的填空槽)
         for i, r in enumerate(runs):
             stripped = r.text.strip()
             if stripped == "":
                 last_slot = i
+                if r.font.underline:
+                    last_underlined_slot = i
             elif stripped[0] in parts:
                 if stripped[0] == "日" and _is_label_ri(i):
-                    last_slot = None  # "日 期"标签的"日",不是单位,别往前面槽里塞数字
+                    # "日 期"标签的"日",不是单位,别往前面槽里塞数字
+                    last_slot = last_underlined_slot = None
                     continue
-                if last_slot is not None and runs[last_slot].text.strip() == "":
-                    runs[last_slot].text = parts[stripped[0]]
+                slot = last_underlined_slot if last_underlined_slot is not None else last_slot
+                if slot is not None and runs[slot].text.strip() == "":
+                    runs[slot].text = parts[stripped[0]]
                     filled += 1
-                last_slot = None
+                last_slot = last_underlined_slot = None
             else:
-                last_slot = None
+                last_slot = last_underlined_slot = None
         # ② 单 run 结构:"日期：__年_月_日"整串在一个 run → 正则就地把空槽换成今天
         for r in runs:
             t = r.text
@@ -926,7 +1115,8 @@ _SIGN_MARKERS = (
 # 正文表单里成组出现的同级小标签:判定"标签：[空]下一个标签："→当前槽为空、可填。
 _FORM_SIBLING_LABELS = (
     "投标人名称", "法定代表人", "姓名", "性别", "年龄", "职务", "职称",
-    "电话", "传真", "邮政编码", "邮编", "地址", "住所", "联系人",
+    "联系电话", "联系方式", "电话", "传真", "邮政编码", "邮编", "地址", "住所",
+    "联系人", "电子邮件", "电子邮箱", "成立时间", "经营期限", "单位性质",
     "身份证号码", "身份证号",
 )
 # 槽位留白字符(空格/制表符/下划线/省略号/点线)。冒号后由这些组成的一段=待填槽。
@@ -1115,11 +1305,22 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                     # 故不再因签字/盖章标记跳过(区别于曾被否的 c274972"代签代盖":那是把标记替换掉)。
                     # 日期(年/月/日)无标签映射,仍留空给人工。
                     had_blank = k > j
+                    # 冒号后那段留白已被上面的 j 循环吃掉,所以"槽是空的"这件事要靠
+                    # j 是否前进过来判断(had_blank 只在还剩下划线/点线时为真)。
+                    had_whitespace = j > i + 1
                     empty_ok = (
                         k >= n
                         or s[k] in _INLINE_DELIMS
                         or s[k] in "（("
                         or _looks_like_next_label(s[k:])
+                        # "工期：＿＿日历天。"——留白后紧跟单位词(日历天/万元/个月)说明
+                        # 这就是个空槽,不是已填的值。2026-07-29 用户实测:同一句里质量、
+                        # 安全因为槽后是"；"分隔符填上了,唯独工期因为后面跟"日历天"被
+                        # 误判成"已有真实值"而跳过,交出去就是空着的。
+                        or (
+                            had_whitespace
+                            and any(s[k:].startswith(u) for u in _INLINE_UNITS)
+                        )
                     )
                     if not (had_blank or empty_ok):
                         i += 1
@@ -1134,6 +1335,16 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                     # 正常间隔保留。
                     lead = j - (i + 1)
                     span_start = i + 1 if lead >= 2 else j
+                    # 同一行后面还跟着下一个小标签("姓名：__性别：__")时,值比槽短不能把
+                    # 槽整个吃掉——否则"许明英"和"性 别"挤成一团(2026-07-30 身份证明页实测)。
+                    # 槽剩多少宽度就补多少空格,行内各标签的位置纹丝不动;行尾/分隔符前的槽
+                    # 不补(值后直接接标点没有挤字问题,补了反而拖长行)。
+                    pad = ""
+                    if _looks_like_next_label(s[k:]):
+                        slot_w = k - span_start
+                        if slot_w > len(value):
+                            pad = " " * (slot_w - len(value))
+                    value_padded = value + pad
                     if span_start == k:  # 空槽 → 原位插入值
                         if k < n:
                             ri, li = owner[k]
@@ -1144,9 +1355,9 @@ def _fill_inline_labeled_blanks(document: Any, profile: dict[str, Any]) -> int:
                         rj, lj = owner[span_start]
                         rk, lk = owner[k - 1]
                         if rj == rk:
-                            edits.append((rj, lj, lk + 1, value))
+                            edits.append((rj, lj, lk + 1, value_padded))
                         else:  # 跨 run:值进首段,清掉其余留白段
-                            edits.append((rj, lj, len(runs[rj].text), value))
+                            edits.append((rj, lj, len(runs[rj].text), value_padded))
                             for mid in range(rj + 1, rk):
                                 edits.append((mid, 0, len(runs[mid].text), ""))
                             edits.append((rk, 0, lk + 1, ""))
@@ -1173,8 +1384,12 @@ _PM_RESUME_LABELS: tuple[tuple[str, str], ...] = (
     ("姓名", "姓名"),
     ("年龄", "年龄"),
     ("学历", "学历"),
+    ("技术职称", "职称"),  # 模板常写"技术职称",startswith("职称")够不着(2026-07-31 定稿接入)
     ("职称", "职称"),
     ("性别", "性别"),
+    ("类似施工经验", "类似施工经验年限"),  # 须在裸"专业"之前——有些模板此格写"类似专业经验"
+    ("工作年限", "工作年限"),
+    ("获奖情况", "获奖情况"),
     ("专业", "专业"),
     ("注册建造师", "建造师证号"),     # 注册建造师执业资格证书号
     ("建造师执业资格", "建造师证号"),
@@ -1393,6 +1608,101 @@ def _insert_person_certs_after_table(document: Any, table: Any, resume: dict[str
                 logger.warning("资历表后插证件图失败(doc %s),跳过该图", doc_id, exc_info=True)
     except Exception:
         logger.warning("资历表后就地插证件整体失败,退回锚点链兜底", exc_info=True)
+    return inserted
+
+
+_ATTACH_SCAN_RE = re.compile(r"(附|本页后附)[：:]*.{0,14}身份证.{0,10}扫描件")
+# 表单尾巴行(签字/日期/证号):附件要插在整个落款之后,不能楔进表单中间
+_FORM_TAIL_RE = re.compile(
+    r"^(投标人|法定代表人|项目经理|项目总工|委托代理人|身份证号|日期)[：:（(]"
+)
+
+
+def _attach_declared_id_scans(document: Any, profile: dict[str, Any]) -> int:
+    """按表单里自己写的"附：××身份证正反面扫描件"就地附上扫描件,返回插图张数。
+
+    2026-07-30 用户拍脸质问"招标文件里面说了本页后面附哪些东西,你为什么不附":
+    法定代表人身份证明、授权委托书、项目经理/总工承诺书页脚都印着"附：…身份证…扫描件",
+    此前这些声明只是被原样照抄、图从没插过。规则:
+    - 谁的证:行里点名 法定代表人→法人;项目经理→选派经理;项目总工/技术负责人→选派总工;
+      只提"代理人"的跳过(法人直投无代理人,留人工)。
+    - 插哪:该表单落款(投标人/法定代表人/日期行)之后,不楔进表单中间。
+    - 插什么:pick_id_card_documents 的最小覆盖(正反合一1张,否则正+反各1张),OCR判面。
+    - 取不到图:不插不删,声明行原样留着(人工补),日志告警。
+    """
+    pm_name = str((profile.get("pm_resume") or {}).get("姓名") or "").strip()
+    td_name = str((profile.get("tech_resume") or {}).get("姓名") or "").strip()
+    legal = str(profile.get("legal_representative") or "").strip()
+
+    def _owner_of(line: str) -> tuple[str, str] | None:
+        t = re.sub(r"[\s　]+", "", line)
+        if "代理人" in t:
+            # 授权委托书的声明行(附：法定代表人身份证明+代理人身份证扫描件):法人直投
+            # 无代理人,整行留人工——授权委托书后**不附**法人身份证(2026-07-30 用户拍板)
+            return None
+        if "法定代表人" in t:
+            return ("法定代表人", legal) if legal else None
+        if "项目经理" in t:
+            return ("项目经理", pm_name) if pm_name else None
+        if "项目总工" in t or "技术负责人" in t or "总工" in t:
+            return ("项目总工", td_name) if td_name else None
+        return None  # 定位不到人 → 留人工
+
+    inserted = 0
+    try:
+        from services.asset_resolver import pick_id_card_documents
+        from services.generation_service import _insert_image_after
+    except Exception:
+        logger.warning("照单附件:依赖不可用,跳过", exc_info=True)
+        return 0
+
+    paras = list(document.paragraphs)
+    for i, para in enumerate(paras):
+        text = para.text.strip()
+        if not text or not _ATTACH_SCAN_RE.search(re.sub(r"[\s　]+", "", text)):
+            continue
+        owner = _owner_of(text)
+        if owner is None:
+            logger.info("照单附件:声明「%s」无法定位到人(或属代理人),留人工", text[:40])
+            continue
+        role, name = owner
+        try:
+            assets = pick_id_card_documents(name)
+        except Exception:
+            logger.warning("照单附件:取 %s 身份证失败", name, exc_info=True)
+            continue
+        assets = [a for a in (assets or []) if a.get("document_id")]
+        if not assets:
+            logger.warning("照单附件:资料库没有 %s(%s) 的身份证图,声明行留人工", name, role)
+            continue
+        # 锚点:从声明行向后越过表单尾巴(签字/日期/空段),附件跟在整个表单之后。
+        # 落款标签常被排版拉开("投  标  人："),必须去空白后再匹配,否则锚点提前
+        # 停在声明行、图插进落款前面(2026-07-30 第6页实测)。
+        anchor_p = para
+        for j in range(i + 1, min(i + 10, len(paras))):
+            nxt = re.sub(r"[\s　]+", "", paras[j].text)
+            if not nxt or _FORM_TAIL_RE.match(nxt):
+                if nxt:
+                    anchor_p = paras[j]
+                continue
+            break
+        anchor = anchor_p._p
+        side_cn = {"front": "正面", "back": "背面", "both": "正反面"}
+        for asset in assets:
+            caption = f"{role}身份证（{side_cn.get(str(asset.get('side') or ''), '扫描件')}）"
+            try:
+                anchor = _insert_image_after(
+                    anchor, document, int(asset["document_id"]), caption, 10.0
+                )
+                inserted += 1
+                if role == "法定代表人":
+                    # 让位标志:法人身份证已按声明就地插好,卷尾锚点链不得再插一份
+                    # (老锚点还会误命中授权委托书里的"附：法定代表人身份证明"行)
+                    profile["_legal_id_inline"] = True
+            except Exception:
+                logger.warning("照单附件:插 %s 失败,跳过该图", caption, exc_info=True)
+    if inserted:
+        logger.info("照单附件:按表单声明插入身份证扫描件 %d 张", inserted)
     return inserted
 
 

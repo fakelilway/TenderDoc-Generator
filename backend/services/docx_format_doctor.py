@@ -194,9 +194,26 @@ def heal_section_title_page_breaks(document: Any, profile: dict[str, Any] | None
     if len(run) >= 3:
         in_toc.update(run)
 
+    # 紧跟在大节标题后面的第一个子节标题(中间只有空段)不再分页:大节标题会被独自
+    # 撂在一张几乎全空的页上,子节内容跑到下一页——2026-07-29 用户实测"五、项目管理机构"
+    # 单独占一页、组织机构图另起一页,并列为"空白页太多"的一个来源。大节和它的第一个
+    # 子节本就该同页起排。
+    glued: set[int] = set()
+    prev_title_idx: int | None = None
+    for i, (_el, lvl, has_content) in enumerate(items):
+        if lvl == 1:
+            prev_title_idx = i
+        elif lvl > 1:
+            if prev_title_idx is not None:
+                glued.add(i)
+            prev_title_idx = None
+        elif has_content:
+            prev_title_idx = None
+        # 空段:透明,不打断"大节紧跟子节"的判定
+
     healed = 0
     for i, (el, lvl, _has) in enumerate(items):
-        if not lvl or i in in_toc or el.tag != qn("w:p"):
+        if not lvl or i in in_toc or i in glued or el.tag != qn("w:p"):
             continue
         pPr_el = el.find(qn("w:pPr"))
         if pPr_el is None:
@@ -232,8 +249,12 @@ def heal_template_header_lines(document: Any, profile: dict[str, Any] | None = N
     规则从严,三道闸:① 去空白后整段**恰好**是"××招标示范文本（XXXX年版）"(正文里
     引用它的句子带上下文,不会整段匹配);② 同一文本全卷出现≥3次才动手(页眉特征=反复
     出现,防误删偶发单处引用);③ 段里带分节符的只清文字保留段(分节符动了会乱版)。
-    返回清掉的行数。
+
+    招标本身是 Word 时,这行是**真页眉**(w:hdr 部件,巢湖实测 48 个节都有),不在正文里,
+    上面三道闸够不着 → 另外扫一遍各节的页眉部件同样清掉(2026-07-29)。
+    返回清掉的行数(正文行 + 页眉行)。
     """
+    healed = _clear_template_headers_in_parts(document)
     body_paras = list(document.paragraphs)
     norm_of: dict[int, str] = {}
     counts: dict[str, int] = {}
@@ -243,7 +264,6 @@ def heal_template_header_lines(document: Any, profile: dict[str, Any] | None = N
             norm_of[id(para)] = norm
             counts[norm] = counts.get(norm, 0) + 1
 
-    healed = 0
     for para in body_paras:
         norm = norm_of.get(id(para))
         if not norm or counts[norm] < 3:
@@ -256,6 +276,32 @@ def heal_template_header_lines(document: Any, profile: dict[str, Any] | None = N
         else:
             p_el.getparent().remove(p_el)
         healed += 1
+    return healed
+
+
+def _clear_template_headers_in_parts(document: Any) -> int:
+    """清各节页眉部件里的招标模板页眉行(只清文字,页眉部件本身留着不动版式)。
+
+    只认整行**恰好**是"××招标示范文本（XXXX年版）"的,别的页眉(页码、公司自己的
+    页眉)一律不碰。返回清掉的行数。
+    """
+    healed = 0
+    for section in getattr(document, "sections", []):
+        for attr in ("header", "first_page_header", "even_page_header"):
+            part = getattr(section, attr, None)
+            if part is None:
+                continue
+            try:
+                paragraphs = list(part.paragraphs)
+            except Exception:  # noqa: BLE001 - 缺失/损坏的页眉部件直接跳过
+                continue
+            for para in paragraphs:
+                norm = re.sub(r"[\s　]+", "", para.text)
+                if not norm or not _TEMPLATE_HEADER_RE.match(norm):
+                    continue
+                for run in para.runs:
+                    run.text = ""
+                healed += 1
     return healed
 
 
@@ -1377,6 +1423,39 @@ _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = 
     ("line_spacing", heal_line_spacing),
     ("signature_wrap", heal_signature_wrap),
 )
+
+
+# 招标本身就是 Word(原样复制路径)时能跑的 healer——**只留与福昕无关的**。
+# 上面 _HEALERS 里绝大多数是修福昕转换伪影的(劈句/句中硬换行/假两栏/幽灵图/填充空段…),
+# 原生 Word 文档没有这些毛病,跑了反而帮倒忙:实测 split_paragraphs 会把
+# "第八章 投标文件格式" 和下一行 "投标文件（商务文件）" 错误地并成一段。
+# 这几个是真通用的:清模板页眉行、章节另起一页(用户点名要的)、填空槽下划线补齐、
+# 压缩大段连续空段。最后一个名字里带"福昕"是历史原因,实为**招标模板本身**的毛病:
+# 巢湖 Word 招标原件的格式章里就塞着 226 个空段(最长一串 37 个)用来凑版面,填值插图后
+# 版面一变,这些空段就变成整页整页的白纸(2026-07-29 用户实测"空白页太多")。
+_NATIVE_DOCX_HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
+    ("template_header_lines", heal_template_header_lines),
+    ("section_title_page_breaks", heal_section_title_page_breaks),
+    ("underline_slots", heal_underline_slots),
+    ("filler_blank_runs", heal_filler_blank_runs),
+)
+
+
+def run_format_doctor_native_docx(
+    document: Any, profile: dict[str, Any] | None = None
+) -> dict[str, int]:
+    """原生 Word 招标的格式体检:只跑与福昕无关的 healer。逐个容错,绝不阻断。"""
+    report: dict[str, int] = {}
+    for name, healer in _NATIVE_DOCX_HEALERS:
+        try:
+            report[name] = healer(document, profile)
+        except Exception:
+            logger.warning("格式体检(原生docx) healer %s 失败,跳过", name, exc_info=True)
+            report[name] = 0
+    fixed = {k: v for k, v in report.items() if v}
+    if fixed:
+        logger.info("格式体检(原生docx)修复: %s", fixed)
+    return report
 
 
 def run_format_doctor_prefill(document: Any) -> dict[str, int]:

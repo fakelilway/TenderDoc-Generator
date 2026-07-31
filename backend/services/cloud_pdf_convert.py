@@ -24,6 +24,23 @@ logger = logging.getLogger(__name__)
 
 FOXIT_API_BASE = "https://servicesapi.foxitsoftware.cn/api"
 
+# 福昕错误码 → 人话。600090 尤其重要:2026-07-16 试用额度整体过期时,回退日志里只有
+# "Insufficient quotas" 一句英文,排查了很久才发现是账号到期而非代码问题——映射成
+# 中文并写明去向,下次一眼看懂。
+_FOXIT_ERROR_HINTS = {
+    600020: "凭证不对(客户端ID与密钥ID不匹配,检查 FOXIT_CLOUD_CLIENT_ID/SECRET 是否同一控制台项目)",
+    600090: "转换额度不足或已过期(去福昕控制台 cloudapi.fuxinsoft.cn/dev-console 查看/续费,换了凭证要同时更新客户端ID和密钥ID)",
+}
+
+
+def _foxit_error(stage: str, body: dict) -> RuntimeError:
+    code = body.get("code")
+    hint = _FOXIT_ERROR_HINTS.get(code)
+    msg = f"福昕 {stage} 失败: code={code} {body.get('msg') or body}"
+    if hint:
+        msg += f" —— {hint}"
+    return RuntimeError(msg)
+
 
 def _sn(client_id: str, secret: str, params: dict[str, str]) -> str:
     """按福昕算法对一次请求的查询参数(不含 sn)签名。"""
@@ -36,8 +53,8 @@ def convert_pdf_to_docx_via_foxit(
     pdf_bytes: bytes,
     output_path: str,
     *,
-    client_id: str,
-    secret: str,
+    client_id: str = "",
+    secret: str = "",
     config_json: str = '{"pageRange": "all"}',
     poll_interval_seconds: float = 2.0,
     max_wait_seconds: float = 300.0,
@@ -45,11 +62,13 @@ def convert_pdf_to_docx_via_foxit(
 ) -> str:
     """把 ``pdf_bytes`` 转成可编辑 docx 存到 ``output_path``,返回该路径。失败抛异常。
 
+    ``client_id``/``secret`` 不传时自动读配置——appendix_service 曾因漏传凭证在
+    try/except 里静默失败,凭证解析收进函数内后调用方不可能再漏。
     ``config_json`` 是福昕 convert 的配置串(签名要含它);PDF→Word 用 pageRange,
     无边框表可在此加 ML 识别选项。
     """
     if not client_id or not secret:
-        raise RuntimeError("福昕凭证缺失(FOXIT_CLOUD_CLIENT_ID / FOXIT_CLOUD_SECRET)")
+        client_id, secret = _foxit_credentials()
 
     # follow_redirects: download 会 302 跳到 pheeplatform 下载域,必须跟随。
     with httpx.Client(timeout=request_timeout_seconds, follow_redirects=True) as client:
@@ -65,7 +84,7 @@ def convert_pdf_to_docx_via_foxit(
         resp.raise_for_status()
         body = resp.json()
         if body.get("code") != 0:
-            raise RuntimeError(f"福昕 convert 失败: code={body.get('code')} {body.get('msg') or body}")
+            raise _foxit_error("convert", body)
         task_id = body["data"]["taskInfo"]["taskId"]
 
         # ② 轮询任务直到 percentage==100。任务运行中时 /api/task 会返回 HTTP 错误
@@ -81,9 +100,7 @@ def convert_pdf_to_docx_via_foxit(
                 payload = tr.json()
                 # 任务真失败要立刻抛(否则空转到 max_wait 才报通用超时、吞真因)
                 if payload.get("code") not in (0, None):
-                    raise RuntimeError(
-                        f"福昕 task 失败: code={payload.get('code')} {payload.get('msg') or ''}"
-                    )
+                    raise _foxit_error("task", payload)
                 info = (payload.get("data") or {}).get("taskInfo") or {}
                 if str(info.get("status") or "").lower() in ("failed", "fail", "error"):
                     raise RuntimeError(f"福昕转换任务失败: {info}")
@@ -155,35 +172,18 @@ def convert_format_pages_via_cloud(
     *,
     profile: dict | None = None,
 ) -> str:
-    """商务格式章 → 福昕可编辑 docx + 字段自动填。Phase 0 最上层档,同 builder 契约。
+    """商务格式章 → 福昕可编辑 docx + 字段自动填。同 builder 契约:成功返回路径,失败 raise。
 
-    只把"投标文件格式"商务区页切给云;成功返回 docx 路径,任何失败 raise(由 Phase 0
-    阶梯自动下沉到 pdf2docx → 整页图)。
+    只把"投标文件格式"商务区页切给云。**只有 PDF 招标才需要走这条**——招标本身是 Word 时
+    走 original_docx_format_service.build_original_format_docx(原样复制,零转换、不碰福昕)。
+    两条路的后半段(填字段/填表/插图/格式体检)是同一套 fill_format_docx。
     """
     import os
     import tempfile
 
-    from docx import Document
-
     from services.original_docx_format_service import (
-        _drop_spurious_stream_tables,
-        _fill_authorization_letter,
-        _fill_basic_info_subfields,
-        _fill_credit_status_table,
-        _fill_bid_date_today,
-        _fill_establish_segmented,
-        _fill_inline_labeled_blanks,
-        _fill_known_table_cells,
-        _fill_performance_table,
-        _fill_personnel_table,
-        _fill_resume_tables,
-        _fill_textbox_placeholders,
         _find_format_page_range_in_pdf,
-        _log_unfilled_fields,
-        _normalize_split_labels,
-        _replace_known_fields,
-        _strip_seal_images,
-        _strip_tender_page_numbers,
+        fill_format_docx,
     )
 
     client_id, secret = _foxit_credentials()
@@ -204,71 +204,7 @@ def convert_format_pages_via_cloud(
     convert_pdf_to_docx_via_foxit(
         slice_bytes, str(output_path), client_id=client_id, secret=secret
     )
-    # 字段自动填(复用现成四件套,无 LLM,按标签精确匹配)
-    doc = Document(str(output_path))
-    _drop_spurious_stream_tables(doc)
-    _normalize_split_labels(doc)  # 理顺福昕切开的两字标签(性 别→性别),须在填值前:标签干净才填得上
-    # 填前体检:孤字归位(福昕把两列区右列标签劈成"性…"+"别："两半 → 拼回"性别："),
-    # 同样须在填值前:标签完整,性别/职务这类空才填得上。
-    from services.docx_format_doctor import run_format_doctor_prefill
-
-    run_format_doctor_prefill(doc)
-    # 招标原件的招标人/代理红章必须在**就地插图之前**清:红占比判定的前提是"文档里
-    # 还没有我们插的证件/业绩扫描件"(2026-07-12 七连修把插图挪进了填表阶段,此调用
-    # 相应从卷尾前移到这,守住绝不误删证据图的红线)。
-    _strip_seal_images(doc)
-    # "近年完成的类似项目"六种节(投标人/项目经理/项目总工 × 资格审查/详细评审):
-    # 按选派经理名下的业绩信息表记录原样填 汇总情况表+一业绩一张的详细信息表(克隆/裁剪)。
-    # 必须在通用填表之前:真值先落格,总工节留白的表进 handled 名单、通用逻辑绕行。
-    from services.similar_project_fill_service import fill_similar_project_sections
-
-    similar_result = fill_similar_project_sections(doc, profile or {})
-    # 公司组件照搬:员工做好的成品(组织结构框图/项目管理机构图)按首格锚整表替换空框,
-    # 一模一样(字体实化)。须在通用填表前:成品表绝不允许再被填值。
-    from services.company_component_service import fill_company_components
-
-    fill_company_components(doc)
-    _replace_known_fields(doc, profile or {})
-    _fill_textbox_placeholders(doc, profile or {})  # 浮动文本框里的占位符(致：（招标人名称）等),正文替换够不着
-    _fill_basic_info_subfields(doc, profile or {})  # 基本情况表专项:法人/技术负责人职称电话+员工总数(须在通用表格填充前)
-    _fill_credit_status_table(doc, profile or {})  # 信誉情况表:按招标1.4.4逐条填响应(2026-07-12)
-    _fill_known_table_cells(doc, profile or {})
-    _fill_inline_labeled_blanks(doc, profile or {})  # 投标函内联空:工程质量/安全目标/工期/经营期限/法人联系电话
-    _fill_authorization_letter(doc, profile or {})  # 授权委托书"本人___（姓名）系"→法人名
-    _fill_establish_segmented(doc, profile or {})  # 法人证明"成立时间：__年__月__日"分段填
-    _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
-    _fill_personnel_table(doc, profile or {})
-    _fill_performance_table(  # 投标人业绩情况表 → 填选中的类似业绩项目名(按节处理过的表绕行)
-        doc, profile or {}, skip_tables=similar_result.get("handled_tables")
-    )
-    _fill_resume_tables(  # 项目经理 + 总工简历表(各填选派那个人的台账信息)
-        doc,
-        (profile or {}).get("pm_resume") or {},
-        (profile or {}).get("tech_resume") or {},
-        profile=profile,  # 单表双人克隆+证件就地插图要回写让位标志
-    )
-    # 格式体检:所有值都填完后,对整份文档做"只修格式、不改文字"的合理化
-    # (第一版治填空槽下划线断裂:值 run 未继承槽的下划线 → 线画一半)。
-    # 传 profile 当白名单:只认我们自己填的值,防止给"年/月/日"等招标原文标签误加线。
-    from services.docx_format_doctor import run_format_doctor
-
-    run_format_doctor(doc, profile or {})
-    # (红章清理已前移到填表/插图之前,见上)
-    _strip_tender_page_numbers(doc)  # 清招标原件页码,标书用自己的页码
-    _log_unfilled_fields(doc, profile or {})  # 缺字段显式告警(别静默留空)
-    # 商务标固定字段收尾:纠正公司名错别字(安徽正气→安徽正奇)+ 核对固定字段一致性。
-    from services.commercial_fixed_fields import (
-        audit_commercial_fixed_fields,
-        enforce_company_name_consistency,
-    )
-
-    corrected = enforce_company_name_consistency(doc)
-    if corrected:
-        logger.warning("商务标公司名错别字已纠正 %d 处(安徽正气→安徽正奇)", corrected)
-    for issue in audit_commercial_fixed_fields(doc):
-        logger.warning("商务标固定字段核对:%s", issue)
-    doc.save(str(output_path))
-    return str(output_path)
+    return fill_format_docx(str(output_path), profile or {})
 
 
 def convert_appendix_pages_via_cloud(

@@ -708,10 +708,13 @@ def test_section_titles_get_page_breaks_but_toc_untouched() -> None:
     # 正文大节(前面是正文内容,后面是不同级"（一）") → 加
     body_titles = [p for p in doc.paragraphs if p.text.strip() == "一、投标函及投标函附录"]
     assert not has_pb(body_titles[0]) and has_pb(body_titles[1])
+    # （一）投 标 函 紧跟在大节"一、投标函及投标函附录"后面(中间无正文)→ **不加分页**,
+    # 否则大节标题独占一张几乎全空的页(2026-07-29 用户实测"五、项目管理机构"单独一页)。
+    assert not has_pb(paras["（一）投 标 函"])
     # （一）投标人基本情况表 与（二）框图 之间隔着表格 → 不算目录连排,都加
     assert has_pb(paras["（一）投标人基本情况表"])
     assert has_pb(paras["（二）投标人企业组织机构框图"])
-    assert healed >= 4
+    assert healed >= 3
 
 
 def test_two_level_toc_not_split() -> None:
@@ -740,3 +743,34 @@ def test_two_level_toc_not_split() -> None:
     assert not any(has_pb(p) for p in paras[:4])  # 两级目录整串不动
     body_title = [p for p in paras if p.text.strip() == "一、投标函及投标函附录"][-1]
     assert has_pb(body_title)  # 正文标题照加
+
+
+def test_template_header_cleared_from_real_header_part() -> None:
+    """招标本身是 Word 时,模板页眉是真页眉部件(w:hdr),也必须清掉。
+
+    2026-07-29 巢湖实测:Word 招标 48 个节的页眉都印着"公路养护施工招标示范文本
+    （2023年版）",正文扫描够不着 → 投标文件每页顶上都带着招标书的页眉。
+    """
+    from docx import Document
+
+    from services.docx_format_doctor import heal_template_header_lines
+
+    doc = Document()
+    hdr = doc.sections[0].header
+    hdr.paragraphs[0].text = "公路养护施工招标示范文本（2023年版）"
+
+    assert heal_template_header_lines(doc) >= 1
+    assert doc.sections[0].header.paragraphs[0].text.strip() == ""
+
+
+def test_template_header_healer_keeps_other_headers() -> None:
+    """别的页眉(页码、公司自己的)一律不碰。"""
+    from docx import Document
+
+    from services.docx_format_doctor import heal_template_header_lines
+
+    doc = Document()
+    doc.sections[0].header.paragraphs[0].text = "安徽正奇建设有限公司  第 1 页"
+
+    heal_template_header_lines(doc)
+    assert "安徽正奇建设有限公司" in doc.sections[0].header.paragraphs[0].text

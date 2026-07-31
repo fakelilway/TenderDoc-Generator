@@ -78,8 +78,15 @@ def _find_stub_pages(pdf_path: Path) -> list[dict]:
             page = doc[pg]
             info = page.get_text("dict")
             lines = [l.strip() for l in page.get_text().splitlines() if l.strip()]
-            # 页眉(示范文本字样)不算内容
-            body = [l for l in lines if "招标示范文本" not in l]
+            # 页眉(示范文本字样)、页码脚注、裸页码都不算内容——页码混进 body 会让
+            # first_line 变成"第5页/共204页",拿它回 docx 里定位段落必然落空,整个尾巴
+            # 直接被跳过(2026-07-30 投标函落款两行溢出没被收养,就是栽在这)。
+            body = [
+                l for l in lines
+                if "招标示范文本" not in l
+                and not re.fullmatch(r"第\s*\d+\s*页\s*/?\s*(共\s*\d+\s*页)?", l)
+                and not re.fullmatch(r"\d{1,4}", l)
+            ]
             chars = len("".join(body))
             # 注意:page.get_images() 是页资源表,LibreOffice 会把全文档图挂到每页 → 恒真误杀。
             # 要用"页面上实际画出的图块"(type=1)判断。
@@ -209,6 +216,34 @@ def heal_stub_pages(docx_path: str) -> dict:
                     break
                 doc = Document(str(src))
                 acted = 0
+                # 第一手段:尾巴自己(或它前面的空段链)带着"段前分页/硬分页符/另起页分节符"
+                # → 直接拆掉那个分页动作,尾巴原地归队。这是"不可以再犯"闸(2026-07-30
+                # 用户死命令):不管将来哪段代码、以什么方式把表单尾巴甩下去,出卷前这里
+                # 一律兜住,不再依赖修 N 个源头。节标题不在此列(标题分页是版式要求)。
+                body_children = list(doc.element.body)
+                for stub in sorted(stubs[:8], key=lambda s: -s["page"]):
+                    first = str(stub.get("first_line") or "").strip()
+                    if not first or _HEADING_RE.match(first):
+                        continue
+                    from services.blank_page_doctor import (
+                        _locate_all,
+                        _remove_one_break_before,
+                    )
+
+                    for idx in _locate_all(body_children, first, doc):
+                        how = _remove_one_break_before(body_children, idx)
+                        if how:
+                            acted += 1
+                            logger.info(
+                                "排版医生:第%d页尾巴由多余分页造成,已拆(%s)",
+                                stub["page"] + 1, how,
+                            )
+                            break
+                if acted:
+                    doc.save(str(src))
+                    report["ran"] = True
+                    continue  # 拆完重渲复查,防止和"收间距"手段互相打架
+                # 第二手段:没有可拆的分页 → 微收所属节的段距/行距
                 for stub in stubs[:8]:
                     sl = _locate_section_slice(doc, stub)
                     if sl is None:

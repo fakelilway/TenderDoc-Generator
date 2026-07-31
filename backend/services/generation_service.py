@@ -624,10 +624,14 @@ def _drop_empty_headings(lines: list[str]) -> str:
 # 锚点用"组织机构图"精确命中(一)那一行(别用宽词"项目管理机构"否则会落到(二)人员组成表)。
 # 图4(投标人企业组织结构框图=公司级)不再自动注入(用户明确不要它出现在(一))。
 _ORG_DOC_SOURCES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("组织机构图",), "项目管理机构"),
-    # 拟分包表**不再注入**:福昕格式章已忠实复制招标的"拟分包项目情况表"(空表+若无填无的注+
+    # 组织机构图**不再注入**:公司组件库(company_component_service.fill_company_components)
+    # 已经把员工做好的"项目管理机构"成品整表替换进招标那张空框里——位置更对(就在空框原位,
+    # 不是追加在标题后)。这里再按锚点注入同一个文件,商务卷里就出现两张一模一样的组织机构图
+    # (2026-07-29 用户实测:"同一个表你每次生成都要放两遍进去")。与下面拟分包表同一个病因。
+    #
+    # 拟分包表**不再注入**:格式章已忠实复制招标的"拟分包项目情况表"(空表+若无填无的注+
     # 造价合计行)。再从资料库注入那张 21×4 空表,商务卷里就出现两张一模一样的拟分包表(重复、丑、
-    # 交不了工)。需要填写时,人工在福昕那张表里填(无分包计划则填"无")。
+    # 交不了工)。填写由 _fill_subcontract_table 自动填"无"。
 )
 
 
@@ -766,6 +770,48 @@ def _place_anchored_images(doc, prose_markdown: str) -> str:
     return _drop_empty_headings(kept)
 
 
+def _freeze_existing_paragraph_spacing(doc) -> int:
+    """把文档现有段落的"继承自 Normal 的行距/段距"固化到段落级,返回固化的段落数。
+
+    在把 Normal 改成正奇正文样式(固定行距32pt)**之前**调用:招标格式章里绝大多数段落
+    没写死行距,改完 Normal 就会跟着变高——表格空格子行高 23pt→35pt,招标一页放得下的
+    表被挤成两页。固化后它们保持原样,新追加的商务正文照样拿正奇样式。
+
+    只补"本来就没显式设置"的属性,已写死行距的段落一个字不动。
+    """
+    from docx.enum.text import WD_LINE_SPACING
+
+    pf_normal = doc.styles["Normal"].paragraph_format
+    rule, spacing = pf_normal.line_spacing_rule, pf_normal.line_spacing
+    before, after = pf_normal.space_before, pf_normal.space_after
+
+    frozen = 0
+    for paragraph in _iter_doc_paragraphs(doc):
+        pf = paragraph.paragraph_format
+        if pf.line_spacing is None and pf.line_spacing_rule is None:
+            pf.line_spacing_rule = rule if rule is not None else WD_LINE_SPACING.SINGLE
+            if spacing is not None:
+                pf.line_spacing = spacing
+            frozen += 1
+        if pf.space_before is None and before is not None:
+            pf.space_before = before
+        if pf.space_after is None and after is not None:
+            pf.space_after = after
+    return frozen
+
+
+def _iter_doc_paragraphs(doc):
+    """正文 + 所有表格单元格(含嵌套表)里的段落。"""
+    yield from doc.paragraphs
+    stack = list(doc.tables)
+    while stack:
+        table = stack.pop()
+        for row in table.rows:
+            for cell in row.cells:
+                yield from cell.paragraphs
+                stack.extend(cell.tables)
+
+
 def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
     """Append prose content after format pages in a DOCX.
 
@@ -803,6 +849,12 @@ def _append_prose_to_docx(docx_path: Path, prose_markdown: str) -> None:
             )
             for s in doc.sections
         ]
+        # 同理,_configure_styles 还会把 Normal 样式改成正奇正文(宋体14pt、**固定行距32pt**)。
+        # 那是给下面追加的商务正文用的,可招标格式章里所有没写死行距的段落(尤其表格空格子)
+        # 都继承 Normal → 行高被从 23pt 撑到 35pt,招标本来一页放得下的表被挤到两页
+        # (2026-07-29 用户实测拟分包表跨页;渲染实测:招标原件23pt / 我们35pt)。
+        # 故改样式前,先把**已有内容**的当前行距固化到段落级,让它们不再跟着 Normal 变。
+        _freeze_existing_paragraph_spacing(doc)
         _configure_styles(doc, "zhengqi")
         for s, g in zip(doc.sections, geom):
             (s.page_width, s.page_height,
@@ -891,6 +943,21 @@ def _assemble_two_volumes(
         _fdoc.save(str(commercial_path))
     except Exception:
         logger.warning("成品级格式修复(核对表列宽/业绩图注)失败,跳过", exc_info=True)
+
+    # 空白页硬闸(用户 2026-07-30 死命令"不允许任何空白页"):渲染逐页查 → 拆掉多余的
+    # 翻页动作 → 复查,直到零空白页。必须放在**所有**改版式的步骤之后,否则后面的步骤
+    # 又会把空白页做出来。best-effort:渲染不可用/治不干净都只告警,不阻断出标。
+    try:
+        from services.blank_page_doctor import heal_blank_pages
+
+        _bp = heal_blank_pages(str(commercial_path))
+        if _bp.get("ran"):
+            logger.info(
+                "空白页闸:治理前 %s → 治理后 %s(%d轮)",
+                _bp.get("before"), _bp.get("after"), _bp.get("iterations"),
+            )
+    except Exception:
+        logger.warning("空白页闸执行失败,跳过(不阻断出标)", exc_info=True)
 
     # 技术卷：独立成文的施工组织设计正文
     technical_path = tmp_path / f"project_{project_id}_technical.docx"

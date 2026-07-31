@@ -93,6 +93,44 @@ def test_convert_raises_on_create_error_code(tmp_path, monkeypatch) -> None:
         assert "600000" in str(exc)
 
 
+def test_convert_resolves_credentials_when_not_passed(tmp_path, monkeypatch) -> None:
+    # appendix_service 曾漏传凭证在 try/except 里静默失败:不传时必须自动读配置
+    fake = _FakeClient(
+        create=_Resp({"code": 0, "data": {"taskInfo": {"taskId": "t1"}}}),
+        task=_Resp({"code": 0, "data": {"taskInfo": {"percentage": 100, "docId": "d1"}}}),
+        download=_Resp(content=_minimal_docx_bytes()),
+    )
+    monkeypatch.setattr(cloud_pdf_convert.httpx, "Client", lambda *a, **k: fake)
+    resolved = []
+    monkeypatch.setattr(
+        cloud_pdf_convert, "_foxit_credentials",
+        lambda: (resolved.append(1), ("CID", "SEC"))[1],
+    )
+    out = str(tmp_path / "out.docx")
+    assert cloud_pdf_convert.convert_pdf_to_docx_via_foxit(
+        b"x", out, poll_interval_seconds=0
+    ) == out
+    assert resolved  # 确实走了配置解析
+
+
+def test_convert_quota_error_gets_chinese_hint(tmp_path, monkeypatch) -> None:
+    # 600090(额度不足/过期)必须映射成人话——2026-07-16 账号过期时英文原文排查了很久
+    fake = _FakeClient(
+        create=_Resp({"code": 600090, "msg": "Error: Insufficient quotas"}),
+        task=_Resp({}),
+        download=_Resp(content=b""),
+    )
+    monkeypatch.setattr(cloud_pdf_convert.httpx, "Client", lambda *a, **k: fake)
+    out = str(tmp_path / "out.docx")
+    try:
+        cloud_pdf_convert.convert_pdf_to_docx_via_foxit(
+            b"x", out, client_id="CID", secret="SEC", poll_interval_seconds=0
+        )
+        assert False, "额度不足应抛异常"
+    except RuntimeError as exc:
+        assert "600090" in str(exc) and "额度" in str(exc)
+
+
 def test_convert_raises_on_task_failure_not_spin(tmp_path, monkeypatch) -> None:
     # 任务失败要立刻抛(而非空转到 max_wait)
     fake = _FakeClient(

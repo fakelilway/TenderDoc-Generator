@@ -84,3 +84,25 @@ def test_commercial_footer_page_numbers_all_sections() -> None:
         fp = sec.footer.paragraphs[0]
         assert "第" in fp.text and "页" in fp.text
         assert any(True for _ in fp._p.iter(qn("w:fldChar")))  # PAGE 域真实存在
+
+
+def test_stub_detection_ignores_page_number_footer_lines() -> None:
+    """页码脚注不算页面内容,更不能当定位锚点。
+
+    2026-07-30 实测:投标函落款两行溢出的尾巴页,body 首行被算成"第5页/共204页",
+    拿它回 docx 定位段落必然落空 → 尾巴直接被跳过、没人收养。
+    """
+    import re
+
+    from services.pagination_doctor import _STUB_MAX_CHARS
+
+    # 直接测过滤逻辑等价物:页码行必须被 body 过滤器剔除
+    lines = ["第5页/共204页", "法定代表人：（签字或盖章）", "日      期：2026 年7 月30 日", "159"]
+    body = [
+        l for l in lines
+        if "招标示范文本" not in l
+        and not re.fullmatch(r"第\s*\d+\s*页\s*/?\s*(共\s*\d+\s*页)?", l)
+        and not re.fullmatch(r"\d{1,4}", l)
+    ]
+    assert body[0].startswith("法定代表人")
+    assert len("".join(body)) <= _STUB_MAX_CHARS

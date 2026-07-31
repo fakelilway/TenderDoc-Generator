@@ -637,3 +637,121 @@ def test_format_range_keeps_cover_page(tmp_path) -> None:
     rng = _find_format_page_range_in_pdf(str(path))
     assert rng is not None
     assert rng[0] == 0, f"应从封面(第0页)起,实际从第{rng[0]}页起(封面被跳掉)"
+
+
+def test_native_docx_path_skips_foxit_artifact_healers(tmp_path: Path) -> None:
+    """原生 Word 招标不许跑福昕伪影 healer。
+
+    2026-07-29 实测:split_paragraphs(治福昕"一句话劈成几段")在原生 Word 上会把
+    "第八章 投标文件格式"和下一行"投标文件（商务文件）"错并成一段。原样复制路径
+    必须绕开这类 healer,否则招标原文被改写。
+    """
+    source_path = tmp_path / "tender.docx"
+    source = Document()
+    source.add_paragraph("第一章 招标公告")
+    source.add_paragraph("第八章 投标文件格式")
+    source.add_paragraph("投标文件（商务文件）")
+    source.add_paragraph("（一）投标人基本情况表")
+    source.save(str(source_path))
+
+    out = tmp_path / "format.docx"
+    build_original_format_docx(
+        source_path.read_bytes(), out, profile={"company_name": "安徽正奇建设有限公司"}
+    )
+    texts = [p.text.strip() for p in Document(str(out)).paragraphs if p.text.strip()]
+    assert "第八章 投标文件格式" in texts
+    assert "投标文件（商务文件）" in texts
+
+
+def test_fill_format_docx_native_vs_foxit_healer_sets() -> None:
+    """两条路各跑各的 healer 集合:原生版只含通用三项,不含任何福昕伪影修复。"""
+    from services.docx_format_doctor import _HEALERS, _NATIVE_DOCX_HEALERS
+
+    native = {n for n, _ in _NATIVE_DOCX_HEALERS}
+    assert native == {
+        "template_header_lines",
+        "section_title_page_breaks",
+        "underline_slots",
+        "filler_blank_runs",
+    }
+    # 福昕专治项绝不能混进原生集合
+    assert "split_paragraphs" not in native
+    assert "split_paragraphs" in {n for n, _ in _HEALERS}
+
+
+def test_declared_id_scans_are_attached_after_form_tail(monkeypatch) -> None:
+    """表单写着"附：法定代表人身份证正反面扫描件"就必须真附图,且插在落款之后。
+
+    2026-07-30 用户实测:身份证明/承诺书页脚的"附：…扫描件"声明被原样照抄,图从没插过。
+    """
+    from services import original_docx_format_service as svc
+
+    doc = Document()
+    doc.add_paragraph("特此证明。")
+    doc.add_paragraph("附：法定代表人身份证正反面扫描件")
+    doc.add_paragraph("投  标  人：安徽正奇建设有限公司（盖单位章）")  # 落款标签带排版空格
+    doc.add_paragraph("日      期：2026年7月30日")
+    doc.add_paragraph("三、联合体协议书")
+
+    import services.asset_resolver as ar
+    monkeypatch.setattr(
+        ar, "pick_id_card_documents",
+        lambda name: [{"document_id": 101, "side": "front"}, {"document_id": 102, "side": "back"}]
+        if name == "许明英" else [],
+    )
+    calls = []
+
+    import services.generation_service as gs
+    def fake_insert(anchor, document, doc_id, caption, width):
+        calls.append((doc_id, caption, "".join(anchor.itertext())))
+        return anchor
+    monkeypatch.setattr(gs, "_insert_image_after", fake_insert)
+
+    n = svc._attach_declared_id_scans(doc, {"legal_representative": "许明英"})
+    assert n == 2
+    assert [c[0] for c in calls] == [101, 102]
+    assert "法定代表人身份证（正面）" == calls[0][1]
+    # 锚点必须越过带排版空格的落款行(投 标 人/日 期),图跟在整个表单之后
+    assert calls[0][2].startswith("日")  # 首图锚在"日 期"行之后,不是楔在声明行下
+
+
+def test_declared_id_scans_missing_person_leaves_line_untouched(monkeypatch) -> None:
+    """取不到图/没选派 → 不插不删,声明行留给人工。"""
+    from services import original_docx_format_service as svc
+
+    doc = Document()
+    doc.add_paragraph("本页后附项目经理身份证正反面扫描件")
+    # 没选派项目经理(profile 无 pm_resume) → 跳过
+    assert svc._attach_declared_id_scans(doc, {"legal_representative": "许明英"}) == 0
+    assert "本页后附项目经理身份证正反面扫描件" in doc.paragraphs[0].text
+
+
+def test_declared_scans_skip_agent_lines_and_set_letdown_flag(monkeypatch) -> None:
+    """授权委托书的声明行(含"代理人")一律跳过;法人证插好后要立让位标志。
+
+    2026-07-30 用户拍板:授权委托书后不附法人身份证。老锚点链会误命中委托书里
+    "附：法定代表人身份证明"行,靠 _legal_id_inline 标志让它整段让位。
+    """
+    from services import original_docx_format_service as svc
+    import services.asset_resolver as ar
+    import services.generation_service as gs
+
+    monkeypatch.setattr(
+        ar, "pick_id_card_documents",
+        lambda name: [{"document_id": 7, "side": "both"}],
+    )
+    monkeypatch.setattr(gs, "_insert_image_after", lambda a, d, i, c, w: a)
+
+    # 授权委托书场景:声明里带"代理人" → 跳过、不立标志
+    doc = Document()
+    doc.add_paragraph("附：法定代表人身份证明  代理人身份证正反面扫描件")
+    prof = {"legal_representative": "许明英"}
+    assert svc._attach_declared_id_scans(doc, prof) == 0
+    assert "_legal_id_inline" not in prof
+
+    # 身份证明表场景:正常插,并立让位标志
+    doc2 = Document()
+    doc2.add_paragraph("附：法定代表人身份证正反面扫描件")
+    prof2 = {"legal_representative": "许明英"}
+    assert svc._attach_declared_id_scans(doc2, prof2) == 1
+    assert prof2.get("_legal_id_inline") is True

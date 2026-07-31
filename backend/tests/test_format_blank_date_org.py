@@ -6,6 +6,7 @@ import datetime
 from io import BytesIO
 
 from docx import Document
+from docx.shared import Pt
 
 from services import original_docx_format_service as o
 
@@ -63,8 +64,12 @@ def test_establish_date_not_touched_by_bid_date() -> None:
     assert o._fill_bid_date_today(doc) == 0
 
 
-def test_inject_org_tables_copies_table(monkeypatch) -> None:
-    # 造一个"源 docx"(含一个表格)
+def test_inject_org_tables_does_not_duplicate_org_chart(monkeypatch) -> None:
+    """回归:组织机构图不再按锚点注入——公司组件库已把成品整表替换进招标那张空框里。
+
+    2026-07-29 用户实测:两处各插一次,商务卷里出现两张一模一样的项目管理机构图
+    ("同一个表你每次生成都要放两遍进去")。与拟分包表同一个病因。
+    """
     src = Document()
     tbl = src.add_table(rows=2, cols=2)
     tbl.cell(0, 0).text = "项目经理"
@@ -80,12 +85,10 @@ def test_inject_org_tables_copies_table(monkeypatch) -> None:
     )
 
     target = Document()
-    target.add_paragraph("项目管理机构")
+    target.add_paragraph("（一）项目管理机构组织机构图")
     before = len(target.tables)
-    inserted = g._inject_org_tables(target)
-    assert inserted == 1
-    assert len(target.tables) == before + 1
-    assert "项目经理" in target.tables[-1].cell(0, 0).text
+    assert g._inject_org_tables(target) == 0
+    assert len(target.tables) == before
 
 
 def test_inject_org_tables_does_not_inject_fenbao(monkeypatch) -> None:
@@ -349,3 +352,185 @@ def test_resume_tables_unlabeled_pair_still_inferred() -> None:
     td = _mk_resume_table(doc, "简历表")
     _fill_resume_tables(doc, pm, None)
     assert td.cell(0, 1).text == "江舟"
+
+
+def test_subcontract_table_filled_with_none_keeps_all_rows() -> None:
+    """无分包计划 → 首行填"无"、合计填"无",**行数一行不动**(保持招标原表形态)。"""
+    doc = Document()
+    t = doc.add_table(rows=21, cols=4)
+    for i, h in enumerate(("拟分包的工程项目", "主要工程内容", "预计造价（万元）", "备 注")):
+        t.cell(0, i).text = h
+    for r in range(1, 21):
+        t.cell(r, 3).text = "注：若无分包计划，则投标人应在本表填写“无”"
+    t.cell(20, 0).text = "拟分包工程造价合计（万元）"
+
+    assert o._fill_subcontract_table(doc) == 1
+    tb = doc.tables[0]
+    # 行数必须与招标原表一致——绝不删行(2026-07-29 用户明确:"他招标文件多少行你就
+    # 搞多少行")。原先占两页是前面的空段把表推下去了,与行数无关。
+    assert len(tb.rows) == 21
+    assert tb.cell(1, 0).text.strip() == "无"
+    assert tb.cell(1, 2).text.strip() == "无"
+    assert "合计" in tb.rows[-1].cells[0].text
+    assert tb.rows[-1].cells[2].text.strip() == "无"
+    # 备注列的招标原注不许被改
+    assert "若无分包计划" in tb.cell(1, 3).text
+
+
+def test_subcontract_table_with_real_plan_is_untouched() -> None:
+    """真有分包内容时一个字都不动(别把人家填好的计划抹了)。"""
+    doc = Document()
+    t = doc.add_table(rows=4, cols=4)
+    for i, h in enumerate(("拟分包的工程项目", "主要工程内容", "预计造价（万元）", "备 注")):
+        t.cell(0, i).text = h
+    t.cell(1, 0).text = "交通安全设施"
+    t.cell(3, 0).text = "拟分包工程造价合计（万元）"
+
+    assert o._fill_subcontract_table(doc) == 0
+    assert len(doc.tables[0].rows) == 4
+    assert doc.tables[0].cell(1, 0).text == "交通安全设施"
+
+
+def test_inline_blank_before_unit_word_gets_filled() -> None:
+    """"工期：＿＿日历天"这种"槽后跟单位词"的空必须填上。
+
+    2026-07-29 用户实测:同一句里质量、安全(槽后是"；")填上了,唯独工期因为后面跟
+    "日历天"被误判成"已有真实值"而跳过,交出去空着。
+    """
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("3. 工程质量：")
+    p.add_run("      ").font.underline = True
+    p.add_run("；安全目标：")
+    p.add_run("      ").font.underline = True
+    p.add_run("；工期：")
+    p.add_run("      ").font.underline = True
+    p.add_run("日历天。")
+
+    o._fill_inline_labeled_blanks(doc, {"质量": "合格", "安全": "无安全事故", "工期": "90日历天"})
+    assert doc.paragraphs[0].text == "3. 工程质量：合格；安全目标：无安全事故；工期：90日历天。"
+
+
+def test_bid_date_written_into_underlined_slot_not_the_spacer() -> None:
+    """日期值要写进**带下划线**的空槽,不能写进槽与"年"之间那个普通空格 run。
+
+    2026-07-29 用户截图:值写进夹缝空格 → 带线空槽原样留着、整行变长,右对齐落款行
+    的字挤成一坨。
+    """
+    import datetime
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("日      期：")
+    slots = []
+    for unit in ("年", "月", "日"):
+        slot = p.add_run("      ")
+        slot.font.underline = True
+        slots.append(slot)
+        p.add_run(" ")  # 槽与单位之间的普通空格(招标原件就长这样)
+        p.add_run(unit)
+
+    o._fill_bid_date_today(doc)
+    today = datetime.date.today()
+    assert [s.text for s in slots] == [str(today.year), str(today.month), str(today.day)]
+    # 夹缝空格必须原样留着(值没被写进它)
+    assert [r.text for r in p.runs if not r.font.underline and r.text == " "]
+
+
+def test_appending_prose_does_not_inflate_tender_table_rows() -> None:
+    """追加商务正文不许把招标格式章的行距撑高。
+
+    2026-07-29 实测:追加正文时会把 Normal 样式改成正奇正文(固定行距32pt),
+    招标表格里没写死行距的空格子跟着从 23pt 涨到 35pt,招标本来一页放得下的
+    拟分包表(21行)被挤成两页。改样式前必须先把已有段落的行距固化到段落级。
+    """
+    from docx import Document
+    from docx.enum.text import WD_LINE_SPACING
+
+    from services.generation_service import _freeze_existing_paragraph_spacing
+
+    doc = Document()
+    t = doc.add_table(rows=3, cols=2)
+    cell_para = t.cell(1, 0).paragraphs[0]
+    body_para = doc.add_paragraph("招标原文一句话")
+    # 有人显式写死了行距的段落:必须原样保留
+    fixed = doc.add_paragraph("已写死行距的段落")
+    fixed.paragraph_format.line_spacing_rule = WD_LINE_SPACING.DOUBLE
+
+    assert _freeze_existing_paragraph_spacing(doc) >= 2
+
+    # 冻结后再把 Normal 改成固定 32pt —— 已有段落不该跟着变
+    normal = doc.styles["Normal"].paragraph_format
+    normal.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    normal.line_spacing = Pt(32)
+
+    for para in (cell_para, body_para):
+        assert para.paragraph_format.line_spacing_rule is not None
+        assert para.paragraph_format.line_spacing != Pt(32)
+    assert fixed.paragraph_format.line_spacing_rule == WD_LINE_SPACING.DOUBLE
+
+
+def test_establish_date_written_into_underlined_slot_not_the_spacer() -> None:
+    """成立时间的值也要写进带下划线的空槽——与落款日期同坑同方子。
+
+    2026-07-30 用户实测身份证明页:值被写进槽与"年"之间的普通空格,带点线的
+    空槽原样留着,Word 里点线和数字叠在一起。
+    """
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("成立时间：")
+    slots = []
+    for unit in ("年", "月", "日"):
+        s = p.add_run("            ")
+        s.font.underline = True
+        slots.append(s)
+        p.add_run(" ")  # 夹缝空格
+        p.add_run(unit)
+
+    n = o._fill_establish_segmented(doc, {"establish_date": "2011-07-05"})
+    assert n == 3
+    assert [s.text for s in slots] == ["2011", "7", "5"]
+
+
+def test_inline_fill_keeps_gap_before_next_label_on_same_line() -> None:
+    """"邮政编码：__电话：__"同一行两个标签:值比槽短要补空格保住间距。
+
+    2026-07-30 身份证明页实测:"许明英"把"姓名"的槽整个吃掉,和"性 别"挤成一团。
+    """
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("邮政编码：")
+    slot = p.add_run("            ")
+    slot.font.underline = True
+    p.add_run("联系电话：")
+    slot2 = p.add_run("             ")
+    slot2.font.underline = True
+
+    o._fill_inline_labeled_blanks(
+        doc, {"postal_code": "230041", "contact_phone": "13905510000"}
+    )
+    text = doc.paragraphs[0].text
+    assert "230041" in text and "13905510000" in text
+    import re as _re
+    assert _re.search(r"230041\s+联", text), f"值和下一标签挤在一起了: {text!r}"
+
+
+def test_token_replacement_shrinks_leading_slot_to_keep_line_width() -> None:
+    """（投标人名称）→公司全名变长时,前面的空白槽等量瘦身,行宽不变不折行。
+
+    值写槽家族第三处(2026-07-30):"系＿＿（投标人名称）的法定代表人"替换后
+    整行变长,Word 里"法定代表人。"被挤到下一行。
+    """
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("系")
+    slot = p.add_run("                    ")  # 20格空白槽
+    slot.font.underline = True
+    p.add_run("（投标人名称）的法定代表人。")
+
+    o._replace_known_fields(doc, {"company_name": "安徽正奇建设有限公司"})
+    text = doc.paragraphs[0].text
+    assert "安徽正奇建设有限公司的法定代表人。" in text
+    # 公司名(10字)比token(7字)长3字 → 槽从20缩到17,总行宽与模板一致
+    grow = len("安徽正奇建设有限公司") - len("（投标人名称）")
+    assert len(slot.text) == 20 - grow
