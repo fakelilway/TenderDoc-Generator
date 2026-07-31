@@ -88,6 +88,12 @@ def chat_completion(
     ``temperature``, ``max_tokens``, ``response_format``, ``timeout``, ...) are
     forwarded verbatim to ``create``.
     """
+    # kimi-k3 只接受 temperature=1(实测400 "only 1 is allowed"):kimi 系模型一律
+    # 剥掉非1的 temperature,让服务端用默认值——各agent的 0/0.2 对别家照传不误
+    model_name = str(kwargs.get("model") or "").lower()
+    if model_name.startswith("kimi") and kwargs.get("temperature") not in (None, 1, 1.0):
+        kwargs.pop("temperature", None)
+
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -129,12 +135,16 @@ def resolve_llm_config(
     if settings is None:
         settings = get_settings()
     provider = str(getattr(settings, "bid_llm_provider", "auto") or "auto").lower()
-    # 按用途分流(2026-07-16 用户拍板:商务标 kimi、技术文件 deepseek):
-    # purpose="technical" 且配置了 TECH_LLM_PROVIDER 时,技术卷写作用它;其余全走全局
+    # 按用途分流(2026-07-16/07-29 用户拍板:商务标 kimi、技术文件 deepseek、解析 deepseek):
+    # purpose="technical"/"parser" 且配置了对应覆盖时用覆盖供应商;其余全走全局
     if purpose == "technical":
         tech = str(getattr(settings, "tech_llm_provider", "") or "").strip().lower()
         if tech:
             provider = tech
+    elif purpose == "parser":
+        parser = str(getattr(settings, "parser_llm_provider", "") or "").strip().lower()
+        if parser:
+            provider = parser
     if provider == "kimi":
         if has_real_key(settings.kimi_api_key):
             return (

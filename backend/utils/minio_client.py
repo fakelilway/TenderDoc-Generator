@@ -3,6 +3,7 @@ from pathlib import Path
 from io import BytesIO
 from urllib.parse import quote, urlparse
 
+import urllib3
 from minio import Minio
 
 from core.config import settings
@@ -11,6 +12,20 @@ from core.config import settings
 # Buckets already verified/created in this process; avoids a bucket_exists
 # round-trip before every object operation.
 _verified_buckets: set[str] = set()
+
+
+def _pooled_http_client() -> urllib3.PoolManager:
+    """带超时+有限重试的连接池。
+
+    不传 http_client 时 minio SDK 的连接可能无限阻塞:2026-07-29 实测一次
+    Docker 端口转发抽风让解析线程在 get_object 上挂了半个多小时,状态永远
+    停在"解析中"。局域网内 MinIO 正常响应是毫秒级,120s 读超时对大文件
+    上传下载也绰绰有余;超时后重试 2 次,再不行让异常冒出去走失败分支。
+    """
+    return urllib3.PoolManager(
+        timeout=urllib3.util.Timeout(connect=10, read=120),
+        retries=urllib3.util.Retry(total=2, backoff_factor=1),
+    )
 
 
 class MinioClient:
@@ -23,6 +38,7 @@ class MinioClient:
             access_key=settings.minio_root_user,
             secret_key=settings.minio_root_password,
             secure=secure,
+            http_client=_pooled_http_client(),
         )
 
         # 预签名(下载/预览)专用客户端:只用来"签"URL,不发起连接。

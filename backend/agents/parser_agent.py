@@ -33,7 +33,10 @@ PROJECT_NAME_PLACEHOLDERS = (
 
 
 def _get_llm_client_config() -> tuple[str, str, str]:
-    return resolve_llm_config(get_settings(), error_cls=ParserAgentError)
+    # purpose="parser":配置了 PARSER_LLM_PROVIDER 时解析走它(deepseek),否则跟随全局
+    return resolve_llm_config(
+        get_settings(), error_cls=ParserAgentError, purpose="parser"
+    )
 
 
 def _get_parser_timeout_seconds() -> float:

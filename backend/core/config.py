@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # 技术卷(施工组织设计正文)专用供应商覆盖:空=跟随 BID_LLM_PROVIDER。
     # 2026-07-16 用户拍板:商务标用 kimi,技术文件仍用 deepseek → 这里填 deepseek
     tech_llm_provider: str = Field("", alias="TECH_LLM_PROVIDER")
+    # 招标解析专用供应商覆盖:空=跟随 BID_LLM_PROVIDER。2026-07-29 用户拍板:
+    # 解析回 deepseek——kimi-k3 是推理模型,读12万字招标"先思考"太慢(180s三连超时
+    # 实测),抽取类快问快答活交给非推理模型又快又省
+    parser_llm_provider: str = Field("", alias="PARSER_LLM_PROVIDER")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(
