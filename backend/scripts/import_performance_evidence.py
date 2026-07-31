@@ -84,6 +84,19 @@ def pdf_page_images(pdf_path: Path, max_pages: int = 40) -> list[tuple[str, byte
         for page_no in range(min(doc.page_count, max_pages)):
             pix = doc[page_no].get_pixmap(matrix=fitz.Matrix(2.08, 2.08))
             blob = pix.tobytes("jpg")
+            # fitz 直出的 JFIF 头 DPI=0 → python-docx 插图算尺寸除零(2026-07-31 实测
+            # 22张交工验收全成占位符)。PIL 重编码写上 150DPI 断根。
+            try:
+                import io as _io
+
+                from PIL import Image as _PILImage
+
+                im = _PILImage.open(_io.BytesIO(blob))
+                buf = _io.BytesIO()
+                im.save(buf, format="JPEG", quality=90, dpi=(150, 150))
+                blob = buf.getvalue()
+            except Exception:
+                pass  # 重编码失败就用原字节(插图侧还有除零兜底)
             if blob and len(blob) <= MAX_FILE_BYTES:
                 out.append((f"{pdf_path.stem}_第{page_no + 1}页.jpg", blob))
     finally:

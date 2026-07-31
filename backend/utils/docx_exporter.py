@@ -527,7 +527,14 @@ def _add_knowledge_image(
     paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
     run = paragraph.add_run()
     try:
-        picture = run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+        try:
+            picture = run.add_picture(image_stream, width=Cm(float(marker["width_cm"])))
+        except ZeroDivisionError:
+            # JFIF 头 DPI=0(PDF转图页常见),python-docx 算尺寸除零 → PIL 重编码补上 DPI 再试
+            from services.generation_service import _reencode_with_dpi
+
+            raw = image_stream.getvalue() if isinstance(image_stream, BytesIO) else open(image_stream, "rb").read()
+            picture = run.add_picture(BytesIO(_reencode_with_dpi(raw)), width=Cm(float(marker["width_cm"])))
     except Exception:
         # 个别扫描件(CMYK/异常 JPEG 等)python-docx 认不出 → 降级为文字提示,
         # 绝不让一张坏图把整卷渲染搞崩。

@@ -534,3 +534,41 @@ def test_token_replacement_shrinks_leading_slot_to_keep_line_width() -> None:
     # 公司名(10字)比token(7字)长3字 → 槽从20缩到17,总行宽与模板一致
     grow = len("安徽正奇建设有限公司") - len("（投标人名称）")
     assert len(slot.text) == 20 - grow
+
+
+def test_insert_image_survives_zero_dpi_jpeg(monkeypatch) -> None:
+    """JFIF头 横向DPI=0 的图必须能插成功,不许静默变占位符。
+
+    2026-07-31 实测(doc 7719 逐字节解剖):病图 JFIF density=(0,2)、unit=1(dpi),
+    python-docx horz_dpi=0 → 算宽度除零,旧代码静默吞异常放占位。
+    """
+    import io
+    from PIL import Image as PILImage
+    from services import generation_service as gs
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (400, 300), (120, 120, 120)).save(buf, "JPEG", dpi=(96, 96))
+    raw = bytearray(buf.getvalue())
+    jfif = raw.find(b"JFIF\x00")
+    assert jfif > 0
+    dens = jfif + 7  # units(1) Xdensity(2) Ydensity(2)
+    raw[dens:dens + 5] = b"\x01\x00\x00\x00\x02"  # unit=dpi, X=0, Y=2 —— 与真病图同款
+    zero_dpi = bytes(raw)
+
+    from docx import Document
+    from docx.shared import Cm
+    d0 = Document()
+    try:
+        d0.add_paragraph().add_run().add_picture(io.BytesIO(zero_dpi), width=Cm(14))
+        raise AssertionError("预期除零未发生,夹具失效")
+    except ZeroDivisionError:
+        pass
+
+    monkeypatch.setattr(gs, "_resolve_knowledge_image", lambda _id: zero_dpi)
+    doc = Document()
+    anchor = doc.add_paragraph("锚点")._p
+    gs._insert_image_after(anchor, doc, 1, "G343-交工验收（2）", 14.0)
+    texts = [p.text for p in doc.paragraphs]
+    assert not any("未能插入" in t for t in texts), "仍然变成了占位符"
+    from docx.oxml.ns import qn
+    assert doc.element.body.findall('.//' + qn('a:blip')), "没有图"

@@ -555,6 +555,20 @@ def _anchor_section_end_element(doc, anchor: str):
     return _by_table() or _by_paragraph()
 
 
+def _reencode_with_dpi(blob: bytes, dpi: int = 150) -> bytes:
+    """PIL 重编码并写上正常 DPI。治 JFIF 头 DPI=0 的图(python-docx 除零)。"""
+    from io import BytesIO
+
+    from PIL import Image
+
+    im = Image.open(BytesIO(blob))
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    out = BytesIO()
+    im.save(out, format="JPEG", quality=90, dpi=(dpi, dpi))
+    return out.getvalue()
+
+
 def _insert_image_after(after_el, doc, document_id, caption, width_cm):
     """在 after_el 之后插入"图 + 图注"两段,返回最后插入的元素(供同锚点链式续插)。"""
     from io import BytesIO
@@ -571,19 +585,28 @@ def _insert_image_after(after_el, doc, document_id, caption, width_cm):
     img_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     img_p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
     if not img:
+        logger.warning("插图失败(取不到字节),留占位:%s (doc %s)", caption, document_id)
         img_p.add_run(f"（图片资料未能插入，请人工补充：{caption}）")
         return img_el
     try:
         from utils.image_orient import upright_image_bytes
 
-        pic = img_p.add_run().add_picture(
-            BytesIO(upright_image_bytes(bytes(img))), width=Cm(float(width_cm))
-        )
+        blob = upright_image_bytes(bytes(img))
+        try:
+            pic = img_p.add_run().add_picture(BytesIO(blob), width=Cm(float(width_cm)))
+        except ZeroDivisionError:
+            # PDF 转图页的 JFIF 头 DPI=0,python-docx 算尺寸时除零(2026-07-31 实测
+            # G343/合肥交工验收22张全军覆没且**静默**放占位)。PIL 重编码写上正常 DPI 再试。
+            blob = _reencode_with_dpi(blob)
+            pic = img_p.add_run().add_picture(BytesIO(blob), width=Cm(float(width_cm)))
         if pic.height > Cm(20):
             scale = Cm(20) / pic.height
             pic.width = int(pic.width * scale)
             pic.height = int(Cm(20))
     except Exception:
+        logger.warning(
+            "插图失败,留占位:%s (doc %s)", caption, document_id, exc_info=True
+        )
         img_p.add_run(f"（图片资料未能插入，请人工补充：{caption}）")
         return img_el
     last = img_el
