@@ -29,7 +29,9 @@ from docx.oxml.ns import qn
 logger = logging.getLogger(__name__)
 
 _MAX_ITERS = 6
-_TIME_BUDGET_SECONDS = 420
+# 88MB/350页的全量附图卷,LibreOffice 渲染一轮就要4-6分钟——420s 只够跑一两轮,
+# 剩两页空白漏网(2026-07-31 实测)。放到 1500s 保证大卷也能跑满复查轮次。
+_TIME_BUDGET_SECONDS = 1500
 
 # 页眉/页码这类每页都印的东西不算页面内容
 _NOISE_PATTERNS = (
