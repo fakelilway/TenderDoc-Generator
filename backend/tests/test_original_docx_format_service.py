@@ -316,7 +316,8 @@ def test_build_original_format_docx_copies_format_tables_verbatim(
 
     copied = Document(output_path)
     texts = [paragraph.text for paragraph in copied.paragraphs]
-    assert "第八章 投标文件格式" in texts
+    # 2026-07-31 用户拍板:卷首招标章标题剥掉,封面打头
+    assert "第八章 投标文件格式" not in texts
     assert "第九章 评标办法" not in texts
     assert len(copied.tables) == 1
     copied_table = copied.tables[0]
@@ -659,7 +660,8 @@ def test_native_docx_path_skips_foxit_artifact_healers(tmp_path: Path) -> None:
         source_path.read_bytes(), out, profile={"company_name": "安徽正奇建设有限公司"}
     )
     texts = [p.text.strip() for p in Document(str(out)).paragraphs if p.text.strip()]
-    assert "第八章 投标文件格式" in texts
+    # 2026-07-31 用户拍板:卷首"第X章 投标文件格式"是招标章标题,必须剥掉,封面打头
+    assert "第八章 投标文件格式" not in texts
     assert "投标文件（商务文件）" in texts
 
 
@@ -755,3 +757,31 @@ def test_declared_scans_skip_agent_lines_and_set_letdown_flag(monkeypatch) -> No
     prof2 = {"legal_representative": "许明英"}
     assert svc._attach_declared_id_scans(doc2, prof2) == 1
     assert prof2.get("_legal_id_inline") is True
+
+
+def test_leading_chapter_title_is_stripped_but_body_mentions_kept() -> None:
+    """卷首"第九章 投标文件格式"必须删(招标自己的章标题);正文里引用它的句子不动。
+
+    2026-07-31 用户实测:成品第一页顶着招标章标题("这不是吓我的头吗")。
+    """
+    from services.original_docx_format_service import _strip_leading_chapter_title
+
+    doc = Document()
+    doc.add_paragraph("第九章  投标文件格式")
+    doc.add_paragraph("")
+    doc.add_paragraph("巢湖市 2026 年农村公路养护工程 标段招标")
+    doc.add_paragraph("投标文件")
+    doc.add_paragraph("投标人应按照第九章 投标文件格式的要求编写。")  # 正文引用,不许动
+
+    assert _strip_leading_chapter_title(doc) == 1
+    texts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    assert texts[0].startswith("巢湖市")
+    assert any("投标人应按照第九章" in t for t in texts)
+
+    # 分两段写的也逮
+    doc2 = Document()
+    doc2.add_paragraph("第八章")
+    doc2.add_paragraph("投标文件格式")
+    doc2.add_paragraph("封面内容")
+    assert _strip_leading_chapter_title(doc2) == 2
+    assert [p.text for p in doc2.paragraphs if p.text.strip()] == ["封面内容"]

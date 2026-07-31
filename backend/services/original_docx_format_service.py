@@ -82,6 +82,50 @@ def build_original_format_docx(
     return fill_format_docx(str(path), profile or {}, from_foxit=False)
 
 
+_CHAPTER_TITLE_RE = re.compile(r"^第[一二三四五六七八九十百]+章投标文件格式$")
+
+
+def _strip_leading_chapter_title(document: Any) -> int:
+    """删掉卷首的"第X章 投标文件格式"——那是招标书自己的章标题,不是投标文件内容。
+
+    2026-07-31 用户炸锅:成品第一页顶着"第九章 投标文件格式"("这不是吓我的头吗")。
+    只看**卷首前6段**(封面之前),整段恰好是章标题才删;正文/目录里引用它的句子不受影响。
+    分两段写的("第九章"+"投标文件格式")也逮;带分节符的段只清文字保留段。
+    """
+    paras = list(document.paragraphs)[:6]
+    removed = 0
+    i = 0
+    while i < len(paras):
+        p = paras[i]
+        t = re.sub(r"[\s　]+", "", p.text)
+        if not t:
+            i += 1
+            continue
+        victims = []
+        if _CHAPTER_TITLE_RE.match(t):
+            victims = [p]
+        elif re.fullmatch(r"第[一二三四五六七八九十百]+章", t):
+            for q in paras[i + 1: i + 3]:
+                if re.sub(r"[\s　]+", "", q.text) == "投标文件格式":
+                    victims = [p, q]
+                    break
+        if not victims:
+            break  # 碰到第一段实质内容(封面),收工——绝不深入正文
+        for v in victims:
+            el = v._p
+            pPr = el.find(qn("w:pPr"))
+            if pPr is not None and pPr.find(qn("w:sectPr")) is not None:
+                for run in v.runs:  # 分节符段:只清字,版式骨架留着
+                    run.text = ""
+            else:
+                el.getparent().remove(el)
+            removed += 1
+        break
+    if removed:
+        logger.info("已删卷首招标章标题 %d 段(第X章 投标文件格式)", removed)
+    return removed
+
+
 def fill_format_docx(
     output_path: str, profile: dict[str, Any], *, from_foxit: bool = True
 ) -> str:
@@ -104,6 +148,7 @@ def fill_format_docx(
     )
 
     doc = Document(str(output_path))
+    _strip_leading_chapter_title(doc)  # 卷首"第九章 投标文件格式"是招标自己的章标题,投标文件以封面开头
     if from_foxit:
         _drop_spurious_stream_tables(doc)
         _normalize_split_labels(doc)  # 理顺福昕切开的两字标签(性 别→性别),须在填值前:标签干净才填得上
