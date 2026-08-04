@@ -110,8 +110,9 @@ def main() -> None:
     if args.save:
         from services.curated_resume_service import save_curated_resumes
 
-        n = save_curated_resumes(resumes, src.name)
-        print(f"✅ 已存为资历表定稿({n}人),生成时按选派人选自动取用")
+        docx_path = _to_docx(src)
+        n = save_curated_resumes(resumes, src.name, docx_bytes=docx_path.read_bytes())
+        print(f"✅ 已存为资历表定稿({n}人,含整份模版docx),生成时按选派人选整表照搬")
     else:
         print("(预览模式,加 --save 写库)")
 

@@ -785,3 +785,47 @@ def test_leading_chapter_title_is_stripped_but_body_mentions_kept() -> None:
     doc2.add_paragraph("封面内容")
     assert _strip_leading_chapter_title(doc2) == 2
     assert [p.text for p in doc2.paragraphs if p.text.strip()] == ["封面内容"]
+
+
+def test_template_resume_wholesale_replace_and_experience_fill(monkeypatch) -> None:
+    """整表照搬(2026-08-01 用户拍板):有成品模版 → 整表替换招标空白表,
+    拟任职务按选派角色改,经历空行填勾选业绩;无模版 → 退回字段填空。"""
+    from copy import deepcopy
+    from services import original_docx_format_service as svc
+    import services.curated_resume_service as crs
+
+    # 成品模版(秦蒙蒙,模版里预填"项目经理")
+    tpl = Document()
+    t = tpl.add_table(rows=6, cols=4)
+    t.cell(0, 0).text = "姓  名"; t.cell(0, 1).text = "秦蒙蒙"
+    t.cell(1, 0).text = "拟在本标段工程任职"; t.cell(1, 1).text = "项目经理"
+    for i, h in enumerate(("时间", "参加过的类似工程项目名称", "担任职务", "发包人及联系电话")):
+        t.cell(2, i).text = h
+    # 第3、4行为经历空行;第5行表尾
+    t.cell(5, 0).text = "获奖情况"
+    monkeypatch.setattr(crs, "get_template_table_el", lambda name: deepcopy(t._tbl) if name == "秦蒙蒙" else None)
+
+    host = Document()
+    host.add_paragraph("（六）拟委任的项目经理和项目总工资历表")
+    ht = host.add_table(rows=2, cols=2)
+    ht.cell(0, 0).text = "拟在本标段工程任职"
+
+    prof = {"similar_projects_td": [{
+        "project_name": "澳门路道路工程", "project_manager": "别人", "tech_leader": "秦蒙蒙",
+        "start_date": "2023.07.11", "end_date": "2025.02.27",
+        "owner_name": "包河区重点工程建设管理中心", "owner_phone": "0551-63357659",
+    }]}
+    new_tb = svc._replace_with_template_resume(
+        host, ht, {"姓名": "秦蒙蒙", "拟任职务": "项目技术负责人"}, prof
+    )
+    assert new_tb is not None
+    texts = " ".join(c.text for row in new_tb.rows for c in row.cells)
+    assert "秦蒙蒙" in texts
+    # 拟任职务按选派角色改成了总工(模版预填的是项目经理)
+    assert "项目总工" in new_tb.rows[1].cells[1].text
+    # 经历行填了勾选业绩:担任职务=他在那个工程里的角色(总工),发包人带电话
+    assert "澳门路道路工程" in texts and "包河区重点工程建设管理中心/0551-63357659" in texts
+    assert "2023.07.11-2025.02.27" in texts
+
+    # 无模版 → None(调用方退回字段填空)
+    assert svc._replace_with_template_resume(host, ht, {"姓名": "无名氏"}, {}) is None

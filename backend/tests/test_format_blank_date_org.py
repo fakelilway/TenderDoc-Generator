@@ -10,6 +10,18 @@ from docx.shared import Pt
 
 from services import original_docx_format_service as o
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_curated_template(monkeypatch):
+    """本文件的简历表测试全部针对"字段填空白表"路径:屏蔽成品模版整表照搬
+    (开发机连着真库,李刚等16人有真模版,不屏蔽会把宿主表整个替换掉)。"""
+    import services.curated_resume_service as crs
+
+    monkeypatch.setattr(crs, "get_template_table_el", lambda name: None)
+
+
 
 def test_bond_left_blank_but_consortium_lead_name_fills() -> None:
     # 保证金 留白

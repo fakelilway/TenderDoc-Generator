@@ -568,6 +568,8 @@ export type PMRecommendation = {
   score: number;
   matched: string[];
   gaps: string[];
+  /** 有员工做好的成品资历表模版:标绿;没有的选中后提示"缺少简历" */
+  has_resume_template?: boolean;
 };
 
 export type PMRecommendationResponse = {

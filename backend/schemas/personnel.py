@@ -75,6 +75,8 @@ class PMRecommendation(BaseModel):
     score: float
     matched: list[str] = []  # 命中点:如 ["等级达标:一级建造师", "专业匹配:公路工程"]
     gaps: list[str] = []  # 缺口:如 ["缺安全B证", "专业待核验"]
+    # 有员工做好的成品资历表模版(2026-08-01:16人标绿;选了之外的前端提示"缺少简历")
+    has_resume_template: bool = False
 
 
 class PMRecommendationResponse(BaseModel):

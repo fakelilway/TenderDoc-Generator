@@ -53,6 +53,21 @@ def _performance_role_counts() -> tuple[dict[str, int], dict[str, int]]:
         return {}, {}
 
 
+def _with_resume_template_flags(recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """给每个候选打 has_resume_template(2026-08-01 用户:16个有成品模版的标绿,
+    选了之外的提示"缺少简历")。查询失败一律 False,不拦推荐。"""
+    try:
+        from services.curated_resume_service import curated_names
+
+        names = curated_names()
+    except Exception:  # noqa: BLE001
+        names = set()
+    for rec in recs:
+        member_name = str((rec.get("member") or {}).get("name") or "")
+        rec["has_resume_template"] = member_name in names
+    return recs
+
+
 def recommend_project_personnel(project_id: int) -> dict[str, Any]:
     """派生招标项目经理要求 + 从公司名册推荐匹配候选(含当前选定)。"""
     project = _fetch_project(project_id)
@@ -65,7 +80,9 @@ def recommend_project_personnel(project_id: int) -> dict[str, Any]:
     return {
         "project_id": project_id,
         "requirement": requirement.model_dump(),
-        "recommendations": [rec.model_dump() for rec in recommendations],
+        "recommendations": _with_resume_template_flags(
+            [rec.model_dump() for rec in recommendations]
+        ),
         "selected": selected,
     }
 
@@ -82,7 +99,9 @@ def recommend_tech_director_personnel(project_id: int) -> dict[str, Any]:
     return {
         "project_id": project_id,
         "requirement": requirement.model_dump(),
-        "recommendations": [rec.model_dump() for rec in recommendations],
+        "recommendations": _with_resume_template_flags(
+            [rec.model_dump() for rec in recommendations]
+        ),
         "selected": selected,
     }
 

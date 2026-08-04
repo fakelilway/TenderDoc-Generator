@@ -1601,7 +1601,14 @@ def _fill_resume_tables(
     certs_done: set[str] = set()  # 同一人只插一套(资格审查+详细评审双表时防重复)
     for tb, resume in assign:
         if resume and resume.get("姓名"):
-            filled += _fill_one_resume_table(tb, resume)
+            # 成品模版优先(2026-08-01 用户拍板"整表照搬"):有这个人的成品表就整表替换,
+            # 拟任职务按选派角色改、经历填勾选业绩;没有才退回逐格填空白表
+            tpl_tb = _replace_with_template_resume(document, tb, resume, profile)
+            if tpl_tb is not None:
+                tb = tpl_tb
+                filled += 1
+            else:
+                filled += _fill_one_resume_table(tb, resume)
             # 证件扫描件**立刻**跟在本人资历表后(泗沙路实测两人证件挤一处冲突)
             name = str(resume.get("姓名"))
             if name not in certs_done:
@@ -1614,6 +1621,125 @@ def _fill_resume_tables(
         # 角色保留锚点链兜底(否则总工没表时他整套证件会静默消失,对抗审查修正)
         profile["_personnel_certs_inline_roles"] = sorted(inline_roles)
     return filled
+
+
+def _fill_template_experience_rows(
+    table: Any, name: str, records: list[dict[str, Any]]
+) -> int:
+    """成品资历表"经 历"区的空行 ← 该人被勾选的业绩(2026-08-01 用户:"经历就填勾选的业绩")。
+
+    列序按模版:时间 | 参加过的类似工程项目名称 | 担任职务 | 发包人及联系电话。
+    担任职务按 47表 记录里他在那个工程的角色(经理/总工)填;只填空行、行不够就装多少填多少。
+    """
+    header_i = None
+    for i, row in enumerate(table.rows):
+        joined = re.sub(r"[\s　]+", "", " ".join(c.text for c in row.cells))
+        if "时间" in joined and "担任职务" in joined:
+            header_i = i
+            break
+    if header_i is None or not records:
+        return 0
+    filled = 0
+    ri = header_i + 1
+    for rec in records:
+        # 找下一个可用空行(碰到 获奖/在岗/备注 就停,那是表尾结构行)
+        while ri < len(table.rows):
+            row = table.rows[ri]
+            first = re.sub(r"[\s　]+", "", row.cells[0].text)
+            if any(k in first for k in ("获奖", "在岗", "备注")):
+                return filled
+            if all(not c.text.strip() for c in row.cells):
+                break
+            ri += 1
+        if ri >= len(table.rows):
+            break
+        row = table.rows[ri]
+        cells = row.cells
+        start = str(rec.get("start_date") or "").strip()
+        end = str(rec.get("end_date") or "").strip()
+        when = f"{start}-{end}" if (start and end) else str(rec.get("project_year") or "")
+        role_in_proj = (
+            "项目经理" if str(rec.get("project_manager") or "").strip() == name else "项目总工"
+        )
+        owner = str(rec.get("owner_name") or "").strip()
+        phone = str(rec.get("owner_phone") or "").strip()
+        contact = f"{owner}/{phone}" if (owner and phone) else (owner or phone)
+        values = [when, str(rec.get("project_name") or ""), role_in_proj, contact]
+        # 合并格去重后按列序写
+        seen = []
+        for c in cells:
+            if not seen or seen[-1]._tc is not c._tc:
+                seen.append(c)
+        for cell, val in zip(seen, values):
+            if val:
+                _set_cell_value(cell, val)
+        filled += 1
+        ri += 1
+    return filled
+
+
+def _replace_with_template_resume(
+    document: Any,
+    host_tb: Any,
+    resume: dict[str, Any],
+    profile: dict[str, Any] | None,
+) -> Any | None:
+    """招标空白资历表 ← 选派人选的**成品模版表整表照搬**(2026-08-01 用户拍板)。
+
+    有成品:整表替换(字体实化防豆腐块),"拟在本标段工程任职"改成实际选派角色,
+    "经历"空行填该人被勾选的业绩,返回新 Table;没成品返回 None(调用方退回字段填空)。
+    """
+    name = str((resume or {}).get("姓名") or "").strip()
+    role = str((resume or {}).get("拟任职务") or "").strip() or "项目经理"
+    if not name:
+        return None
+    try:
+        from docx.table import Table as _Table
+
+        from services.company_component_service import _default_fonts_of, _solidify_fonts
+        from services.curated_resume_service import get_template_table_el
+
+        tpl_el = get_template_table_el(name)
+        if tpl_el is None:
+            logger.warning("选派人选「%s」没有成品资历表模版,退回字段填空(缺少简历)", name)
+            return None
+        # 字体实化:模版文档的默认字体不随行,不实化会在宿主里退成默认字(豆腐块风险)
+        try:
+            from io import BytesIO
+
+            from core.config import settings as _st
+            from utils.minio_client import minio_client as _mc
+            from docx import Document as _Doc
+
+            tpl_doc = _Doc(BytesIO(_mc.download_bytes(_st.minio_bucket, "curated/resume_templates.docx")))
+            ascii_f, ea_f = _default_fonts_of(tpl_doc)
+            _solidify_fonts(tpl_el, ascii_f, ea_f)
+        except Exception:  # noqa: BLE001 - 实化失败不拦替换
+            pass
+        host_tb._tbl.addnext(tpl_el)
+        host_tb._tbl.getparent().remove(host_tb._tbl)
+        new_tb = _Table(tpl_el, document._body)
+        # 拟任职务按实际选派角色改(模版里有人预填的是"项目总工")
+        for row in new_tb.rows:
+            cells = row.cells
+            for i, c in enumerate(cells):
+                if "拟在本标段" in re.sub(r"[\s　]+", "", c.text) and i + 1 < len(cells):
+                    tail_role = "项目总工" if ("总工" in role or "技术负责" in role) else "项目经理"
+                    _set_cell_value(cells[i + 1], tail_role)
+                    break
+        # 经历 ← 该角色勾选的业绩
+        rec_key = (
+            "similar_projects_td"
+            if ("总工" in role or "技术负责" in role)
+            else "similar_projects_pm"
+        )
+        records = list((profile or {}).get(rec_key) or [])
+        got = _fill_template_experience_rows(new_tb, name, records)
+        logger.info("资历表整表照搬:%s(%s),经历填 %d 条勾选业绩", name, role, got)
+        return new_tb
+    except Exception:  # noqa: BLE001
+        logger.warning("资历表整表照搬失败(%s),退回字段填空", name, exc_info=True)
+        return None
 
 
 def _resume_adjacent_note_p(tbl_el: Any) -> Any | None:

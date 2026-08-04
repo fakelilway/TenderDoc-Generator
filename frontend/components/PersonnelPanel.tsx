@@ -154,8 +154,17 @@ function RoleSelector({
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold text-[#1d1d1f]">
+                  <p className={`text-xs font-semibold ${rec.has_resume_template ? "text-[#1f9d4d]" : "text-[#1d1d1f]"}`}>
                     {rec.member.name}
+                    {rec.has_resume_template ? (
+                      <span className="ml-1 rounded bg-[#34c759]/14 px-1.5 py-0.5 text-[10px] font-normal text-[#1f9d4d]">
+                        有简历模版
+                      </span>
+                    ) : (
+                      <span className="ml-1 rounded bg-[#ff9500]/14 px-1.5 py-0.5 text-[10px] font-normal text-[#c2740d]">
+                        缺少简历
+                      </span>
+                    )}
                     <span className="ml-1.5 rounded bg-black/[0.05] px-1.5 py-0.5 text-[10px] font-normal text-[#8e8e93]">
                       {rec.member.source}
                     </span>
