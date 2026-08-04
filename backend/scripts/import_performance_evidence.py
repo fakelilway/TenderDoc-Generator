@@ -225,9 +225,10 @@ def import_all(base: Path, limit_projects: int = 0) -> None:
 
 
 def _project_name(folder: str) -> str:
-    """`240#萧县…三标段` → 萧县…三标段;裸数字前缀 `221萧县…` 也剥(2026-07-30 清洗发现:
-    不剥会与老库名分家,同一项目两个名字、生成时只匹配到一半图)。`2022年…`年份开头不动。"""
-    name = re.sub(r"^\d+[-#＃]+", "", folder).strip()
+    """`240#萧县…三标段` → 萧县…三标段;`36-2#…`复合编号、裸数字前缀 `221萧县…` 也剥
+    (2026-07-30/08-01 清洗发现:剥不净会与库名分家或残留'#',生成时匹配不上)。
+    `2022年…`年份开头不动。"""
+    name = re.sub(r"^\d+(?:-\d+)*[-#＃]+", "", folder).strip()
     name = re.sub(r"^\d{1,3}(?=[^\d年])", "", name).strip()
     return name or folder
 
