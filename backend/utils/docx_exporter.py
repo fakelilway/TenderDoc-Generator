@@ -540,6 +540,18 @@ def _add_knowledge_image(
         # 绝不让一张坏图把整卷渲染搞崩。
         run.add_text(f"（图片资料未能插入，请人工补充：{caption}）")
         return
+    # 高度按真实像素比算,不信文件头 DPI(横纵不等的头会把竖版扫描压成细条,2026-08-05 实测)
+    try:
+        from PIL import Image as _PIL
+
+        _src = image_stream if isinstance(image_stream, BytesIO) else image_stream
+        if isinstance(_src, BytesIO):
+            _src.seek(0)
+        _w, _h = _PIL.open(_src).size
+        if _w > 0:
+            picture.height = int(picture.width * _h / _w)
+    except Exception:
+        pass
     max_height = Cm(20)
     if picture.height > max_height:
         scale = max_height / picture.height

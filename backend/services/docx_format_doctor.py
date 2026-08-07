@@ -1408,6 +1408,75 @@ def run_format_doctor_assembled(document: Any) -> dict[str, int]:
     return report
 
 
+def heal_idproof_column_pairs(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """治福昕把身份证明的两栏拆成前后段:姓名/年龄一段(内含换行),性别/职务各自孤段。
+
+    2026-08-05 用户实测:填完后"性别：女"悬在姓名和年龄之间的右侧、"职务：总经理"又
+    低半行,Word里还改不了(段落缩进定位)。规则极窄:段落文本形如"姓名：X⏎年龄：Y",
+    其后4段内出现孤段"性别：Z"/"职务：W"(短文本) → 把它们并回对应行
+    (姓名行尾接"　性　别：Z",年龄行尾接"　职　务：W"),孤段删除。文字一字不丢。
+    """
+    from docx.oxml import OxmlElement
+
+    healed = 0
+    paras = list(_iter_all_paragraphs(document))
+    for idx, para in enumerate(paras):
+        t = re.sub(r"[\s　]+", "", para.text)
+        if not ("姓名：" in t and "年龄：" in t) or "性别" in t:
+            continue
+        runs = [r for r in para.runs]
+        br_pos = None  # 姓名行结尾的换行 run
+        for k, r in enumerate(runs):
+            if r._r.find(qn("w:br")) is not None:
+                br_pos = k
+                break
+        if br_pos is None:
+            continue
+        # 找孤段 性别/职务(≤4段内,允许中间空段)
+        victims: dict[str, tuple[Any, str]] = {}
+        for nxt in paras[idx + 1: idx + 5]:
+            nt = re.sub(r"[\s　]+", "", nxt.text)
+            if not nt:
+                continue
+            m = re.match(r"^(性别|职务)[：:](.{1,12})$", nt)
+            if m and m.group(1) not in victims:
+                victims[m.group(1)] = (nxt, m.group(2))
+            elif not m:
+                break
+        if not victims:
+            continue
+
+        def _mk_run(text: str, template_r: Any) -> Any:
+            new_r = OxmlElement("w:r")
+            rpr = template_r._r.find(qn("w:rPr"))
+            if rpr is not None:
+                from copy import deepcopy as _dc2
+
+                new_r.append(_dc2(rpr))
+            t_el = OxmlElement("w:t")
+            t_el.set(qn("xml:space"), "preserve")
+            t_el.text = text
+            new_r.append(t_el)
+            return new_r
+
+        if "性别" in victims:
+            _p, val = victims["性别"]
+            ref = runs[br_pos - 1] if br_pos > 0 else runs[br_pos]
+            # 插在换行 run 之前 → 落在姓名行行尾
+            runs[br_pos]._r.addprevious(_mk_run(f"　　性　别：{val}", ref))
+            _p._p.getparent().remove(_p._p)
+            healed += 1
+        if "职务" in victims:
+            _p, val = victims["职务"]
+            ref = runs[-1]
+            para._p.append(_mk_run(f"　　职　务：{val}", ref))
+            _p._p.getparent().remove(_p._p)
+            healed += 1
+    if healed:
+        logger.info("格式体检:身份证明两栏并回 %d 处(性别/职务归位)", healed)
+    return healed
+
+
 # (名称, healer)。healer 契约:输入 (document, profile),返回修复数;只改格式,绝不改文字。
 _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
     ("template_header_lines", heal_template_header_lines),
@@ -1422,6 +1491,7 @@ _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = 
     ("signature_block_layout", heal_signature_block_layout),
     ("line_spacing", heal_line_spacing),
     ("signature_wrap", heal_signature_wrap),
+    ("idproof_column_pairs", heal_idproof_column_pairs),
 )
 
 

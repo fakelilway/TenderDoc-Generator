@@ -774,3 +774,32 @@ def test_template_header_healer_keeps_other_headers() -> None:
 
     heal_template_header_lines(doc)
     assert "安徽正奇建设有限公司" in doc.sections[0].header.paragraphs[0].text
+
+
+def test_idproof_split_columns_merged_back() -> None:
+    """身份证明两栏拆段并回:性别归姓名行尾、职务归年龄行尾,孤段删除,一字不丢。"""
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_idproof_column_pairs
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("姓 名： 许明英")
+    br_r = p.add_run(); br_r._r.append(OxmlElement("w:br"))
+    p.add_run("年 龄： 50")
+    doc.add_paragraph("性别： 女")
+    doc.add_paragraph("职务： 总经理")
+    doc.add_paragraph("系　安徽正奇建设有限公司的法定代表人。")  # 正文,不许动
+
+    assert heal_idproof_column_pairs(doc) == 2
+    texts = [x.text for x in doc.paragraphs if x.text.strip()]
+    assert len(texts) == 2  # 合并段 + 正文
+    merged = texts[0]
+    assert "许明英" in merged and "性　别：女" in merged
+    assert "50" in merged and "职　务：总经理" in merged
+    # 性别在换行前(姓名行),职务在换行后(年龄行)
+    line1, line2 = merged.split("\n")
+    assert "性　别" in line1 and "职　务" in line2
+    assert "法定代表人" in texts[1]

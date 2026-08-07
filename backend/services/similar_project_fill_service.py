@@ -295,6 +295,37 @@ def _adjacent_title_p(tbl_el: Any) -> Any | None:
 _NOTE_HEAD_RE = re.compile(r"^[注註]\s*[：:1１]")
 
 
+_NOTE_BODY_RE = re.compile(r"^(\d+[\.、．]|[①②③④⑤])")
+_TAIL_LINE_RE = re.compile(r"^(投标人|法定代表人|日期)[：:（(]")
+
+
+def _extend_anchor_past_note_block(anchor_el: Any, max_scan: int = 10) -> Any:
+    """插图锚点越过整个"注"块和落款行,返回真正该插图的位置。
+
+    福昕把"注：1.…2.…"劈成多个段;老锚点只认第一个"注："段,插图会把注文拦腰截断
+    (2026-08-05 用户实测:资历表下只剩光杆"注：",正文被推到几十张图后面)。
+    同理,资格审查表的落款(投标人/日期)也在注后——图必须插在**这些全部之后**。
+    规则:从锚点向后,连续的 空段/注文续段(数字序号开头)/落款行 都算表尾,越过;
+    碰到表格/标题/普通正文就停。
+    """
+    cur = anchor_el
+    el = anchor_el.getnext()
+    scanned = 0
+    while el is not None and scanned < max_scan:
+        if not el.tag.endswith("}p"):
+            break
+        text = re.sub(r"[\s　]+", "", "".join(el.itertext()))
+        if not text:
+            el = el.getnext(); scanned += 1
+            continue  # 空段透明,但锚点不落在空段上
+        if _NOTE_BODY_RE.match(text) or _TAIL_LINE_RE.match(text) or _NOTE_HEAD_RE.match(text):
+            cur = el
+            el = el.getnext(); scanned += 1
+            continue
+        break
+    return cur
+
+
 def _adjacent_note_p(tbl_el: Any) -> Any | None:
     """表格紧后的"注：…"段(跳过空段,最多前看4个元素)。
 
@@ -487,7 +518,7 @@ def _insert_full_evidence_after_summary(
 
         rows = _query_performance_evidence_rows()
         note = _adjacent_note_p(summary_tbl_el)
-        anchor = note if note is not None else summary_tbl_el
+        anchor = _extend_anchor_past_note_block(note if note is not None else summary_tbl_el)
         for record in records:
             name = str(record.get("project_name") or "").strip()
             if not name:
@@ -538,7 +569,7 @@ def _insert_evidence_after_units(
             if not images:
                 continue
             note = _adjacent_note_p(tbl_el)
-            anchor = note if note is not None else tbl_el
+            anchor = _extend_anchor_past_note_block(note if note is not None else tbl_el)
             for doc_id, caption in images:
                 try:
                     anchor = _insert_image_after(anchor, document, doc_id, caption, 14.0)

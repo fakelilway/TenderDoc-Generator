@@ -1770,7 +1770,9 @@ def _insert_person_certs_after_table(document: Any, table: Any, resume: dict[str
         if not items:
             return 0
         note = _resume_adjacent_note_p(table._tbl)
-        anchor = note if note is not None else table._tbl
+        from services.similar_project_fill_service import _extend_anchor_past_note_block
+
+        anchor = _extend_anchor_past_note_block(note if note is not None else table._tbl)
         for doc_id, caption in items:
             try:
                 anchor = _insert_image_after(anchor, document, doc_id, caption, 12.0)

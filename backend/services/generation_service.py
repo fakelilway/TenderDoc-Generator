@@ -599,6 +599,17 @@ def _insert_image_after(after_el, doc, document_id, caption, width_cm):
             # G343/合肥交工验收22张全军覆没且**静默**放占位)。PIL 重编码写上正常 DPI 再试。
             blob = _reencode_with_dpi(blob)
             pic = img_p.add_run().add_picture(BytesIO(blob), width=Cm(float(width_cm)))
+        # 高度**永远按真实像素比**算,绝不信文件头 DPI:扫描件的 JFIF 头五花八门
+        # (横0纵2、横纵不等5倍差…),信它一次坑一次——2026-08-05 实测正常竖版扫描被
+        # 压成 2.6cm 宽的细条(头里横向分辨率虚高5倍)。
+        try:
+            from PIL import Image as _PIL
+
+            w_px, h_px = _PIL.open(BytesIO(blob)).size
+            if w_px > 0:
+                pic.height = int(pic.width * h_px / w_px)
+        except Exception:  # noqa: BLE001 - 量不出像素就保留 docx 自算值
+            pass
         if pic.height > Cm(20):
             scale = Cm(20) / pic.height
             pic.width = int(pic.width * scale)
