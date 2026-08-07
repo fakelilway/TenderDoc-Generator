@@ -180,6 +180,7 @@ def fill_format_docx(
     _fill_authorization_letter(doc, profile)  # 授权委托书"本人___（姓名）系"→法人名
     _fill_establish_segmented(doc, profile)  # 法人证明"成立时间：__年__月__日"分段填
     _fill_bid_date_today(doc)  # 投标/签署日期落款 → 标书制作当天
+    _fill_entrust_lines(doc, profile)  # 新款投标函"我方将委托__同志"→选派经理/总工(2026-08-05)
     _fill_personnel_table(doc, profile)
     _fill_performance_table(  # 投标人业绩情况表 → 填选中的类似业绩项目名(按节处理过的表绕行)
         doc, profile, skip_tables=similar_result.get("handled_tables")
@@ -373,6 +374,8 @@ def _known_replacements(profile: dict[str, Any]) -> dict[str, str]:
         # 授权委托书正文"本人（姓名）系…的法定代表人"——这里的（姓名）即法人,可填。
         # 仅锚定"本人"前缀,绝不全局替换（姓名）(人员表每行（姓名）不能都填成法人)。
         mapping["本人（姓名）"] = f"本人{legal_rep}"
+        # 新款身份证明"姓名：（法定代表人姓名）"(2026-08-05 外地格式试跑)
+        mapping["（法定代表人姓名）"] = legal_rep
         mapping["本人 （姓名）"] = f"本人 {legal_rep}"
     return mapping
 
@@ -947,6 +950,53 @@ def _fill_establish_segmented(document: Any, profile: dict[str, Any]) -> int:
 _BID_DATE_SKIP = ("成立", "有效", "截止", "开标", "出生", "签发", "注册", "到期", "起止")
 
 
+_ENTRUST_RE = re.compile(
+    r"我方将委托([\s　_＿]*)同志作为本工程的(项目经理|现场总工程师|项目总工程师|总工程师|项目总工|技术负责人)"
+)
+
+
+def _fill_entrust_lines(document: Any, profile: dict[str, Any]) -> int:
+    """新款投标函"我方将委托____同志作为本工程的项目经理/现场总工程师"(2026-08-05 外地格式)。
+
+    空槽在"同志"之前:按句尾角色填选派的经理/总工姓名。只动空槽,已有名字不覆盖。
+    """
+    pm = str((profile.get("pm_resume") or {}).get("姓名") or "").strip()
+    td = str((profile.get("tech_resume") or {}).get("姓名") or "").strip()
+    if not pm and not td:
+        return 0
+    filled = 0
+    for para in document.paragraphs:
+        text = para.text
+        m = _ENTRUST_RE.search(text)
+        if not m or m.group(1).strip("_＿ 　"):
+            continue
+        name = pm if m.group(2) == "项目经理" else td
+        if not name:
+            continue
+        # 字符→run 定位,把槽段替换成姓名(保留槽的前后文)
+        owner: list[tuple[int, int]] = []
+        runs = para.runs
+        for ri, r in enumerate(runs):
+            for li in range(len(r.text)):
+                owner.append((ri, li))
+        a, b = m.start(1), m.end(1)
+        if a >= b:  # 无槽(委托和同志贴着) → 在"同志"前插入
+            ri, li = owner[m.end(1)] if m.end(1) < len(owner) else (len(runs) - 1, len(runs[-1].text))
+            runs[ri].text = runs[ri].text[:li] + name + runs[ri].text[li:]
+        else:
+            ra, la = owner[a]
+            rb, lb = owner[b - 1]
+            if ra == rb:
+                runs[ra].text = runs[ra].text[:la] + name + runs[ra].text[lb + 1:]
+            else:
+                runs[ra].text = runs[ra].text[:la] + name
+                for mid in range(ra + 1, rb):
+                    runs[mid].text = ""
+                runs[rb].text = runs[rb].text[lb + 1:]
+        filled += 1
+    return filled
+
+
 def _fill_bid_date_today(document: Any, today: Any = None) -> int:
     """把投标/签署日期的"__年__月__日"空槽填成标书制作当天(用户定)。
 
@@ -1104,6 +1154,7 @@ def _fill_known_table_cells(document: Any, profile: dict[str, Any]) -> int:
 # 这是诊断早标注的"段落内联"缺口。只填白名单标签、只动 tab/占位 run、不覆盖已有值。
 _INLINE_LABELS: tuple[tuple[str, str], ...] = (
     ("工程质量", "质量"),
+    ("质量评定", "质量"),  # 新款投标函"交工/竣工验收的质量评定：__"(2026-08-05 外地格式试跑)
     ("质量目标", "质量"),
     ("质量要求", "质量"),
     ("质量标准", "质量"),
@@ -1784,7 +1835,7 @@ def _insert_person_certs_after_table(document: Any, table: Any, resume: dict[str
     return inserted
 
 
-_ATTACH_SCAN_RE = re.compile(r"(附|本页后附)[：:]*.{0,14}身份证.{0,10}扫描件")
+_ATTACH_SCAN_RE = re.compile(r"(附|本页后附)[：:]*.{0,22}身份证.{0,10}扫描件")
 # 表单尾巴行(签字/日期/证号):附件要插在整个落款之后,不能楔进表单中间
 _FORM_TAIL_RE = re.compile(
     r"^(投标人|法定代表人|项目经理|项目总工|委托代理人|身份证号|日期)[：:（(]"

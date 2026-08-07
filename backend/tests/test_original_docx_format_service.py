@@ -829,3 +829,37 @@ def test_template_resume_wholesale_replace_and_experience_fill(monkeypatch) -> N
 
     # 无模版 → None(调用方退回字段填空)
     assert svc._replace_with_template_resume(host, ht, {"姓名": "无名氏"}, {}) is None
+
+
+def test_new_format_adaptations_waixian_trial() -> None:
+    """外地格式试跑(2026-08-05)的四处适配:质量评定/委托同志/法人姓名token/附件正则。"""
+    from services import original_docx_format_service as svc
+
+    # ① 质量评定内联空
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("3.标段工程交工验收的质量评定：")
+    s1 = p.add_run("      "); s1.font.underline = True
+    p.add_run("；竣工验收的质量评定：")
+    s2 = p.add_run("      "); s2.font.underline = True
+    p.add_run("。")
+    svc._fill_inline_labeled_blanks(doc, {"质量": "合格"})
+    assert doc.paragraphs[0].text.count("合格") == 2
+
+    # ② 我方将委托__同志
+    d2 = Document()
+    d2.add_paragraph("8.我方将委托        同志作为本工程的项目经理。")
+    d2.add_paragraph("9.我方将委托        同志作为本工程的现场总工程师。")
+    n = svc._fill_entrust_lines(d2, {"pm_resume": {"姓名": "李刚"}, "tech_resume": {"姓名": "许明英"}})
+    assert n == 2
+    assert "委托李刚同志" in d2.paragraphs[0].text.replace(" ", "")
+    assert "委托许明英同志" in d2.paragraphs[1].text.replace(" ", "")
+
+    # ③ （法定代表人姓名）token
+    d3 = Document()
+    d3.add_paragraph("姓名：（法定代表人姓名）性别：     年龄：")
+    svc._replace_known_fields(d3, {"legal_representative": "许明英", "company_name": "安徽正奇建设有限公司"})
+    assert "姓名：许明英" in d3.paragraphs[0].text
+
+    # ④ 照单附件正则容纳长前缀
+    assert svc._ATTACH_SCAN_RE.search("附：投标人的法定代表人有效期内居民身份证扫描件")
