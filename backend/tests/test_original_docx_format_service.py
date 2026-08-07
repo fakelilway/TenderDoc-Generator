@@ -863,3 +863,16 @@ def test_new_format_adaptations_waixian_trial() -> None:
 
     # ④ 照单附件正则容纳长前缀
     assert svc._ATTACH_SCAN_RE.search("附：投标人的法定代表人有效期内居民身份证扫描件")
+
+
+def test_qinbi_signature_spot_stays_blank() -> None:
+    """"姓名：（法定代表人亲笔签字）"式签字位留白人工签,任何标签不代填(2026-08-07)。"""
+    from services import original_docx_format_service as svc
+
+    doc = Document()
+    doc.add_paragraph("法定代表人身份证明")
+    doc.add_paragraph("姓名：  （法定代表人亲笔签字）  性别：     年龄：")
+    svc._fill_inline_labeled_blanks(doc, {"legal_representative": "许明英", "法人性别": "女"})
+    t = doc.paragraphs[1].text
+    assert "许明英（法定代表人亲笔签字" not in t.replace(" ", "")
+    assert "（法定代表人亲笔签字）" in t.replace("  ", " ") or "亲笔签字" in t
