@@ -876,3 +876,16 @@ def test_qinbi_signature_spot_stays_blank() -> None:
     t = doc.paragraphs[1].text
     assert "许明英（法定代表人亲笔签字" not in t.replace(" ", "")
     assert "（法定代表人亲笔签字）" in t.replace("  ", " ") or "亲笔签字" in t
+
+
+def test_chapter_title_with_footnote_and_editor_note_stripped() -> None:
+    """黄山示范文本卷首:"第九章 投标文件格式①"+编者脚注"①招标人可结合…"都要剥。"""
+    from services.original_docx_format_service import _strip_leading_chapter_title
+
+    doc = Document()
+    doc.add_paragraph("第九章  投标文件格式①")
+    doc.add_paragraph("①  招标人可结合招标项目具体特点和实际需要，对本章内容进行补充、细化。")
+    doc.add_paragraph("祁门县 2026 年农村公路养护工程 标段施工招标")
+    assert _strip_leading_chapter_title(doc) == 2
+    texts=[p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    assert texts[0].startswith("祁门县")

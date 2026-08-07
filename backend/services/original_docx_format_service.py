@@ -110,6 +110,8 @@ def _strip_leading_chapter_title(document: Any) -> int:
                 if re.sub(r"[\s　]+", "", q.text) == "投标文件格式":
                     victims = [p, q]
                     break
+        if not victims and re.match(r"^[①-⑩]", t):
+            victims = [p]  # 示范文本的编者脚注("①招标人可结合…细化")也不属于投标文件
         if not victims:
             break  # 碰到第一段实质内容(封面),收工——绝不深入正文
         for v in victims:
@@ -121,7 +123,8 @@ def _strip_leading_chapter_title(document: Any) -> int:
             else:
                 el.getparent().remove(el)
             removed += 1
-        break
+        paras = [q for q in paras if q not in victims]
+        # 不 break:标题后面可能还跟编者脚注,继续扫(仍限卷首前6段,绝不深入正文)
     if removed:
         logger.info("已删卷首招标章标题 %d 段(第X章 投标文件格式)", removed)
     return removed
