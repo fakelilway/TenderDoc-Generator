@@ -82,7 +82,8 @@ def build_original_format_docx(
     return fill_format_docx(str(path), profile or {}, from_foxit=False)
 
 
-_CHAPTER_TITLE_RE = re.compile(r"^第[一二三四五六七八九十百]+章投标文件格式$")
+# 尾随脚注圈号也认(黄山示范文本"第九章 投标文件格式①",2026-08-07 实测)
+_CHAPTER_TITLE_RE = re.compile(r"^第[一二三四五六七八九十百]+章投标文件格式[①-⑩※]?$")
 
 
 def _strip_leading_chapter_title(document: Any) -> int:
