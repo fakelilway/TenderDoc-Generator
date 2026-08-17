@@ -803,3 +803,176 @@ def test_idproof_split_columns_merged_back() -> None:
     line1, line2 = merged.split("\n")
     assert "性　别" in line1 and "职　务" in line2
     assert "法定代表人" in texts[1]
+
+
+# ---------- 浮框长条款拆回正文流(马鞍山#216 叠印病) ----------
+
+_CLAUSE = "（6）我单位承诺:若我单位拟派本次投标项目的项目经理目前无在岗项目,我方保证其按期到岗履职。"
+
+
+def _pict_run_xml(box_texts):
+    """一个 w:r 里装一个 w:pict,pict 里每段文字一个 v:shape 文本框。"""
+    boxes = "".join(
+        "<v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>"
+        + t
+        + "</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape>"
+        for t in box_texts
+    )
+    return (
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        ' xmlns:v="urn:schemas-microsoft-com:vml"><w:pict>' + boxes + "</w:pict></w:r>"
+    )
+
+
+def _append_pict_para(doc, box_texts):
+    from docx.oxml import parse_xml
+
+    p = doc.add_paragraph("宿主段落")
+    p._p.append(parse_xml(_pict_run_xml(box_texts)))
+    return p
+
+
+def _all_text(doc):
+    import re as _re
+
+    from docx.oxml.ns import qn
+
+    return _re.sub(r"\s", "", "".join(t.text or "" for t in doc.element.body.iter(qn("w:t"))))
+
+
+def test_defloat_long_clause_box_inlined() -> None:
+    from services.docx_format_doctor import heal_defloat_long_textboxes
+
+    doc = Document()
+    _append_pict_para(doc, [_CLAUSE])
+    before = sorted(_all_text(doc))
+    assert heal_defloat_long_textboxes(doc) == 1
+    # 条款进了正文流,浮件本体删净,字符守恒
+    assert any(_CLAUSE in p.text for p in doc.paragraphs)
+    from docx.oxml.ns import qn
+
+    assert doc.element.body.find(".//" + qn("w:txbxContent")) is None
+    assert sorted(_all_text(doc)) == before
+
+
+def test_defloat_alternate_content_clause_not_doubled() -> None:
+    """mc:AlternateContent 的 Choice+Fallback 是同一个框的两份拷贝,只许搬一遍。"""
+    from docx.oxml import parse_xml
+
+    from services.docx_format_doctor import heal_defloat_long_textboxes
+
+    box = (
+        "<w:txbxContent><w:p><w:r><w:t>" + _CLAUSE + "</w:t></w:r></w:p></w:txbxContent>"
+    )
+    xml = (
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+        ' xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"'
+        ' xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:txbx>'
+        + box
+        + "</wps:txbx></w:drawing></mc:Choice>"
+        "<mc:Fallback><w:pict><v:shape><v:textbox>"
+        + box
+        + "</v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>"
+    )
+    doc = Document()
+    p = doc.add_paragraph("宿主段落")
+    p._p.append(parse_xml(xml))
+    assert heal_defloat_long_textboxes(doc) == 1
+    body_text = "".join(p.text for p in doc.paragraphs)
+    assert body_text.count("我单位承诺") == 1
+
+
+def test_defloat_org_chart_multibox_untouched() -> None:
+    """组织机构框图=一个浮件里很多小格子,加起来再长也不是条款,一格都不许动。"""
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_defloat_long_textboxes
+
+    labels = ["董事会", "总经理", "项目副经理", "工程管理部", "物资设备部", "综合办公室",
+              "技术质量部", "安全生产部", "财务部", "经营管理部", "各施工队", "试验检测室"]
+    doc = Document()
+    _append_pict_para(doc, labels)
+    assert heal_defloat_long_textboxes(doc) == 0
+    boxes = doc.element.body.findall(".//" + qn("w:txbxContent"))
+    assert len(boxes) == len(labels)  # 框图原样保留
+
+
+def test_defloat_short_decorative_box_untouched() -> None:
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_defloat_long_textboxes
+
+    doc = Document()
+    _append_pict_para(doc, ["致:马鞍山市公共资源交易中心"])
+    assert heal_defloat_long_textboxes(doc) == 0
+    assert doc.element.body.find(".//" + qn("w:txbxContent")) is not None
+
+
+def test_defloat_box_containing_image_untouched() -> None:
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import qn
+
+    from services.docx_format_doctor import heal_defloat_long_textboxes
+
+    doc = Document()
+    p = _append_pict_para(doc, [_CLAUSE])
+    box = p._p.find(".//" + qn("w:txbxContent"))
+    inner = parse_xml(
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:drawing/></w:r>"
+    )
+    box.findall(qn("w:p"))[0].append(inner)
+    assert heal_defloat_long_textboxes(doc) == 0
+
+
+# ---------- 填值 run 挤压字距剥除(马鞍山#216 封面双影病) ----------
+
+
+def _set_char_spacing(run, val):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    rpr = run._r.get_or_add_rPr()
+    sp = OxmlElement("w:spacing")
+    sp.set(qn("w:val"), str(val))
+    rpr.append(sp)
+
+
+def _spacing_val(run):
+    from docx.oxml.ns import qn
+
+    rpr = run._r.find(qn("w:rPr"))
+    sp = rpr.find(qn("w:spacing")) if rpr is not None else None
+    return None if sp is None else sp.get(qn("w:val"))
+
+
+def test_squeeze_stripped_from_filled_value_run() -> None:
+    from services.docx_format_doctor import heal_filled_value_char_squeeze
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("投标人:")
+    r = p.add_run("安徽正奇建设有限公司")
+    r.font.underline = True
+    _set_char_spacing(r, -119)  # 福昕实测值
+    profile = {"company_name": "安徽正奇建设有限公司"}
+    assert heal_filled_value_char_squeeze(doc, profile) == 1
+    assert _spacing_val(r) is None
+    assert r.text == "安徽正奇建设有限公司"  # 一字不改
+
+
+def test_squeeze_decorative_title_and_small_spacing_kept() -> None:
+    from services.docx_format_doctor import heal_filled_value_char_squeeze
+
+    doc = Document()
+    title = doc.add_paragraph().add_run("投标文件")
+    _set_char_spacing(title, 300)  # 招标封面拉宽标题,不在白名单,不碰
+    p = doc.add_paragraph()
+    r = p.add_run("安徽正奇建设有限公司")
+    _set_char_spacing(r, -10)  # 每字不足1pt,不值得动
+    profile = {"company_name": "安徽正奇建设有限公司"}
+    assert heal_filled_value_char_squeeze(doc, profile) == 0
+    assert _spacing_val(title) == "300"
+    assert _spacing_val(r) == "-10"

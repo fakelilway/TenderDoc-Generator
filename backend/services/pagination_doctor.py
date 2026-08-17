@@ -106,6 +106,51 @@ def _find_stub_pages(pdf_path: Path) -> list[dict]:
         doc.close()
 
 
+def _find_overlap_pages(pdf_path: Path) -> list[dict]:
+    """出厂自检:扫"两层文字叠印"页(2026-08-15 马鞍山#216 p3 浮框条款压正文,用户一打开
+    满屏叠字)。判定=不同文字块的 span 外框大面积相交(交叠面积>0.35×小框、高>4pt)。
+    降噪:双方都是 ≤2 字的碎片(表格个位数字擦边、页码撞线)不算病——招标原样里也有。"""
+    import fitz
+
+    result: list[dict] = []
+    doc = fitz.open(str(pdf_path))
+    try:
+        for pg in range(doc.page_count):
+            spans: list = []
+            for b in doc[pg].get_text("dict").get("blocks", []):
+                if b.get("type") != 0:
+                    continue
+                for line in b.get("lines", []):
+                    for s in line.get("spans", []):
+                        if s.get("text", "").strip():
+                            spans.append((fitz.Rect(s["bbox"]), b.get("number"), s["text"].strip()))
+            spans.sort(key=lambda x: x[0].y0)
+            hits, sample = 0, ""
+            for i in range(len(spans)):
+                r1, b1, t1 = spans[i]
+                for j in range(i + 1, len(spans)):
+                    r2, b2, t2 = spans[j]
+                    if r2.y0 >= r1.y1 - 4:
+                        break  # 之后的 span 纵向都够不着 r1 了(已按 y0 排序)
+                    if b1 == b2:
+                        continue
+                    inter = r1 & r2
+                    if inter.is_empty or inter.height <= 4:
+                        continue
+                    if inter.get_area() <= 0.35 * min(r1.get_area(), r2.get_area()):
+                        continue
+                    if len(t1) <= 2 and len(t2) <= 2:
+                        continue
+                    hits += 1
+                    if not sample:
+                        sample = (t1 if len(t1) >= len(t2) else t2)[:24]
+            if hits:
+                result.append({"page": pg + 1, "count": hits, "sample": sample})
+        return result
+    finally:
+        doc.close()
+
+
 def _locate_section_slice(doc, stub: dict) -> tuple[int, int] | None:
     """把尾巴页首/末行定位回 docx 段落,并向前走到所属节标题 → (起,止) 段落下标区间。"""
     paras = doc.paragraphs
@@ -187,7 +232,10 @@ def _tighten_range(doc, start: int, end: int, round_no: int = 1) -> int:
 
 def heal_stub_pages(docx_path: str) -> dict:
     """对最终商务卷做"孤行收养"。就地修改文件;任何失败保持原样。返回报告。"""
-    report: dict = {"ran": False, "iterations": 0, "stubs_before": None, "stubs_after": None}
+    report: dict = {
+        "ran": False, "iterations": 0, "stubs_before": None, "stubs_after": None,
+        "overlap_pages": None,
+    }
     soffice = _soffice()
     if not soffice:
         logger.info("排版医生:未找到 LibreOffice,跳过尾巴页治理")
@@ -200,6 +248,8 @@ def heal_stub_pages(docx_path: str) -> dict:
         with tempfile.TemporaryDirectory() as td:
             outdir = Path(td)
             src = Path(docx_path)
+            last_pdf: Path | None = None
+            stale = False  # 上次渲染后 docx 又被改过 → 自检前需重渲
             for it in range(_MAX_ITERS):
                 if time.monotonic() > deadline:
                     logger.info("排版医生:时间预算用尽,停在第%d轮", it)
@@ -207,6 +257,7 @@ def heal_stub_pages(docx_path: str) -> dict:
                 pdf = _render_pdf(soffice, src, outdir, timeout=max(30, int(deadline - time.monotonic())))
                 if pdf is None:
                     break
+                last_pdf, stale = pdf, False
                 stubs = _find_stub_pages(pdf)
                 if report["stubs_before"] is None:
                     report["stubs_before"] = [s["page"] + 1 for s in stubs]
@@ -242,6 +293,7 @@ def heal_stub_pages(docx_path: str) -> dict:
                 if acted:
                     doc.save(str(src))
                     report["ran"] = True
+                    stale = True
                     continue  # 拆完重渲复查,防止和"收间距"手段互相打架
                 # 第二手段:没有可拆的分页 → 微收所属节的段距/行距
                 for stub in stubs[:8]:
@@ -257,7 +309,21 @@ def heal_stub_pages(docx_path: str) -> dict:
                     break  # 没有可收的了(都到上限/定位不到),停
                 doc.save(str(src))
                 report["ran"] = True
-            # 收尾再渲一次拿最终尾巴数(若上面因 no stubs break 则已是最新)
+                stale = True
+            # 出厂自检:终稿再扫一遍"文字叠印"(用户 2026-08-15 死命令:出手前自己先看一眼)。
+            # 只报不修——已知病因(浮框长条款)在填前 defloat 已治,这里是最后一道眼睛。
+            if stale or last_pdf is None:
+                last_pdf = _render_pdf(soffice, src, outdir, timeout=120)
+            if last_pdf is not None:
+                overlaps = _find_overlap_pages(last_pdf)
+                report["overlap_pages"] = overlaps
+                if overlaps:
+                    logger.warning(
+                        "出厂自检:发现文字叠印 %s —— 出卷后请人工翻到这些页复核",
+                        "; ".join(f"第{o['page']}页×{o['count']}(如:{o['sample']})" for o in overlaps[:6]),
+                    )
+                else:
+                    logger.info("出厂自检:整卷无文字叠印")
         if report["ran"]:
             logger.info(
                 "排版医生:尾巴页 %s → %s(%d轮)",

@@ -305,6 +305,42 @@ def _clear_template_headers_in_parts(document: Any) -> int:
     return healed
 
 
+def heal_filled_value_char_squeeze(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """剥掉"我们填的值"所在 run 上的福昕挤压字距(2026-08-15 马鞍山#216 封面实测病)。
+    病:福昕为把占位空白压进下划线槽,在 run 的 rPr 里写 w:spacing(实测 -119 =
+    每字倒挤近 6pt)。槽空着时看不出来;填进"安徽正奇建设有限公司"后 10 个字互相
+    叠约四成,WPS 打开就像公司名"印了两遍"(用户截图的封面双影)。
+    修:run 文本命中填值白名单、且 |spacing|≥20(每字≥1pt)→ 删 spacing 属性。
+    只动我们自己填的值;招标原有的拉宽标题(装饰性正字距)不在白名单,永不碰。"""
+    values = fill_values_from_profile(profile)
+    if not values:
+        return 0
+    healed = 0
+    for r in document.element.body.iter(qn("w:r")):
+        text = _norm("".join(t.text or "" for t in r.findall(qn("w:t"))))
+        if len(text) < 2:
+            continue
+        if not any(v == text or (v in text and len(text) - len(v) <= 4) for v in values):
+            continue
+        rpr = r.find(qn("w:rPr"))
+        if rpr is None:
+            continue
+        sp = rpr.find(qn("w:spacing"))
+        if sp is None:
+            continue
+        try:
+            val = abs(int(sp.get(qn("w:val")) or "0"))
+        except ValueError:
+            continue
+        if val < 20:
+            continue
+        rpr.remove(sp)
+        healed += 1
+    if healed:
+        logger.info("格式体检:%d 个填值 run 的福昕挤压字距已剥除(防叠字双影)", healed)
+    return healed
+
+
 def heal_underline_slots(document: Any, profile: dict[str, Any] | None = None) -> int:
     """治"下划线画了一半"。先白名单,后夹心兜底;每段守"文字逐字不变"。"""
     values = fill_values_from_profile(profile)
@@ -423,7 +459,99 @@ def heal_orphan_split_labels(document: Any, profile: dict[str, Any] | None = Non
     return healed
 
 
+_MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+
+def heal_defloat_long_textboxes(document: Any, profile: dict[str, Any] | None = None) -> int:
+    """把福昕做成"漂浮文本框"的**长条款**拆回正文流(2026-08-15 马鞍山#216实测重病)。
+
+    病:这份招标福昕转出52个浮动框,其中整段承诺条款(如"（6）我单位承诺:若我单位拟派…")
+    被钉死在页面固定位置;正文一旦因填值/排版微收而流动,就滑到钉死的框底下 → 两层文字
+    叠印(用户截图,一眼致命)。
+    修:含 ≥40 个非空白字符的**纯文本**浮动框 → 把框内段落原样搬到宿主段落之后(正文流,
+    跟着排版走,物理上不可能再叠印),删掉浮件本体。短小浮件(致:/盖章框/日期线等定位装饰)
+    不动。⚠️ mc:AlternateContent 里 Choice(drawing)+Fallback(pict) 是**同一个框的两份拷贝**,
+    必须整体处理一次,否则条款会被搬两遍。字符守恒:只搬位置,不增不减。
+    """
+    body = document.element.body
+    moved = 0
+
+    def _box_text(holder) -> str:
+        return re.sub(r"\s", "", "".join(t.text or "" for t in holder.iter(qn("w:t"))))
+
+    def _host_paragraph(node):
+        cur = node
+        while cur is not None and cur.tag != qn("w:p"):
+            cur = cur.getparent()
+        return cur
+
+    def _removable(node):
+        """要删的浮件本体:优先删所在的 w:r(run),删不到就删自己。"""
+        cur = node
+        while cur is not None and cur.tag != qn("w:r"):
+            cur = cur.getparent()
+        return cur if cur is not None else node
+
+    # 1) mc:AlternateContent(drawing+pict 双份拷贝)整体处理
+    holders: list = list(body.iter(f"{{{_MC_NS}}}AlternateContent"))
+    seen_ac = set(id(h) for h in holders)
+    # 2) 不在 AlternateContent 里的裸 drawing/pict
+    for tag in ("w:drawing", "w:pict"):
+        for h in body.iter(qn(tag)):
+            cur = h.getparent()
+            inside_ac = False
+            while cur is not None:
+                if id(cur) in seen_ac:
+                    inside_ac = True
+                    break
+                cur = cur.getparent()
+            if not inside_ac:
+                holders.append(h)
+
+    for holder in holders:
+        boxes = holder.findall(".//" + qn("w:txbxContent"))
+        if not boxes:
+            continue
+        if holder.tag == f"{{{_MC_NS}}}AlternateContent":
+            choice = holder.find(f"{{{_MC_NS}}}Choice")
+            src_boxes = (choice.findall(".//" + qn("w:txbxContent")) if choice is not None else None) or boxes[:1]
+        else:
+            src_boxes = boxes
+        if len(src_boxes) != 1:
+            # 多个文本框组成的浮件=图形组合(组织机构框图等),格子文字加起来再长也不是条款,
+            # 拆了会把图毁成一串散段(马鞍山#216实测:董事会/总经理…89字差点丢)——一律不碰。
+            continue
+        text = "".join(_box_text(b) for b in src_boxes)
+        if len(text) < 40:
+            continue
+        if any(next(iter(b.iter(qn(t2))), None) is not None for b in boxes for t2 in ("w:drawing", "w:pict")):
+            continue  # 框里还套图,不碰
+        host = _host_paragraph(holder)
+        if host is None or host.getparent() is None:
+            continue
+        insert_after = host
+        for b in src_boxes:
+            for p_el in list(b.findall(qn("w:p"))):
+                newp = deepcopy(p_el)
+                # 拆回正文流后清掉框内段落可能带的绝对定位属性
+                pPr = newp.find(qn("w:pPr"))
+                if pPr is not None:
+                    fp = pPr.find(qn("w:framePr"))
+                    if fp is not None:
+                        pPr.remove(fp)
+                insert_after.addnext(newp)
+                insert_after = newp
+        target = _removable(holder)
+        if target.getparent() is not None:
+            target.getparent().remove(target)
+            moved += 1
+    if moved:
+        logger.info("格式体检(填前):%d 个长条款浮动框已拆回正文流(防叠印)", moved)
+    return moved
+
+
 _PREFILL_HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
+    ("defloat_long_textboxes", heal_defloat_long_textboxes),
     ("orphan_split_labels", heal_orphan_split_labels),
 )
 
@@ -1482,6 +1610,7 @@ _HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = 
     ("template_header_lines", heal_template_header_lines),
     ("section_title_page_breaks", heal_section_title_page_breaks),
     ("underline_slots", heal_underline_slots),
+    ("filled_value_char_squeeze", heal_filled_value_char_squeeze),
     ("filler_blank_runs", heal_filler_blank_runs),
     ("phantom_images", heal_phantom_images),
     ("split_paragraphs", heal_split_paragraphs),
