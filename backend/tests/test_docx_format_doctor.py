@@ -976,3 +976,41 @@ def test_squeeze_decorative_title_and_small_spacing_kept() -> None:
     assert heal_filled_value_char_squeeze(doc, profile) == 0
     assert _spacing_val(title) == "300"
     assert _spacing_val(r) == "-10"
+
+
+# ---------- Word 招标通道也要有防叠印两件套(2026-08-24 #217复发根因) ----------
+
+
+def test_native_path_registries_include_antioverlap_healers() -> None:
+    """用户上传的"Word 招标"实为 PDF 转换件(马鞍山/黄山/S307 全是):防叠印两件套
+    必须同时挂在福昕路和 Word 路,谁摘谁复发满屏叠印。"""
+    from services.docx_format_doctor import (
+        _HEALERS,
+        _NATIVE_DOCX_HEALERS,
+        _NATIVE_PREFILL_HEALERS,
+        _PREFILL_HEALERS,
+    )
+
+    assert "defloat_long_textboxes" in dict(_PREFILL_HEALERS)
+    assert "defloat_long_textboxes" in dict(_NATIVE_PREFILL_HEALERS)
+    assert "filled_value_char_squeeze" in dict(_HEALERS)
+    assert "filled_value_char_squeeze" in dict(_NATIVE_DOCX_HEALERS)
+
+
+def test_native_runners_heal_both_overlap_diseases() -> None:
+    from services.docx_format_doctor import (
+        run_format_doctor_native_docx,
+        run_format_doctor_prefill_native,
+    )
+
+    doc = Document()
+    _append_pict_para(doc, [_CLAUSE])
+    p = doc.add_paragraph()
+    r = p.add_run("安徽正奇建设有限公司")
+    _set_char_spacing(r, -119)
+    pre = run_format_doctor_prefill_native(doc)
+    post = run_format_doctor_native_docx(doc, {"company_name": "安徽正奇建设有限公司"})
+    assert pre["defloat_long_textboxes"] == 1
+    assert post["filled_value_char_squeeze"] == 1
+    assert any(_CLAUSE in q.text for q in doc.paragraphs)
+    assert _spacing_val(r) is None

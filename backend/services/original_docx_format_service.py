@@ -149,6 +149,7 @@ def fill_format_docx(
         run_format_doctor,
         run_format_doctor_native_docx,
         run_format_doctor_prefill,
+        run_format_doctor_prefill_native,
     )
 
     doc = Document(str(output_path))
@@ -159,6 +160,12 @@ def fill_format_docx(
         # 填前体检:孤字归位(福昕把两列区右列标签劈成"性…"+"别："两半 → 拼回"性别："),
         # 同样须在填值前:标签完整,性别/职务这类空才填得上。
         run_format_doctor_prefill(doc)
+    else:
+        # "Word 招标"经常不是原生 Word:用户实际在传 PDF 转换件(2026-08-24 查实,
+        # 马鞍山/黄山/S307 六个项目全是,每份上千个字距伪影 run、几十个浮动文本框)。
+        # 长条款浮框叠印病在这条路一样发作——#217 修复后重生成仍满屏叠印,根因就是
+        # 防叠印医生只挂在福昕路上、Word 路走不到。守卫严,真原生文档上无害空转。
+        run_format_doctor_prefill_native(doc)
     # 招标原件的招标人/代理红章必须在**就地插图之前**清:红占比判定的前提是"文档里
     # 还没有我们插的证件/业绩扫描件"(2026-07-12 七连修把插图挪进了填表阶段,此调用
     # 相应从卷尾前移到这,守住绝不误删证据图的红线)。

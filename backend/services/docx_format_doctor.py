@@ -1636,6 +1636,10 @@ _NATIVE_DOCX_HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], in
     ("template_header_lines", heal_template_header_lines),
     ("section_title_page_breaks", heal_section_title_page_breaks),
     ("underline_slots", heal_underline_slots),
+    # 填值挤压字距:名义上是福昕病,实际用户上传的"Word 招标"多为 PDF 转换件(马鞍山/黄山/
+    # S307 实测每份带上千个字距伪影 run)。守卫=只动填值白名单 run,真原生文档上无害空转。
+    # 2026-08-24 教训:#217 重生成封面仍双影,根因就是它只挂在福昕路上、Word 路走不到。
+    ("filled_value_char_squeeze", heal_filled_value_char_squeeze),
     ("filler_blank_runs", heal_filler_blank_runs),
 )
 
@@ -1669,6 +1673,29 @@ def run_format_doctor_prefill(document: Any) -> dict[str, int]:
     fixed = {k: v for k, v in report.items() if v}
     if fixed:
         logger.info("格式体检(填前)修复: %s", fixed)
+    return report
+
+
+# Word 招标路径的填前体检:只跑"长条款浮框拆回正文流"。用户上传的 Word 招标多为
+# PDF 转换件(带全部转换伪影),叠印病(浮框条款压正文)在这条路上一样发作;defloat
+# 守卫严(单一文本框+≥40字+纯文字),真原生 Word 上是无害空转。
+_NATIVE_PREFILL_HEALERS: tuple[tuple[str, Callable[[Any, dict[str, Any] | None], int]], ...] = (
+    ("defloat_long_textboxes", heal_defloat_long_textboxes),
+)
+
+
+def run_format_doctor_prefill_native(document: Any) -> dict[str, int]:
+    """Word 招标路径的填前体检。逐个容错,绝不阻断。"""
+    report: dict[str, int] = {}
+    for name, healer in _NATIVE_PREFILL_HEALERS:
+        try:
+            report[name] = healer(document, None)
+        except Exception:
+            logger.warning("格式体检(填前/Word) healer %s 失败,跳过", name, exc_info=True)
+            report[name] = 0
+    fixed = {k: v for k, v in report.items() if v}
+    if fixed:
+        logger.info("格式体检(填前/Word)修复: %s", fixed)
     return report
 
 

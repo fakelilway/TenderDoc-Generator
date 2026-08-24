@@ -666,7 +666,9 @@ def test_native_docx_path_skips_foxit_artifact_healers(tmp_path: Path) -> None:
 
 
 def test_fill_format_docx_native_vs_foxit_healer_sets() -> None:
-    """两条路各跑各的 healer 集合:原生版只含通用三项,不含任何福昕伪影修复。"""
+    """两条路各跑各的 healer 集合:原生版=通用项+防叠印两件套,不含改文字结构的福昕修复。
+    (2026-08-24 扩员:用户上传的"Word 招标"实为 PDF 转换件,填值挤压字距在 Word 路
+    一样发作——#217 封面双影复发根因;守卫=只动填值白名单,真原生文档无害空转。)"""
     from services.docx_format_doctor import _HEALERS, _NATIVE_DOCX_HEALERS
 
     native = {n for n, _ in _NATIVE_DOCX_HEALERS}
@@ -674,6 +676,7 @@ def test_fill_format_docx_native_vs_foxit_healer_sets() -> None:
         "template_header_lines",
         "section_title_page_breaks",
         "underline_slots",
+        "filled_value_char_squeeze",
         "filler_blank_runs",
     }
     # 福昕专治项绝不能混进原生集合
