@@ -45,13 +45,18 @@
 
 ## Document Processing
 
-- PyMuPDF：PDF 文本提取、页面渲染、格式页整页截图 + 已知字段烧录
+- **福昕国内云（httpx，无 SDK）**：PDF 招标 → 真·可编辑 Word（真段落/真表格），格式章复制的**唯一** PDF 路径
 - python-docx：DOCX 读取、OOXML 复制、DOCX 导出
+- PyMuPDF：PDF 文本提取、页面渲染（附表页定位、渲染验空白页）
 - docxcompose：把福昕可编辑附表拼接到技术卷末尾（保留真表格/图片关系）
-- pdf2docx：PDF→可编辑 Word 的离线回退（福昕云不可用时）
+- openpyxl：读工程量清单 Excel（`.xlsx`/`.xlsm`）；`.xls` 走 LibreOffice
+- ~~pdf2docx~~：**已移除**（原"福昕不可用的离线回退"整条删除，PDF 现只有一条路）
 - pypdf/pdfplumber：辅助 PDF 文本解析
-- `services/docx_format_doctor.py`：**格式医生**——福昕转换+填空前后的全文档格式体检（healer 注册制）。填前：孤字归位（"性…"+"别："拼回"性别："，字符守恒）；填后：填空槽下划线断线补齐（白名单+夹心兜底）。铁律：只改格式、绝不改文字
+- `services/docx_format_doctor.py`：**格式医生**——healer 注册制的全文档格式体检，**只改格式、绝不改文字**。5 个注册表：福昕路填前 `_PREFILL_HEALERS`（孤字归位/浮框拆回正文流）、福昕路填后 `_HEALERS`（下划线断线/字距挤压/假两栏/幽灵图/劈句合并/落款栏位等 16+）、Word 路填前 `_NATIVE_PREFILL_HEALERS`（只含防叠印）、Word 路填后 `_NATIVE_DOCX_HEALERS`、成品级 `run_format_doctor_assembled`（核对表列宽/业绩图注绑定）
+- `services/pagination_doctor.py`：排版医生，治"尾巴页"（一节溢出几行到下一页）
+- `services/blank_page_doctor.py`：空白页硬闸（渲染逐页查→拆多余翻页→复查至零）
 - `services/appendix_service.py`：技术卷附表逐张装配——公司定稿表原样拼（补"附表X"编号）→ 招标原表福昕转 → 占位页
+- `services/commercial_fixed_fields.py`：公司名错别字纠正 + 商务固定字段一致性核对
 - RapidOCR（rapidocr-onnxruntime）：证件扫描件 OCR；`services/id_card_ocr.py` 身份证正反面判定；`utils/image_orient.py` EXIF 摆正
 
 ## Current Generation Kernel
@@ -72,10 +77,11 @@ flowchart TD
 当前只有 V2 原格式复制生成内核（两卷交付：商务卷 + 技术卷；报价卷外部造价软件）：
 
 - DOCX 招标文件：copy-then-prune 复制格式章（保留页眉脚/图片）。
-- PDF 招标文件：**优先福昕国内云转可编辑 Word**（真段落/真表格，开关 `CLOUD_PDF_CONVERT=foxit`）+ 自动填公司档案字段；失败下沉 pdf2docx → 整页截图+域 → 纯整页图 → 硬报错。纯文字版招标最佳，扫描版需先 OCR。
+- PDF 招标文件：**福昕国内云转可编辑 Word**（真段落/真表格，`CLOUD_PDF_CONVERT=foxit`）——**唯一路径，无降级**；开关非 foxit 或转换失败 = 硬报错，不出近似稿。纯文字版招标最佳，扫描版需先 OCR。
 - 商务锁定格式：不由模型重画。
-- 商务卷填空管线（`cloud_pdf_convert`，顺序固定）：福昕转换 → 标签理顺+孤字归位（填前体检）→ 按标签自动填（公司档案/选派人员台账/选中业绩；只填空格绝不覆盖已有内容）→ 格式医生（填后体检，治下划线断线）→ 清红章/招标页码 → 固定字段一致性收尾；证件/业绩图锚点落位到对应表后，没命中退卷尾绝不丢图。
+- 商务卷填值管线（唯一入口 `original_docx_format_service.fill_format_docx`，20+ 步、顺序固定）：剥卷首章标题 → 填前体检（福昕路全量 / Word 路仅防叠印）→ 剥红章 → 类似项目/公司组件 → 占位符（正文+浮框）→ 各类表格/内联空/授权书/日期/人员/业绩/简历/身份证 → 填后格式医生 → 清招标页码 → 缺字段告警 → 固定字段收尾。证件/业绩图锚点落位到对应表后，没命中退卷尾绝不丢图。
 - 技术正文：按**人工确认目录**由 Content Writer 逐节生成（有界并发），独立成文；技术附表由 `appendix_service` 逐张装配（公司定稿表补"附表X"编号 / 招标原表福昕转 / 占位），docxcompose 拼到技术卷末。
+- 出卷后收尾：加页码 → 排版医生（尾巴页）→ 成品级格式修复 → **空白页闸（最后）**。
 - 审查：V2 格式/内容/证据审查 + 招标覆盖闸 + workflow 废标风险审查。
 
 ## Environment Variables
@@ -95,9 +101,9 @@ BID_LONG_CONTEXT_MAX_TOKENS=12000
 云转换（福昕国内云 PDF→可编辑 Word，转的是公开招标格式章）：
 
 ```env
-CLOUD_PDF_CONVERT=foxit          # off=用 pdf2docx/截图链;foxit=优先福昕云
+CLOUD_PDF_CONVERT=foxit          # PDF 招标唯一有效值；非 foxit 时上传 PDF 招标直接报错（无降级档）
 FOXIT_CLOUD_CLIENT_ID=your-client-id
-FOXIT_CLOUD_SECRET=your-secret
+FOXIT_CLOUD_SECRET=your-secret   # 注意是 SECRET，不是 CLIENT_SECRET
 ```
 
 Storage：
@@ -113,7 +119,7 @@ MINIO_BUCKET=tender-files
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest backend/tests -q -m "not live_llm"
+PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q -m "not live_llm"   # 基线 594 passed
 pnpm --dir frontend typecheck
 pnpm --dir frontend test
 pnpm --dir frontend build

@@ -90,8 +90,9 @@ class Settings(BaseSettings):
     coverage_audit_block_invalid: bool = Field(
         False, alias="COVERAGE_AUDIT_BLOCK_INVALID"
     )
-    # 云端 PDF→可编辑Word(格式章复制最上层)。off=用现有 pdf2docx;foxit=用福昕国内云
-    # (真·可编辑+保真),失败自动下沉 pdf2docx→整页图。转的是公开招标格式章。
+    # PDF 招标 → 可编辑 Word(格式章复制)。**唯一取值 foxit**:福昕国内云转真段落/真表格。
+    # 已无任何降级档(pdf2docx / 整页截图 / 纯图 全删):非 foxit 或福昕失败=硬报错,
+    # 不出近似稿。转的是招标"投标文件格式"章。Word 招标走 OOXML 照抄,与本开关无关。
     cloud_pdf_convert: str = Field("off", alias="CLOUD_PDF_CONVERT")
     foxit_cloud_client_id: str = Field("", alias="FOXIT_CLOUD_CLIENT_ID")
     foxit_cloud_secret: str = Field("", alias="FOXIT_CLOUD_SECRET")

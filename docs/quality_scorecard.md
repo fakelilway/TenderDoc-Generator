@@ -50,11 +50,11 @@
 ## 交付装配（现状）
 
 - 所有原格式文档走两卷装配 `_assemble_two_volumes`：
-  - 商务卷 = 格式章照抄（PDF=整页截图+已知字段烧录进表单；DOCX=copy-then-prune 保留页眉脚/图片）+ 合规正文。
-  - 技术卷 = LLM 施工组织设计正文（标准 25 节深度大纲），独立成文档（正奇排版 + 自动更新目录），不与商务格式页混排。
+  - 商务卷 = 格式章照抄（Word 招标=OOXML copy-then-prune 保留页眉脚/图片；PDF 招标=**福昕云转真·可编辑 Word**）+ 合规正文 + 页码 + 排版医生（尾巴页）+ 成品级格式修复 + 空白页闸。
+  - 技术卷 = LLM 施工组织设计正文（目录按招标"投标文件格式"重建 + 占比拆工序），独立成文档（正奇排版 + 自动更新目录），不与商务格式页混排；附表 docxcompose 拼卷末。
   - 报价卷不产出（外部造价软件）。
 - 旧的关键字/`format_outline_tree`/页块三卷拆分已**删除**：真实招标文件里技术=生成、报价=外部，格式章≈商务卷，没有可拆的三卷。
-- PDF 商务卷为纯内联图（已弃用 VML 文本层/pdf2docx），Pages/LibreOffice/Word/新点都能渲染。
+- PDF 商务卷现在是**真段落真表格的可编辑 Word**（福昕）；此前的"纯内联图 / VML 文本层 / pdf2docx"三条路径**全部删除**，不再有"整页贴图"交付形态。Word/Pages/LibreOffice/新点均可渲染编辑。
 
 ## 首次 E2E 实测（招标#1，无知识库，2026-06-15）
 
@@ -69,8 +69,9 @@
 
 ## 视觉回归注意
 
-- `visual_regression.py`（soffice 渲染）对**技术卷**（markdown→docx，无 VML）可靠。
-- 对**商务卷**（整页图 + VML 填空框）**不可靠**：实测 16 页格式章被 soffice 渲成 46 页（每页夹 2 空白页）。已隔离证实是 **soffice 多节+浮动 VML 形状的渲染缺陷**（image-only 多节=16 页✓、单节+填空框=1 页✓，仅"多节+VML"在 soffice 膨胀），**很可能非 Word/新点的真实缺陷**，待用 Word 核实。商务卷视觉以"页标记数"为准。
+- `visual_regression.py`（soffice 渲染）对**技术卷**（markdown→docx，纯段落表格）可靠。
+- 对**商务卷**（福昕产出的多节 + 浮动文本框）**不完全可靠**：soffice 对"多节 + 浮动形状"有渲染膨胀缺陷（image-only 多节正常、单节+文本框正常，仅"多节+浮框"膨胀），**非 Word/新点的真实缺陷**。商务卷视觉请以 **Word/新点**打开为准，soffice 结果只作参考。
+- 空白页判定用 `blank_page_doctor.heal_blank_pages` 的报告（before/after/iterations），不要只信 soffice 页数。
 
 ## 待办
 
